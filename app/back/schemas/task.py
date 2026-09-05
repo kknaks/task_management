@@ -13,6 +13,9 @@ from pydantic import ConfigDict, StringConstraints, field_validator, model_valid
 
 from dto.task import (
     AttachmentCreateDTO,
+    StatusChangeDTO,
+    TaskListItemDTO,
+    TaskListResultDTO,
     TaskAttachmentDTO,
     TaskCreateDTO,
     TaskDetailDTO,
@@ -396,3 +399,113 @@ class RelationCandidateListResponse(CamelModel):
 
     items: list[RelationCandidateItem]
     total: int
+
+
+# --- 상태 전이 · 목록 (SPEC-004 §4) --------------------------------------
+
+CancelReason = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
+
+
+class StatusChange(_TaskRequest):
+    """**세 진입점이 같은 본문을 보낸다**(SPEC-004 §4).
+
+    `status` 는 4종 중 하나다 — **「지연」은 값이 아니다**(T-4).
+    `cancelReason` 은 `cancelled` 일 때만 받는다(판정은 service).
+    """
+
+    status: Status
+    cancel_reason: CancelReason | None = None
+    log_cancel_reason: bool = True
+
+    def to_dto(self) -> StatusChangeDTO:
+        return StatusChangeDTO(
+            status=self.status,
+            cancel_reason=self.cancel_reason,
+            log_cancel_reason=self.log_cancel_reason,
+        )
+
+
+class TaskListItem(CamelModel):
+    """목록 항목. `dDay`·`isOverdue`·`overdueDays`·`todoProgress` 는 **파생값**이다(G-7)."""
+
+    id: int
+    title: str
+    status: Status
+    work_type: WorkTypeRef
+    project: ProjectRef | None
+    due_date: date | None
+    due_start_time: time | None
+    due_end_time: time | None
+    d_day: int | None
+    is_overdue: bool
+    overdue_days: int | None
+    memo_count: int
+    todo_progress: TodoProgress
+    cancel_reason: str | None
+    cancelled_at: datetime | None
+
+    @classmethod
+    def from_dto(cls, dto: TaskListItemDTO) -> "TaskListItem":
+        return cls(
+            id=dto.id,
+            title=dto.title,
+            status=dto.status,  # type: ignore[arg-type]
+            work_type=WorkTypeRef(
+                id=dto.work_type.id,
+                name=dto.work_type.name,
+                kind=dto.work_type.kind,
+                color_token=dto.work_type.color_token,
+                is_deleted=dto.work_type.is_deleted,
+            ),
+            project=(
+                None
+                if dto.project is None
+                else ProjectRef(
+                    id=dto.project.id,
+                    name=dto.project.name,
+                    color_token=dto.project.color_token,
+                    is_deleted=dto.project.is_deleted,
+                )
+            ),
+            due_date=dto.due_date,
+            due_start_time=dto.due_start_time,
+            due_end_time=dto.due_end_time,
+            d_day=dto.d_day,
+            is_overdue=dto.is_overdue,
+            overdue_days=dto.overdue_days,
+            memo_count=dto.memo_count,
+            todo_progress=TodoProgress(
+                done=dto.todo_progress.done, total=dto.todo_progress.total
+            ),
+            cancel_reason=dto.cancel_reason,
+            cancelled_at=dto.cancelled_at,
+        )
+
+
+class TypeCount(CamelModel):
+    """유형 탭에 붙는 수. `workTypeId` 가 `null` 이면 「전체」다."""
+
+    work_type_id: int | None
+    name: str
+    count: int
+
+
+class TaskListResponse(CamelModel):
+    items: list[TaskListItem]
+    total: int
+    page: int
+    size: int
+    type_counts: list[TypeCount]
+
+    @classmethod
+    def from_dto(cls, dto: TaskListResultDTO) -> "TaskListResponse":
+        return cls(
+            items=[TaskListItem.from_dto(item) for item in dto.items],
+            total=dto.total,
+            page=dto.page,
+            size=dto.size,
+            type_counts=[
+                TypeCount(work_type_id=row.work_type_id, name=row.name, count=row.count)
+                for row in dto.type_counts
+            ],
+        )

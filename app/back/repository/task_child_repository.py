@@ -11,8 +11,9 @@ from datetime import date
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from dto.enums import AttachmentKind
+from dto.enums import AttachmentKind, AttachmentRole
 from dto.task import (
+    StatusTransitionDTO,
     TaskAttachmentDTO,
     TaskLogDTO,
     TaskMemoDTO,
@@ -156,9 +157,62 @@ async def list_logs(session: AsyncSession, task_id: int) -> list[TaskLogDTO]:
     ]
 
 
-async def create_log(session: AsyncSession, *, task_id: int, text: str) -> None:
-    """**서비스만 부른다.** 사용자는 로그를 쓰거나 지울 수 없다(DEC-002 §6)."""
-    session.add(TaskLog(task_id=task_id, content=text))
+async def create_log(
+    session: AsyncSession,
+    *,
+    task_id: int,
+    text: str,
+    from_status: str | None = None,
+    to_status: str | None = None,
+) -> None:
+    """**서비스만 부른다.** 사용자는 로그를 쓰거나 지울 수 없다(DEC-002 §6).
+
+    **상태 전이 로그만 두 상태를 채운다** — 실행취소가 본문을 되파싱하지 않고 컬럼으로 판정한다.
+    나머지 로그는 둘 다 `None` 이다(DB CHECK 가 「둘 다 있거나 둘 다 없다」를 강제한다).
+    """
+    session.add(
+        TaskLog(
+            task_id=task_id, content=text, from_status=from_status, to_status=to_status
+        )
+    )
+    await session.flush()
+
+
+async def find_last_transition(
+    session: AsyncSession, task_id: int
+) -> StatusTransitionDTO | None:
+    """가장 최근 로그가 **상태 전이일 때만** 그 전이를 돌려준다.
+
+    마지막 로그가 전이가 아니면 `None` 이다 — 그 뒤에 다른 변경이 있었다는 뜻이라
+    실행취소 조건 ②가 깨진다(SPEC-004 §4).
+    """
+    row = (
+        await session.scalars(
+            select(TaskLog)
+            .where(TaskLog.task_id == task_id)
+            .order_by(TaskLog.created_at.desc(), TaskLog.id.desc())
+            .limit(1)
+        )
+    ).one_or_none()
+
+    if row is None or row.from_status is None or row.to_status is None:
+        return None
+    return StatusTransitionDTO(
+        log_id=row.id,
+        from_status=row.from_status,
+        to_status=row.to_status,
+        created_at=row.created_at,
+    )
+
+
+async def delete_log(session: AsyncSession, *, task_id: int, log_id: int) -> None:
+    """**실행취소가 로그를 지우는 유일한 경로다**(Pre-deploy Check).
+
+    4초 안에 무른 일을 이력으로 남기면 로그가 시끄러워진다(05-status §완료 3).
+    """
+    await session.execute(
+        delete(TaskLog).where(TaskLog.id == log_id, TaskLog.task_id == task_id)
+    )
     await session.flush()
 
 
@@ -217,6 +271,19 @@ async def create_attachment(
     session.add(row)
     await session.flush()
     return _attachment_to_dto(row)
+
+
+async def count_deliverables(session: AsyncSession, task_id: int) -> int:
+    """완료 게이트의 한 축 — **결과자료 첨부 개수**(T-5)."""
+    total = await session.scalar(
+        select(func.count())
+        .select_from(TaskAttachment)
+        .where(
+            TaskAttachment.task_id == task_id,
+            TaskAttachment.role == AttachmentRole.DELIVERABLE.value,
+        )
+    )
+    return total or 0
 
 
 async def find_attachment(

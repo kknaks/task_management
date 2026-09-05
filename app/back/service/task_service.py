@@ -17,7 +17,13 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_settings
-from core.exceptions import NotFoundError, ValidationError
+from core.exceptions import (
+    InvalidStatusTransitionError,
+    NotFoundError,
+    TaskCompletionBlockedError,
+    UndoNotAvailableError,
+    ValidationError,
+)
 from dto.enums import (
     AttachmentKind,
     RelationCandidateScope,
@@ -26,6 +32,11 @@ from dto.enums import (
 )
 from dto.task import (
     AttachmentCreateDTO,
+    StatusChangeDTO,
+    TaskListFilterDTO,
+    TaskListItemDTO,
+    TaskListResultDTO,
+    TypeCountDTO,
     TaskCreateDTO,
     TaskDetailDTO,
     TaskDTO,
@@ -692,3 +703,242 @@ def _resolve_scope(
     if scope is RelationCandidateScope.RECENT30:
         return None, datetime.now(UTC) - timedelta(days=_RECENT_SCOPE_DAYS)
     return None, None
+
+
+# --- 상태 전이 (SPEC-004) -------------------------------------------------
+#
+# **이 제품의 규칙이 여기 있다.** 리스트 셀·상세 드롭다운·칸반 DnD·(WORK-008 의) 회의록이
+# 전부 `PATCH /api/tasks/{id}/status` 하나로 들어와 `change_status()` 하나가 판정한다.
+# 여기서 판정을 한 곳에 못 모으면 이후 세 화면과 회의록이 각자 규칙을 갖는다.
+
+# T-6 전이 그래프. **`done → cancelled` 가 없다** — 먼저 진행중으로 되돌려야 한다(DEC-002 §4).
+_TRANSITIONS: dict[str, frozenset[str]] = {
+    TaskStatus.TODO.value: frozenset(
+        {TaskStatus.IN_PROGRESS.value, TaskStatus.DONE.value, TaskStatus.CANCELLED.value}
+    ),
+    TaskStatus.IN_PROGRESS.value: frozenset(
+        {TaskStatus.DONE.value, TaskStatus.TODO.value, TaskStatus.CANCELLED.value}
+    ),
+    TaskStatus.DONE.value: frozenset({TaskStatus.IN_PROGRESS.value}),
+    TaskStatus.CANCELLED.value: frozenset({TaskStatus.TODO.value}),
+}
+
+# 로그 본문의 한국어 라벨 — 저장 값은 영문이고 이것은 **표시 매핑**이다(G-4)
+_STATUS_LABELS = {
+    TaskStatus.TODO.value: "시작전",
+    TaskStatus.IN_PROGRESS.value: "진행중",
+    TaskStatus.DONE.value: "완료",
+    TaskStatus.CANCELLED.value: "취소",
+}
+
+# SPEC-004 §4 Case Matrix — 문구까지 계약이다.
+_COMPLETION_BLOCKED = "완료하려면 결과자료 1건 또는 완료 결과가 필요합니다"
+_INVALID_TRANSITION = "이 상태로는 바꿀 수 없습니다"
+_UNDO_NOT_AVAILABLE = "되돌릴 수 있는 시간이 지났습니다"
+
+_CANCEL_REASON_MAX = 500
+# 완료 토스트 수명과 맞춘 spec 값이다(SPEC-004 §4 · BE §8-2)
+_UNDO_WINDOW = timedelta(seconds=4)
+
+
+async def _passes_completion_gate(session: AsyncSession, task: TaskDTO) -> bool:
+    """T-5 완료 게이트 — **결과자료 ≥1 또는 완료 결과가 비어 있지 않다.**
+
+    **판정은 이 함수 하나뿐이다.** 화면이 먼저 막아도 이 검사는 그대로 돈다(SPEC-004 §5).
+    """
+    if task.completion_result is not None and task.completion_result.strip():
+        return True
+    return await task_child_repository.count_deliverables(session, task.id) >= 1
+
+
+def _validate_cancel_reason(target: str, cancel_reason: str | None) -> str | None:
+    """T-7 — `cancel_reason` 은 취소로 갈 때만 받는다. 다른 상태에 얹어 보내면 거부한다."""
+    if target != TaskStatus.CANCELLED.value:
+        if cancel_reason is not None:
+            raise _invalid_input()
+        return None
+
+    if cancel_reason is None or not cancel_reason.strip():
+        raise _invalid_input()
+    reason = cancel_reason.strip()
+    if len(reason) > _CANCEL_REASON_MAX:
+        raise _invalid_input()
+    return reason
+
+
+async def change_status(
+    session: AsyncSession, *, account_id: int, task_id: int, command: StatusChangeDTO
+) -> TaskListItemDTO:
+    """**전이 그래프 검사 → 완료 게이트 판정 → 상태 쓰기 + 로그 한 줄**(한 트랜잭션 — T-8).
+
+    거부되면 **행이 바뀌지 않고 로그도 남지 않는다** — 예외가 요청 트랜잭션을 되돌린다.
+    `persist_changes` 를 켜지 않는 이유가 이것이다(BE §7): 여기서 실패는 쓰기를 뜻하지 않는다.
+    """
+    task = await _require_task(session, account_id=account_id, task_id=task_id)
+    target = command.status
+
+    if target not in _TRANSITIONS[task.status]:
+        raise InvalidStatusTransitionError(_INVALID_TRANSITION)
+
+    reason = _validate_cancel_reason(target, command.cancel_reason)
+
+    if target == TaskStatus.DONE.value and not await _passes_completion_gate(session, task):
+        raise TaskCompletionBlockedError(_COMPLETION_BLOCKED)
+
+    await task_repository.update_status(
+        session,
+        account_id=account_id,
+        task_id=task_id,
+        status=target,
+        cancel_reason=reason,
+    )
+    await task_child_repository.create_log(
+        session,
+        task_id=task_id,
+        text=f"상태 {_STATUS_LABELS[task.status]} → {_STATUS_LABELS[target]}",
+        from_status=task.status,
+        to_status=target,
+    )
+
+    # DEC-002 §6 — 기본 켜짐. 이 줄이 마지막 로그가 되므로 **취소는 실행취소 대상이 아니게 된다**
+    # (취소는 모달을 지나는 신중한 조작이고, 완료는 한 번의 클릭이라 되돌릴 자리를 준다).
+    if target == TaskStatus.CANCELLED.value and command.log_cancel_reason:
+        await task_child_repository.create_log(
+            session, task_id=task_id, text="취소 사유 기록"
+        )
+
+    return await _require_list_item(session, account_id=account_id, task_id=task_id)
+
+
+async def undo_last_status(
+    session: AsyncSession, *, account_id: int, task_id: int
+) -> TaskListItemDTO:
+    """마지막 전이를 되돌리고 **그 로그를 지운다**(한 트랜잭션).
+
+    조건 셋 — ① 마지막 로그가 상태 전이이고 ② 그 뒤 다른 (로그를 남기는) 변경이 없으며
+    ③ **4초 이내**다(SPEC-004 §4). 하나라도 어긋나면 `undo_not_available`.
+
+    **게이트를 다시 태우지 않는다** — 이미 판정을 지난 상태로 되돌리는 것이라
+    「완료 → 진행중」 복원에 결과자료를 요구할 이유가 없다.
+    """
+    await _require_task(session, account_id=account_id, task_id=task_id)
+
+    transition = await task_child_repository.find_last_transition(session, task_id)
+    if transition is None:
+        raise UndoNotAvailableError(_UNDO_NOT_AVAILABLE)
+    if datetime.now(UTC) - transition.created_at > _UNDO_WINDOW:
+        raise UndoNotAvailableError(_UNDO_NOT_AVAILABLE)
+
+    await task_repository.update_status(
+        session,
+        account_id=account_id,
+        task_id=task_id,
+        status=transition.from_status,
+        # 취소로 되돌아가는 경우 사유는 복원되지 않는다 — 떠날 때 T-7 이 비우게 했고
+        # 우리는 옛 값을 보관하지 않는다(§미결).
+        cancel_reason=None,
+    )
+    await task_child_repository.delete_log(
+        session, task_id=task_id, log_id=transition.log_id
+    )
+
+    return await _require_list_item(session, account_id=account_id, task_id=task_id)
+
+
+async def delete_task(session: AsyncSession, *, account_id: int, task_id: int) -> None:
+    """T-11 소프트 딜리트 — 목록·집계에서 빠지고 **자식 행은 지우지 않는다.**
+
+    **복원 경로를 만들지 않는다**(DEC-004 §4).
+    """
+    await _require_task(session, account_id=account_id, task_id=task_id)
+    await task_repository.soft_delete(
+        session, account_id=account_id, task_id=task_id, deleted_at=datetime.now(UTC)
+    )
+
+
+async def _require_list_item(
+    session: AsyncSession, *, account_id: int, task_id: int
+) -> TaskListItemDTO:
+    item = await task_repository.find_list_item(
+        session, account_id=account_id, task_id=task_id, today=_today()
+    )
+    if item is None:
+        raise _not_found()
+    return item
+
+
+# --- 목록 (SPEC-004 §4) --------------------------------------------------
+
+
+def current_month_bounds() -> tuple[datetime, datetime]:
+    """기본 기간은 **이번 달**이다. 경계는 앱 타임존(KST)의 달 경계를 UTC 순간으로 준다(G-2)."""
+    tz = ZoneInfo(get_settings().app_timezone)
+    today = datetime.now(tz).date()
+    start = datetime(today.year, today.month, 1, tzinfo=tz)
+    end = datetime(
+        today.year + (today.month // 12), (today.month % 12) + 1, 1, tzinfo=tz
+    )
+    return start.astimezone(UTC), end.astimezone(UTC)
+
+
+async def list_tasks(
+    session: AsyncSession, *, account_id: int, command: TaskListFilterDTO
+) -> TaskListResultDTO:
+    """리스트와 칸반이 **같은 응답**을 본다 — 칸반은 이 목록을 상태로 나눠 그릴 뿐이다.
+
+    `typeCounts` 는 **유형 탭 자신을 반영하지 않는다**(SPEC-004 §4) —
+    탭에 붙는 수가 탭을 누를 때마다 흔들리면 안 된다.
+    """
+    tz = ZoneInfo(get_settings().app_timezone)
+    # 기한은 달력 날짜라 KST 로, 생성일은 순간이라 UTC 로 비교한다(G-2 · G-2-e)
+    from_date = command.period_from.astimezone(tz).date()
+    to_date = command.period_to.astimezone(tz).date()
+    bounds = {
+        "from_date": from_date,
+        "to_date": to_date,
+        "period_from": command.period_from,
+        "period_to": command.period_to,
+    }
+
+    items = await task_repository.list_tasks(
+        session,
+        account_id=account_id,
+        **bounds,
+        work_type_id=command.work_type_id,
+        status=command.status,
+        project_id=command.project_id,
+        sort=command.sort,
+        page=command.page,
+        size=command.size,
+        today=_today(),
+    )
+    total = await task_repository.count_tasks(
+        session,
+        account_id=account_id,
+        **bounds,
+        work_type_id=command.work_type_id,
+        status=command.status,
+        project_id=command.project_id,
+    )
+    by_type = await task_repository.count_by_work_type(
+        session,
+        account_id=account_id,
+        **bounds,
+        status=command.status,
+        project_id=command.project_id,
+    )
+
+    type_counts = [
+        TypeCountDTO(work_type_id=None, name="전체", count=sum(row[2] for row in by_type)),
+        *[
+            TypeCountDTO(work_type_id=row[0], name=row[1], count=row[2])
+            for row in by_type
+        ],
+    ]
+    return TaskListResultDTO(
+        items=items,
+        total=total,
+        page=command.page,
+        size=command.size,
+        type_counts=type_counts,
+    )

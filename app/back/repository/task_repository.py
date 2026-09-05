@@ -9,13 +9,20 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
 
-from sqlalchemy import ColumnElement, Select, case, func, select
+from sqlalchemy import ColumnElement, Select, and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from dto.task import ProjectRefDTO, TaskDTO, WorkTypeRefDTO
+from dto.enums import TaskSort, TaskStatus
+from dto.task import (
+    ProjectRefDTO,
+    TaskDTO,
+    TaskListItemDTO,
+    TodoProgressDTO,
+    WorkTypeRefDTO,
+)
 from models.account import Project, WorkType
-from models.task import Task
+from models.task import Task, TaskLog, TaskMemo, TaskTodo
 
 # 참조 표시용 조인 — **삭제된 유형·프로젝트도 이름·색을 그대로 가져온다**(A-6).
 _WorkTypeRef = aliased(WorkType)
@@ -270,3 +277,320 @@ async def find_relation_candidates(
         )
     ).all()
     return [_row_to_dto(row) for row in rows]
+
+
+# --- 상태 · 삭제 (SPEC-004) ----------------------------------------------
+
+
+async def update_status(
+    session: AsyncSession,
+    *,
+    account_id: int,
+    task_id: int,
+    status: str,
+    cancel_reason: str | None,
+) -> None:
+    """**`task.status` 에 값을 대입하는 유일한 코드다.**
+
+    판정(전이 그래프·완료 게이트)은 하지 않는다 — 그건 `task_service.change_status()` 의 몫이고,
+    이 함수를 부르는 곳도 그 판정을 지난 두 경로뿐이다(전이·실행취소).
+
+    T-7 — `cancel_reason` 은 `cancelled` 일 때만 값이 있다. 다른 상태로 가면 **비운다**
+    (DB CHECK `ck_task_cancel_reason_only_when_cancelled` 가 최종 방어선이다).
+    """
+    row = (
+        await session.scalars(
+            select(Task).where(
+                Task.account_id == account_id,
+                Task.deleted_at.is_(None),
+                Task.id == task_id,
+            )
+        )
+    ).one()
+
+    row.status = status
+    row.cancel_reason = cancel_reason
+    await session.flush()
+
+
+async def soft_delete(
+    session: AsyncSession, *, account_id: int, task_id: int, deleted_at: datetime
+) -> None:
+    """T-11 — `deleted_at` 만 채운다. **자식 행을 지우지 않는다**(부모 필터로 함께 사라진다).
+
+    `schedule` 행도 그대로 둔다 — 조회·겹침 검사가 원본을 조인해 거른다(§3-3 · C-5-c).
+    """
+    row = (
+        await session.scalars(
+            select(Task).where(
+                Task.account_id == account_id,
+                Task.deleted_at.is_(None),
+                Task.id == task_id,
+            )
+        )
+    ).one()
+    row.deleted_at = deleted_at
+    await session.flush()
+
+
+# --- 목록 (SPEC-004 §4) --------------------------------------------------
+
+
+def _period_filter(
+    *, from_date: date, to_date: date, period_from: datetime, period_to: datetime
+) -> ColumnElement[bool]:
+    """T-1-a — **기한 없는 업무는 생성일 기준 달에 속한다.**
+
+    기한은 달력 날짜(KST)로, 생성일은 순간(UTC)으로 비교한다 — 두 축의 타입이 다르다(G-2 · G-2-e).
+    끝 경계는 **열려 있다**(`< to`).
+    """
+    return or_(
+        and_(Task.due_date.is_not(None), Task.due_date >= from_date, Task.due_date < to_date),
+        and_(
+            Task.due_date.is_(None),
+            Task.created_at >= period_from,
+            Task.created_at < period_to,
+        ),
+    )
+
+
+def _list_filters(
+    *,
+    from_date: date,
+    to_date: date,
+    period_from: datetime,
+    period_to: datetime,
+    work_type_id: int | None,
+    status: str | None,
+    project_id: int | None,
+) -> list[ColumnElement[bool]]:
+    """목록·집계가 **같은 조건**을 보도록 한 곳에 둔다.
+
+    `work_type_id` 만 따로 뺄 수 있어야 한다 — `typeCounts` 가 **유형 탭 자신을 반영하지 않기** 때문이다.
+    """
+    filters = [
+        _period_filter(
+            from_date=from_date,
+            to_date=to_date,
+            period_from=period_from,
+            period_to=period_to,
+        )
+    ]
+    if work_type_id is not None:
+        filters.append(Task.work_type_id == work_type_id)
+    if status is not None:
+        filters.append(Task.status == status)
+    if project_id is not None:
+        filters.append(Task.project_id == project_id)
+    return filters
+
+
+def _memo_count() -> ColumnElement[int]:
+    return (
+        select(func.count())
+        .select_from(TaskMemo)
+        .where(TaskMemo.task_id == Task.id)
+        .scalar_subquery()
+    )
+
+
+def _todo_count(*, done_only: bool) -> ColumnElement[int]:
+    query = select(func.count()).select_from(TaskTodo).where(TaskTodo.task_id == Task.id)
+    if done_only:
+        query = query.where(TaskTodo.done.is_(True))
+    return query.scalar_subquery()
+
+
+def _cancelled_at() -> ColumnElement[datetime]:
+    """취소 시각은 **취소 전이 로그**에서 파생한다 — `task` 에 컬럼을 두지 않는다(G-7)."""
+    return (
+        select(func.max(TaskLog.created_at))
+        .select_from(TaskLog)
+        .where(
+            TaskLog.task_id == Task.id,
+            TaskLog.to_status == TaskStatus.CANCELLED.value,
+        )
+        .scalar_subquery()
+    )
+
+
+_SORTS = {
+    # T-1-a — 기한 없는 업무는 **맨 아래**다. Postgres 의 DESC 기본은 NULLS FIRST 라 둘 다 명시한다
+    TaskSort.DUE_ASC.value: (Task.due_date.asc().nullslast(), Task.id.asc()),
+    TaskSort.DUE_DESC.value: (Task.due_date.desc().nullslast(), Task.id.desc()),
+    TaskSort.CREATED_DESC.value: (Task.created_at.desc(), Task.id.desc()),
+}
+
+
+async def list_tasks(
+    session: AsyncSession,
+    *,
+    account_id: int,
+    from_date: date,
+    to_date: date,
+    period_from: datetime,
+    period_to: datetime,
+    work_type_id: int | None,
+    status: str | None,
+    project_id: int | None,
+    sort: str,
+    page: int,
+    size: int,
+    today: date,
+) -> list[TaskListItemDTO]:
+    """목록 한 페이지. **`schedule` 을 조인하지 않는다** — `task` 인덱스만 탄다(BE §12 5-a).
+
+    파생 카운트(메모·할일)는 **스칼라 서브쿼리**라 행마다 쿼리가 늘지 않는다.
+    """
+    filters = _list_filters(
+        from_date=from_date,
+        to_date=to_date,
+        period_from=period_from,
+        period_to=period_to,
+        work_type_id=work_type_id,
+        status=status,
+        project_id=project_id,
+    )
+
+    query = (
+        _with_refs(account_id)
+        .add_columns(*_derived_columns())
+        .where(*filters)
+        .order_by(*_SORTS[sort])
+        .offset((page - 1) * size)
+        .limit(size)
+    )
+    rows = (await session.execute(query)).all()
+    return [_to_list_item(row, today=today) for row in rows]
+
+
+async def count_tasks(
+    session: AsyncSession,
+    *,
+    account_id: int,
+    from_date: date,
+    to_date: date,
+    period_from: datetime,
+    period_to: datetime,
+    work_type_id: int | None,
+    status: str | None,
+    project_id: int | None,
+) -> int:
+    total = await session.scalar(
+        select(func.count())
+        .select_from(Task)
+        .where(
+            Task.account_id == account_id,
+            Task.deleted_at.is_(None),
+            *_list_filters(
+                from_date=from_date,
+                to_date=to_date,
+                period_from=period_from,
+                period_to=period_to,
+                work_type_id=work_type_id,
+                status=status,
+                project_id=project_id,
+            ),
+        )
+    )
+    return total or 0
+
+
+async def count_by_work_type(
+    session: AsyncSession,
+    *,
+    account_id: int,
+    from_date: date,
+    to_date: date,
+    period_from: datetime,
+    period_to: datetime,
+    status: str | None,
+    project_id: int | None,
+) -> list[tuple[int, str, int]]:
+    """`typeCounts` — **유형 탭 자신은 반영하지 않는다**(SPEC-004 §4).
+
+    `work_type_id` 를 조건에서 뺀 채 센다. 탭에 붙는 수가 **탭을 누를 때마다 흔들리면 안 된다.**
+    기간·상태·프로젝트는 반영한다.
+    """
+    rows = (
+        await session.execute(
+            select(WorkType.id, WorkType.name, func.count().label("count"))
+            .select_from(Task)
+            .join(WorkType, WorkType.id == Task.work_type_id)
+            .where(
+                Task.account_id == account_id,
+                Task.deleted_at.is_(None),
+                *_list_filters(
+                    from_date=from_date,
+                    to_date=to_date,
+                    period_from=period_from,
+                    period_to=period_to,
+                    work_type_id=None,
+                    status=status,
+                    project_id=project_id,
+                ),
+            )
+            .group_by(WorkType.id, WorkType.name)
+            .order_by(WorkType.id)
+        )
+    ).all()
+    return [(row.id, row.name, row.count) for row in rows]
+
+
+def _to_list_item(row: object, *, today: date) -> TaskListItemDTO:
+    """행 → 목록 항목. **파생값을 여기서 붙인다**(G-7 — 컬럼으로 두지 않는다).
+
+    「지연」은 **기한 경과 + 완료·취소 아님**이다(T-4). `today` 는 service 가 앱 타임존으로 정해 넘긴다.
+    """
+    base = _row_to_dto(row)
+    overdue = (
+        base.due_date is not None
+        and base.due_date < today
+        and base.status not in (TaskStatus.DONE.value, TaskStatus.CANCELLED.value)
+    )
+    return TaskListItemDTO(
+        id=base.id,
+        title=base.title,
+        status=base.status,
+        work_type=base.work_type,
+        project=base.project,
+        due_date=base.due_date,
+        due_start_time=base.due_start_time,
+        due_end_time=base.due_end_time,
+        d_day=None if base.due_date is None else (base.due_date - today).days,
+        is_overdue=overdue,
+        overdue_days=(today - base.due_date).days if overdue else None,
+        memo_count=row.memo_count,  # type: ignore[attr-defined]
+        todo_progress=TodoProgressDTO(
+            done=row.todo_done,  # type: ignore[attr-defined]
+            total=row.todo_total,  # type: ignore[attr-defined]
+        ),
+        cancel_reason=base.cancel_reason,
+        # 취소 상태일 때만 의미가 있다 — 되살아난 업무에 옛 취소 시각을 달지 않는다
+        cancelled_at=(
+            row.cancelled_at  # type: ignore[attr-defined]
+            if base.status == TaskStatus.CANCELLED.value
+            else None
+        ),
+    )
+
+
+def _derived_columns() -> tuple[ColumnElement, ...]:
+    return (
+        _memo_count().label("memo_count"),
+        _todo_count(done_only=True).label("todo_done"),
+        _todo_count(done_only=False).label("todo_total"),
+        _cancelled_at().label("cancelled_at"),
+    )
+
+
+async def find_list_item(
+    session: AsyncSession, *, account_id: int, task_id: int, today: date
+) -> TaskListItemDTO | None:
+    """단건을 **목록 항목과 같은 형태**로 읽는다 — 상태 전이 응답이 이것이다(SPEC-004 §4)."""
+    row = (
+        await session.execute(
+            _with_refs(account_id).add_columns(*_derived_columns()).where(Task.id == task_id)
+        )
+    ).one_or_none()
+    return None if row is None else _to_list_item(row, today=today)

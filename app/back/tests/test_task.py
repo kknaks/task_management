@@ -588,17 +588,37 @@ async def test_every_surface_requires_a_session(
     assert response.json()["code"] == "token_expired"
 
 
-async def test_there_is_no_status_transition_or_schedule_surface(
+async def test_there_is_no_schedule_write_surface(
     client: AsyncClient, owner: TaskOwner
 ) -> None:
-    """이 work 가 **만들지 않은** 표면 — 상태 전이(WORK-005) · `schedule` 쓰기(C-3)."""
+    """**`schedule` 쓰기 표면이 없다** — 파생은 단방향이라 원본을 고친다(C-3 · BE-10).
+
+    상태 전이 표면(`PATCH /{id}/status`)은 **WORK-005 가 만들었다** — 그 계약은
+    `tests/test_task_status.py` 가 본다. 여기서는 「없어야 하는 것」만 남긴다.
+    """
+    for method, path in (
+        ("PATCH", "/api/schedules/1"),
+        ("POST", "/api/schedules"),
+        ("DELETE", "/api/schedules/1"),
+    ):
+        response = await client.request(
+            method, path, json={"startAt": "2026-09-10T05:00:00Z"}, headers=owner.headers
+        )
+        assert response.status_code in (404, 405), f"{method} {path} → {response.status_code}"
+
+
+async def test_the_general_patch_still_refuses_status(
+    client: AsyncClient, owner: TaskOwner
+) -> None:
+    """WORK-005 가 전용 표면을 만든 뒤에도 **일반 PATCH 는 상태를 받지 않는다**(BE §10).
+
+    게이트 우회 경로를 스키마 층에서 막는 것이라 전용 엔드포인트가 생겨도 그대로다.
+    """
     created = await _create(client, owner)
 
-    for method, path, body in (
-        ("POST", f"{BASE}/{created['id']}/status", {"status": "done"}),
-        ("PATCH", f"{BASE}/{created['id']}/status", {"status": "done"}),
-        ("PATCH", "/api/schedules/1", {"startAt": "2026-09-10T05:00:00Z"}),
-        ("POST", "/api/schedules", {"startAt": "2026-09-10T05:00:00Z"}),
-    ):
-        response = await client.request(method, path, json=body, headers=owner.headers)
-        assert response.status_code in (404, 405), f"{method} {path} → {response.status_code}"
+    response = await client.patch(
+        f"{BASE}/{created['id']}", json={"status": "done"}, headers=owner.headers
+    )
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "validation_error"

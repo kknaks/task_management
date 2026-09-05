@@ -59,6 +59,38 @@ class ConflictError(AppError):
     code = "conflict"
 
 
+class TaskCompletionBlockedError(ValidationError):
+    """T-5 완료 게이트 — 결과자료도 완료 결과도 없이 완료로 보냈다(DEC-002 §4).
+
+    **거부는 정상 경로다**(SPEC-004 §4). 세 진입점(리스트 셀·상세 드롭다운·칸반 DnD)과
+    이후 회의록이 전부 같은 판정을 지나므로, 이 예외를 던지는 곳도 **한 곳뿐**이다.
+
+    `persist_changes` 를 켜지 않는다 — **실패가 쓰기를 뜻하지 않는다**(BE §7).
+    거부되면 상태가 바뀌지 않고 로그도 남지 않는다.
+    """
+
+    code = "task_completion_blocked"
+
+
+class InvalidStatusTransitionError(ConflictError):
+    """T-6 전이 그래프 위반 — `done → cancelled` 처럼 그래프 밖으로 가려 했다.
+
+    화면이 비활성으로 미리 알리지만 **판정은 서버가 한다**(SPEC-004 §5).
+    """
+
+    code = "invalid_status_transition"
+
+
+class UndoNotAvailableError(ConflictError):
+    """실행취소 조건 미충족(SPEC-004 §4 · BE §8-2).
+
+    ① 마지막 로그가 상태 전이가 아니거나 ② 그 뒤 다른 변경이 있거나 ③ **4초가 지났다**.
+    4초는 완료 토스트 수명과 맞춘 spec 값이다.
+    """
+
+    code = "undo_not_available"
+
+
 class DatabaseUnavailableError(AppError):
     """SPEC-000 §4 Case Matrix 의 `db_unavailable`.
 

@@ -190,3 +190,88 @@ class TodoUpdateDTO:
     text: str | Unset = UNSET
     done: bool | Unset = UNSET
     due_date: date | None | Unset = UNSET
+
+
+# --- 상태 전이 · 목록 (SPEC-004) -----------------------------------------
+
+
+@dataclass(frozen=True)
+class StatusChangeDTO:
+    """상태 전이 요청. **세 진입점이 같은 것을 보낸다**(SPEC-004 §4).
+
+    `cancel_reason` 은 `cancelled` 로 갈 때만 받는다(T-7).
+    `log_cancel_reason` 기본 참 — 취소 사유를 로그에 남긴다(DEC-002 §6).
+    """
+
+    status: str
+    cancel_reason: str | None = None
+    log_cancel_reason: bool = True
+
+
+@dataclass(frozen=True)
+class StatusTransitionDTO:
+    """`task_log` 의 상태 전이 한 줄. 실행취소가 이 값을 보고 판정한다.
+
+    본문(한국어)이 아니라 **컬럼**으로 판정한다 — 문구가 바뀌어도 안 깨진다.
+    """
+
+    log_id: int
+    from_status: str
+    to_status: str
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class TaskListItemDTO:
+    """목록 항목 — 상세보다 얕고, **파생값이 함께 온다**(G-7).
+
+    리스트와 칸반이 **같은 응답**을 본다. 칸반은 이 목록을 상태로 나눠 그릴 뿐이다.
+    """
+
+    id: int
+    title: str
+    status: str
+    work_type: WorkTypeRefDTO
+    project: ProjectRefDTO | None
+    due_date: date | None
+    due_start_time: time | None
+    due_end_time: time | None
+    d_day: int | None
+    is_overdue: bool
+    overdue_days: int | None
+    memo_count: int
+    todo_progress: TodoProgressDTO
+    cancel_reason: str | None
+    cancelled_at: datetime | None
+
+
+@dataclass(frozen=True)
+class TypeCountDTO:
+    """유형 탭에 붙는 수. `work_type_id` 가 `None` 이면 「전체」다."""
+
+    work_type_id: int | None
+    name: str
+    count: int
+
+
+@dataclass(frozen=True)
+class TaskListFilterDTO:
+    """목록 조건. **기간·필터·정렬·페이지가 전부 쿼리에서 온다**(FE §1-2)."""
+
+    period_from: datetime
+    period_to: datetime
+    work_type_id: int | None = None
+    status: str | None = None
+    project_id: int | None = None
+    sort: str = "due_asc"
+    page: int = 1
+    size: int = 12
+
+
+@dataclass(frozen=True)
+class TaskListResultDTO:
+    items: list[TaskListItemDTO]
+    total: int
+    page: int
+    size: int
+    type_counts: list[TypeCountDTO]

@@ -9,16 +9,20 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_db, require_account
-from dto.enums import RelationCandidateScope
+from dto.enums import RelationCandidateScope, TaskSort, TaskStatus
+from dto.task import TaskListFilterDTO
 from schemas.task import (
     AttachmentCreate,
     MemoCreate,
+    StatusChange,
+    TaskListItem,
+    TaskListResponse,
     RelationCandidateItem,
     RelationCandidateListResponse,
     RelationCreate,
@@ -98,6 +102,43 @@ async def list_relation_candidates(
 # --- 본체 ---------------------------------------------------------------
 
 
+@router.get("", response_model=TaskListResponse, response_model_by_alias=True)
+async def list_tasks(
+    # §3 규칙 7 — 쿼리 alias 를 **손으로** 적는다. 빠뜨리면 필터가 조용히 무시되고 200 이 난다
+    period_from: datetime | None = Query(default=None, alias="from"),
+    period_to: datetime | None = Query(default=None, alias="to"),
+    work_type_id: int | None = Query(default=None, alias="workTypeId"),
+    status_filter: TaskStatus | None = Query(default=None, alias="status"),
+    project_id: int | None = Query(default=None, alias="projectId"),
+    sort: TaskSort = Query(default=TaskSort.DUE_ASC, alias="sort"),
+    page: int = Query(default=1, ge=1, alias="page"),
+    size: int = Query(default=12, ge=1, le=100, alias="size"),
+    account_id: int = Depends(require_account),
+    session: AsyncSession = Depends(get_db),
+) -> TaskListResponse:
+    """**리스트와 칸반이 같은 응답을 본다** — 칸반은 이 목록을 상태로 나눠 그릴 뿐이다.
+
+    기간을 안 보내면 **이번 달**이다. 경계는 UTC 로 주고받는다(G-2).
+    """
+    default_from, default_to = task_service.current_month_bounds()
+    return TaskListResponse.from_dto(
+        await task_service.list_tasks(
+            session,
+            account_id=account_id,
+            command=TaskListFilterDTO(
+                period_from=period_from or default_from,
+                period_to=period_to or default_to,
+                work_type_id=work_type_id,
+                status=None if status_filter is None else status_filter.value,
+                project_id=project_id,
+                sort=sort.value,
+                page=page,
+                size=size,
+            ),
+        )
+    )
+
+
 @router.post(
     "",
     response_model=TaskDetail,
@@ -140,6 +181,59 @@ async def update_task(
             session, account_id=account_id, task_id=task_id, command=body.to_dto()
         )
     )
+
+
+# --- 상태 전이 (SPEC-004) -------------------------------------------------
+#
+# **세 진입점이 이 하나로 들어온다** — 리스트 셀 · 상세 드롭다운 · 칸반 DnD.
+# (WORK-008 의 회의록 「업무 갱신」이 네 번째로 같은 곳을 지난다.)
+
+
+@router.patch(
+    "/{task_id}/status", response_model=TaskListItem, response_model_by_alias=True
+)
+async def change_status(
+    task_id: int,
+    body: StatusChange,
+    account_id: int = Depends(require_account),
+    session: AsyncSession = Depends(get_db),
+) -> TaskListItem:
+    """**게이트 판정이 붙기 때문에 일반 PATCH 에 섞지 않는다**(BE §10).
+
+    거부(`task_completion_blocked`·`invalid_status_transition`)는 **정상 경로**다.
+    """
+    return TaskListItem.from_dto(
+        await task_service.change_status(
+            session, account_id=account_id, task_id=task_id, command=body.to_dto()
+        )
+    )
+
+
+@router.post(
+    "/{task_id}/status/undo", response_model=TaskListItem, response_model_by_alias=True
+)
+async def undo_status(
+    task_id: int,
+    account_id: int = Depends(require_account),
+    session: AsyncSession = Depends(get_db),
+) -> TaskListItem:
+    """마지막 전이를 되돌리고 **그 로그를 지운다** — 로그를 지우는 유일한 경로다."""
+    return TaskListItem.from_dto(
+        await task_service.undo_last_status(
+            session, account_id=account_id, task_id=task_id
+        )
+    )
+
+
+@router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_task(
+    task_id: int,
+    account_id: int = Depends(require_account),
+    session: AsyncSession = Depends(get_db),
+) -> Response:
+    """T-11 소프트 딜리트 — 목록에서 빠지고 **행과 자식은 DB 에 남는다.** 복원 경로는 없다."""
+    await task_service.delete_task(session, account_id=account_id, task_id=task_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # --- 할일 ---------------------------------------------------------------

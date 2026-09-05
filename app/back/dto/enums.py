@@ -66,6 +66,14 @@ class AttachmentKind(StrEnum):
     LINK = "link"
 
 
+class TaskSort(StrEnum):
+    """목록 정렬 3종(SPEC-004 §4). 기본은 `DUE_ASC` 이고 **기한 없는 업무는 맨 아래**다(T-1-a)."""
+
+    DUE_ASC = "due_asc"
+    DUE_DESC = "due_desc"
+    CREATED_DESC = "created_desc"
+
+
 class RelationCandidateScope(StrEnum):
     """연관업무 후보를 **잘라내는 필터**(SPEC-003 §4 · U-8 필터 칩 3 과 1:1).
 

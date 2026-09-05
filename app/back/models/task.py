@@ -162,7 +162,13 @@ class TaskMemo(Base, TimestampMixin):
 
 
 class TaskLog(Base, TimestampMixin):
-    """시스템 로그. **서비스만 쓴다** — 사용자는 쓰거나 지울 수 없다(DEC-002 §6)."""
+    """시스템 로그. **서비스만 쓴다** — 사용자는 쓰거나 지울 수 없다(DEC-002 §6).
+
+    **상태 전이 로그는 두 컬럼을 더 갖는다**(`from_status`·`to_status`) — 나머지 로그는 둘 다 `NULL` 이다.
+    실행취소가 「마지막 로그가 상태 전이인가」를 판정하고 **직전 상태를 복원**해야 하는데,
+    한국어 본문(「상태 시작전 → 진행중」)을 되파싱하면 문구가 바뀌는 순간 깨진다.
+    취소 시각(`cancelledAt`)도 여기서 나온다 — `task` 에 컬럼을 만들지 않는다(G-7).
+    """
 
     __tablename__ = "task_log"
 
@@ -171,8 +177,23 @@ class TaskLog(Base, TimestampMixin):
         BigInteger, ForeignKey("task.id", name="fk_task_log_task_id"), nullable=False
     )
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    # 전이 로그만 채운다. 둘은 **함께 있거나 함께 없다**(아래 CHECK).
+    from_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    to_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     __table_args__ = (
+        CheckConstraint(
+            "(from_status IS NULL) = (to_status IS NULL)",
+            name="ck_task_log_status_pair",
+        ),
+        CheckConstraint(
+            f"from_status IS NULL OR from_status IN ({_STATUS_VALUES})",
+            name="ck_task_log_from_status",
+        ),
+        CheckConstraint(
+            f"to_status IS NULL OR to_status IN ({_STATUS_VALUES})",
+            name="ck_task_log_to_status",
+        ),
         Index("ix_task_log_task_id_created_at", "task_id", text("created_at DESC")),
     )
 
