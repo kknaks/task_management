@@ -60,7 +60,12 @@
     linear-gradient(160deg, #dce6fb, #e7edfc 34%, #f5f8fe 68%, #ffffff);
 
   /* ── 형태 · radius ────────────────────────────────────────────────── */
-  --tm-radius-card: 12px;
+  /**
+   * 카드 radius. `09-design-tokens.md` §형태는 「카드 12~16」 **범위**지만
+   * **SPEC-001 U-4 가 「radius 16」으로 더 좁게 못박았다** — 좁은 쪽이 계약이다(검수 W-2).
+   * 12 였을 때 `ConfirmModal` 주석의 「radius 16」과 실제 값이 어긋나 있었다.
+   */
+  --tm-radius-card: 16px;
   --tm-radius-control: 8px;
   --tm-radius-chip: 4px;
 

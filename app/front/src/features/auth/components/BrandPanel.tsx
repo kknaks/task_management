@@ -26,7 +26,7 @@ export function BrandPanel() {
       <BrandMark />
 
       <div className="flex flex-col gap-6">
-        <h2 className="text-[44px] font-bold leading-[1.25] tracking-[-0.03em] text-foreground">
+        <h2 className="text-brand-title text-foreground">
           오늘 한 일이
           <br />
           내일의 기록이 되도록

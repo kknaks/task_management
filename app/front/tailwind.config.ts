@@ -86,6 +86,12 @@ const config: Config = {
        * 값은 `09-design-tokens.md` §타입 그대로다.
        */
       fontSize: {
+        /**
+         * 로그인 브랜드 패널 헤드라인 — `11-auth-profile.md §로그인` 의 「헤드라인 44/700」.
+         * 계단이 프리셋에 없어 컴포넌트가 임의 크기를 쓰고 있었다(검수 W-1). 값은 디자인
+         * 원본 그대로이고, **등록만** 여기로 옮겨 §5-1 「임의 크기 금지」를 지킨다.
+         */
+        "brand-title": ["44px", { lineHeight: "1.25", letterSpacing: "-0.03em", fontWeight: "700" }],
         "page-title": ["28px", { lineHeight: "1.3", letterSpacing: "-0.03em", fontWeight: "700" }],
         "detail-title": ["26px", { lineHeight: "1.35", letterSpacing: "-0.03em", fontWeight: "700" }],
         panel: ["16px", { lineHeight: "1.4", letterSpacing: "-0.02em", fontWeight: "700" }],

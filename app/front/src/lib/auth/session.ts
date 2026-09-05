@@ -80,14 +80,22 @@ export async function logout(): Promise<{
   /** 키체인에서 실제로 지웠나. 실패해도 **메모리는 비었고** 로그인 화면으로 간다. */
   storeCleared: boolean;
 }> {
-  const refreshToken = await tokenStore.get();
+  const hasRefreshToken = (await tokenStore.get()) !== null;
 
   let serverAcknowledged = false;
-  if (refreshToken) {
+  if (hasRefreshToken) {
     try {
       await apiFetch<void>("/api/auth/logout", {
         method: "POST",
-        body: { refreshToken },
+        /**
+         * **미리 캡처하지 않는다.** 이 요청이 access 만료를 만나면 파이프라인이 갱신을 태워
+         * refresh 를 **회전**시키는데(`R1 → R2`), 캡처해 둔 `R1` 을 보내면 서버는 이미
+         * `revoked_at` 이 찍힌 토큰을 받아 **아무것도 하지 않고 204** 를 준다 — 화면은
+         * 「로그아웃 완료」인데 `R2` 세션이 7일간 살아남는다(검수 F-3 · SPEC-001 §5).
+         *
+         * 그래서 **시도마다 다시 읽는다.** 재시도 본문에는 회전된 `R2` 가 실린다.
+         */
+        bodyFactory: async () => ({ refreshToken: await tokenStore.get() }),
       });
       serverAcknowledged = true;
     } catch {

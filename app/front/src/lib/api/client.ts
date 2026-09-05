@@ -19,7 +19,19 @@ import { notifySessionEnd, type SessionEndReason } from "@/lib/auth/sessionEvent
 import type { TokenBundle } from "@/types/api";
 
 export interface ApiRequestInit extends Omit<RequestInit, "body"> {
+  /** 고정 본문. 요청 도중 값이 바뀌지 않는 경우에 쓴다. */
   body?: unknown;
+  /**
+   * **요청 직전에** 본문을 만드는 콜백. **시도마다 다시 불린다**(첫 요청 · 갱신 후 재시도).
+   *
+   * 파이프라인이 **도중에 바꾸는 값**을 본문에 실어야 할 때 쓴다. 지금 유일한 사용처는
+   * 로그아웃의 `refreshToken` 이다 — 401 을 만나면 갱신이 refresh 를 **회전**시키므로,
+   * 미리 캡처한 옛 토큰을 보내면 서버가 이미 무효인 토큰을 받아 **아무것도 하지 않고 204** 를
+   * 주고 새 세션이 살아남는다(검수 F-3 · SPEC-001 §4 API Contract · §5 로그아웃).
+   *
+   * `body` 와 함께 주면 이쪽이 이긴다.
+   */
+  bodyFactory?: () => unknown | Promise<unknown>;
   /**
    * 인증 게이트 **밖**의 표면인가(헬스·로그인·갱신 — SPEC-001 §4).
    * 기본은 `false` 다 — 새 화면이 토큰 부착을 잊는 쪽으로 기울지 않게 한다.
@@ -181,11 +193,18 @@ function sessionExpiredError(): ApiError {
 }
 
 export async function apiFetch<T>(path: string, init: ApiRequestInit = {}): Promise<T> {
-  const { publicSurface = false, ...rest } = init;
+  const { publicSurface = false, bodyFactory, ...rest } = init;
+
+  /**
+   * 이번 **시도**의 본문. `bodyFactory` 가 있으면 시도마다 다시 만든다 — 갱신이 refresh 를
+   * 회전시킨 뒤의 재시도에서 **새 토큰**이 실리게 하는 것이 이 함수의 존재 이유다(F-3).
+   */
+  const attemptInit = async (): Promise<Omit<ApiRequestInit, "publicSurface" | "bodyFactory">> =>
+    bodyFactory ? { ...rest, body: await bodyFactory() } : rest;
 
   // 로그인·갱신·헬스는 게이트 밖이다 — 토큰을 붙이지 않고 갱신도 걸지 않는다.
   if (publicSurface) {
-    return requestOnce<T>(path, rest, null);
+    return requestOnce<T>(path, await attemptInit(), null);
   }
 
   let accessToken = tokenStore.getAccess();
@@ -201,7 +220,8 @@ export async function apiFetch<T>(path: string, init: ApiRequestInit = {}): Prom
   }
 
   try {
-    return await requestOnce<T>(path, rest, accessToken);
+    // 본문은 **토큰을 확보한 뒤에** 만든다 — 위 갱신이 회전시킨 값이 반영돼야 한다.
+    return await requestOnce<T>(path, await attemptInit(), accessToken);
   } catch (error) {
     if (!isApiError(error) || error.status !== 401) {
       throw error;
@@ -215,8 +235,9 @@ export async function apiFetch<T>(path: string, init: ApiRequestInit = {}): Prom
     }
 
     try {
-      // **원 요청 1회 재시도.** 여기서 끝이고 더 돌지 않는다.
-      return await requestOnce<T>(path, rest, outcome.accessToken);
+      // **원 요청 1회 재시도.** 본문을 **다시 만든다** — 방금 회전한 refresh 가 여기서 실린다.
+      // 여기서 끝이고 더 돌지 않는다.
+      return await requestOnce<T>(path, await attemptInit(), outcome.accessToken);
     } catch (retryError) {
       if (isApiError(retryError) && retryError.status === 401) {
         await endSession("expired");
