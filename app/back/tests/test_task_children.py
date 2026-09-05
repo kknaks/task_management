@@ -13,6 +13,7 @@ from httpx import AsyncClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from models.account import Project, WorkType
 from models.task import Task, TaskLog, TaskRelation
 from tests.task_fixtures import TaskOwner, owner, stranger  # noqa: F401
 
@@ -50,7 +51,12 @@ async def test_a_todo_can_be_added_and_the_progress_follows(
     )
 
     assert response.status_code == 201
-    assert response.json()["done"] is False
+    # F-4 — 자식 쓰기 표면은 **갱신된 TaskDetail** 을 준다(SPEC-003 §4). 부분 응답이 아니다
+    body = response.json()
+    assert body["id"] == task["id"]
+    assert [todo["text"] for todo in body["todos"]] == ["필요사항 체크"]
+    assert body["todos"][0]["done"] is False
+    assert body["todoProgress"] == {"done": 0, "total": 1}
 
     detail = await _detail(client, owner, task["id"])
     assert detail["todoProgress"] == {"done": 0, "total": 1}
@@ -70,7 +76,11 @@ async def test_completing_a_todo_raises_progress_and_writes_one_log(
     )
 
     assert response.status_code == 200
-    assert response.json()["done"] is True
+    # 진행률·로그가 **응답에 함께** 온다 — 화면이 다시 세지 않아도 된다(F-4 의 이유)
+    body = response.json()
+    assert body["id"] == task["id"]
+    assert body["todoProgress"] == {"done": 1, "total": 2}
+    assert _log_texts(body) == ["할일 1건 완료", "업무 생성"]
 
     detail = await _detail(client, owner, task["id"])
     assert detail["todoProgress"] == {"done": 1, "total": 2}
@@ -125,7 +135,7 @@ async def test_a_todo_text_can_be_edited_without_a_log(
         f"{BASE}/{task['id']}/todos/{todo_id}", json={"text": "고친 할일"}, headers=owner.headers
     )
 
-    assert response.json()["text"] == "고친 할일"
+    assert [todo["text"] for todo in response.json()["todos"]] == ["고친 할일"]
     assert _log_texts(await _detail(client, owner, task["id"])) == ["업무 생성"]
 
 
@@ -878,3 +888,238 @@ async def test_total_respects_keyword_and_exclusions(
     body = response.json()
     assert [item["title"] for item in body["items"]] == ["소개서 초안"]
     assert body["total"] == 1
+
+
+# --- 검수 수정 (2026-09-06) ----------------------------------------------
+
+
+async def test_every_child_write_surface_returns_the_task_detail(
+    client: AsyncClient, owner: TaskOwner
+) -> None:
+    """F-4 · SPEC-003 §4 — **넷 다 갱신된 `TaskDetail`** 이다. 부분 응답이 없다.
+
+    프론트가 이 응답을 `['tasks','detail', id]` 에 써 넣으므로, 하나라도 형태가 다르면
+    **엉뚱한 키에 쓰레기 캐시**가 쌓인다(검수 F-4 의 재현 경로).
+    """
+    task = await _create(client, owner, todos=[{"text": "A"}])
+    other = await _create(client, owner, title="연결 대상")
+    todo_id = task["todos"][0]["id"]
+
+    writes = [
+        await client.post(
+            f"{BASE}/{task['id']}/todos", json={"text": "새 할일"}, headers=owner.headers
+        ),
+        await client.patch(
+            f"{BASE}/{task['id']}/todos/{todo_id}",
+            json={"done": True},
+            headers=owner.headers,
+        ),
+        await client.post(
+            f"{BASE}/{task['id']}/memos", json={"text": "메모"}, headers=owner.headers
+        ),
+        await client.post(
+            f"{BASE}/{task['id']}/attachments",
+            json={"role": "reference", "kind": "link", "url": "https://example.test/a"},
+            headers=owner.headers,
+        ),
+        await client.post(
+            f"{BASE}/{task['id']}/relations",
+            json={"taskIds": [other["id"]]},
+            headers=owner.headers,
+        ),
+    ]
+
+    for response in writes:
+        body = response.json()
+        # 상세의 표지 — **업무 id** 이고 파생값이 함께 온다. 할일 한 건이면 이 키들이 없다
+        assert body["id"] == task["id"], body
+        assert "todoProgress" in body
+        assert "logs" in body
+        assert "relationTotal" in body
+
+
+async def test_sending_only_times_without_any_due_date_is_422(
+    client: AsyncClient, db_session: AsyncSession, owner: TaskOwner
+) -> None:
+    """W-1 — 기한 없는 업무에 **시각만** 보내면 422 다(§4 Validation · T-1-b).
+
+    고치기 전에는 `_resolve_due` 가 `_Due(None,None,None)` 으로 접어 버려
+    `_validate_due` 가 그 접힌 결과를 보고 통과시켰다 → 아무것도 안 바뀐 채 **200**.
+    """
+    task = await _create(client, owner)
+
+    response = await client.patch(
+        f"{BASE}/{task['id']}",
+        json={"dueStartTime": "14:00", "dueEndTime": "15:00"},
+        headers=owner.headers,
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": "입력값을 확인해 주세요",
+        "code": "validation_error",
+    }
+
+    row = (await db_session.scalars(select(Task).where(Task.id == task["id"]))).one()
+    assert row.due_start_time is None
+
+
+async def test_clearing_the_date_while_sending_times_is_422(
+    client: AsyncClient, owner: TaskOwner
+) -> None:
+    """날짜를 지우면서 시각을 보내는 것도 같은 위반이다."""
+    task = await _create(
+        client, owner, dueDate="2026-09-10", dueStartTime="14:00", dueEndTime="15:00"
+    )
+
+    response = await client.patch(
+        f"{BASE}/{task['id']}",
+        json={"dueDate": None, "dueStartTime": "16:00", "dueEndTime": "17:00"},
+        headers=owner.headers,
+    )
+
+    assert response.status_code == 422
+
+
+async def test_sending_date_and_times_together_still_works(
+    client: AsyncClient, owner: TaskOwner
+) -> None:
+    """정상 경로를 막지 않았는지 — 날짜와 시각을 **함께** 보내면 200 이다."""
+    task = await _create(client, owner)
+
+    response = await client.patch(
+        f"{BASE}/{task['id']}",
+        json={"dueDate": "2026-09-10", "dueStartTime": "14:00", "dueEndTime": "15:00"},
+        headers=owner.headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["dueStartTime"] == "14:00:00"
+
+
+async def test_clearing_only_the_times_still_works(
+    client: AsyncClient, owner: TaskOwner
+) -> None:
+    """시각만 `null` 로 지우는 것은 **정상 경로**라 걸리지 않는다(날짜는 남는다)."""
+    task = await _create(
+        client, owner, dueDate="2026-09-10", dueStartTime="14:00", dueEndTime="15:00"
+    )
+
+    response = await client.patch(
+        f"{BASE}/{task['id']}",
+        json={"dueStartTime": None, "dueEndTime": None},
+        headers=owner.headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["dueDate"] == "2026-09-10"
+    assert response.json()["dueStartTime"] is None
+
+
+async def test_unlinking_a_relation_that_does_not_exist_is_404(
+    client: AsyncClient, owner: TaskOwner
+) -> None:
+    """W-10 — **없는 자식을 지우면 404**. 할일·첨부와 같다(SPEC-003 §4).
+
+    멱등 삭제로 두지 않는다: 이미 없다는 건 화면이 낡았다는 뜻이고 204 는 그 사실을 묻는다.
+    """
+    task = await _create(client, owner, title="기준")
+    unrelated = await _create(client, owner, title="연결한 적 없는 업무")
+
+    response = await client.delete(
+        f"{BASE}/{task['id']}/relations/{unrelated['id']}", headers=owner.headers
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "업무를 찾을 수 없습니다", "code": "not_found"}
+
+
+async def test_unlinking_twice_is_404_on_the_second_call(
+    client: AsyncClient, owner: TaskOwner
+) -> None:
+    """있는 연관은 204, 그 다음은 404 다."""
+    first = await _create(client, owner, title="A")
+    second = await _create(client, owner, title="B")
+    await client.post(
+        f"{BASE}/{first['id']}/relations",
+        json={"taskIds": [second["id"]]},
+        headers=owner.headers,
+    )
+
+    once = await client.delete(
+        f"{BASE}/{first['id']}/relations/{second['id']}", headers=owner.headers
+    )
+    twice = await client.delete(
+        f"{BASE}/{first['id']}/relations/{second['id']}", headers=owner.headers
+    )
+
+    assert once.status_code == 204
+    assert twice.status_code == 404
+
+
+async def test_a_deleted_project_is_rejected_with_its_own_code(
+    client: AsyncClient, db_session: AsyncSession, owner: TaskOwner
+) -> None:
+    """G-2 — `invalid_project`(422). **유형과 코드가 갈린다** — 화면에 셀렉터가 둘이라서다."""
+    task = await _create(client, owner)
+    project = (
+        await db_session.scalars(select(Project).where(Project.id == owner.project_id))
+    ).one()
+    project.deleted_at = datetime.now(UTC)
+    await db_session.flush()
+
+    response = await client.patch(
+        f"{BASE}/{task['id']}", json={"projectId": owner.project_id}, headers=owner.headers
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": "사용할 수 없는 프로젝트입니다",
+        "code": "invalid_project",
+    }
+
+
+async def test_the_project_code_differs_from_the_work_type_code(
+    client: AsyncClient, db_session: AsyncSession, owner: TaskOwner
+) -> None:
+    """같은 요청 모양인데 **어디가 틀렸는지 코드로 갈린다** — 이 분리의 목적이다."""
+    task = await _create(client, owner)
+    work_type = (
+        await db_session.scalars(
+            select(WorkType).where(WorkType.id == owner.work_type_id)
+        )
+    ).one()
+    project = (
+        await db_session.scalars(select(Project).where(Project.id == owner.project_id))
+    ).one()
+    work_type.deleted_at = datetime.now(UTC)
+    project.deleted_at = datetime.now(UTC)
+    await db_session.flush()
+
+    by_work_type = await client.patch(
+        f"{BASE}/{task['id']}",
+        json={"workTypeId": owner.work_type_id},
+        headers=owner.headers,
+    )
+    by_project = await client.patch(
+        f"{BASE}/{task['id']}", json={"projectId": owner.project_id}, headers=owner.headers
+    )
+
+    assert by_work_type.json()["code"] == "invalid_work_type"
+    assert by_project.json()["code"] == "invalid_project"
+
+
+async def test_another_accounts_project_is_invalid_project(
+    client: AsyncClient, owner: TaskOwner, stranger: TaskOwner
+) -> None:
+    """남의 프로젝트도 같은 코드다 — 존재를 흘리지 않는다."""
+    task = await _create(client, owner)
+
+    response = await client.patch(
+        f"{BASE}/{task['id']}",
+        json={"projectId": stranger.project_id},
+        headers=owner.headers,
+    )
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "invalid_project"

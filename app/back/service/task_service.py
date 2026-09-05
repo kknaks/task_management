@@ -29,7 +29,6 @@ from dto.task import (
     TaskCreateDTO,
     TaskDetailDTO,
     TaskDTO,
-    TaskTodoDTO,
     TaskUpdateDTO,
     TodoCreateDTO,
     TodoUpdateDTO,
@@ -46,6 +45,7 @@ from service import schedule_service
 # SPEC-003 §4 Case Matrix — 문구까지 계약이다.
 _NOT_FOUND = "업무를 찾을 수 없습니다"
 _INVALID_WORK_TYPE = "사용할 수 없는 유형입니다"
+_INVALID_PROJECT = "사용할 수 없는 프로젝트입니다"
 _INVALID_INPUT = "입력값을 확인해 주세요"
 
 # 06-related-tasks — 상세에는 최근 5건만 싣는다
@@ -141,8 +141,8 @@ async def _require_usable_project(
 ) -> None:
     """T-3 — 보내면 본인의 삭제되지 않은 프로젝트여야 한다.
 
-    Case Matrix 에 프로젝트 전용 코드가 없어 **`validation_error` 로 낸다** —
-    코드를 발명하지 않는다.
+    없거나 삭제됐거나 남의 것이면 `422 invalid_project`(SPEC-003 §4 Case Matrix, 2026-09-06 신설).
+    **유형과 코드를 나눈 이유는 화면에 셀렉터가 둘이라서**다 — 같은 코드면 어디가 틀렸는지 못 짚는다.
     """
     if project_id is None:
         return
@@ -150,7 +150,7 @@ async def _require_usable_project(
         session, account_id=account_id, project_id=project_id
     )
     if found is None:
-        raise _invalid_input()
+        raise ValidationError(_INVALID_PROJECT, code="invalid_project")
 
 
 def _validate_attachment(attachment: AttachmentCreateDTO) -> None:
@@ -337,6 +337,7 @@ async def update_task(
             session, account_id=account_id, project_id=command.project_id
         )
 
+    _reject_times_without_a_date(current, command)
     due = _resolve_due(current, command)
     _validate_due(due)
 
@@ -364,6 +365,28 @@ async def update_task(
 
     task = await _require_task(session, account_id=account_id, task_id=task_id)
     return await _build_detail(session, task)
+
+
+def _reject_times_without_a_date(current: TaskDTO, command: TaskUpdateDTO) -> None:
+    """**요청 자체**를 본다 — 시각을 보냈는데 최종 기한 날짜가 없으면 `422`(§4 Validation · T-1-b).
+
+    `_resolve_due` 는 기한 날짜가 없으면 `_Due(None, None, None)` 으로 **접어 버리기** 때문에,
+    그 뒤에 오는 `_validate_due` 는 **접힌 결과**를 보고 통과시킨다 → 아무것도 안 바뀐 채 200.
+    「실패가 안 보이는」 종류라 접기 **전에** 잡는다(WORK-004 검수 W-1).
+
+    보낸 시각이 `null` 인 것은 **시각만 지우는 정상 경로**라 여기 걸리지 않는다.
+    """
+    sent_times = [
+        value
+        for value in (command.due_start_time, command.due_end_time)
+        if value is not UNSET and value is not None
+    ]
+    if not sent_times:
+        return
+
+    final_due_date = current.due_date if command.due_date is UNSET else command.due_date
+    if final_due_date is None:
+        raise _invalid_input()
 
 
 def _resolve_due(current: TaskDTO, command: TaskUpdateDTO) -> _Due:
@@ -413,16 +436,22 @@ def _changed_columns(
 
 async def add_todo(
     session: AsyncSession, *, account_id: int, task_id: int, command: TodoCreateDTO
-) -> TaskTodoDTO:
-    await _require_task(session, account_id=account_id, task_id=task_id)
+) -> TaskDetailDTO:
+    """**갱신된 상세를 돌려준다** — 자식 쓰기 표면 넷이 전부 같다(SPEC-003 §4, 2026-09-06 확정).
+
+    부분 응답을 주면 `todoProgress` 같은 파생값을 **화면이 다시 조립**해야 하고
+    그 조립 규칙이 화면마다 갈린다.
+    """
+    task = await _require_task(session, account_id=account_id, task_id=task_id)
     order_index = await task_child_repository.next_todo_order_index(session, task_id)
-    return await task_child_repository.create_todo(
+    await task_child_repository.create_todo(
         session,
         task_id=task_id,
         text=command.text,
         due_date=command.due_date,
         order_index=order_index,
     )
+    return await _build_detail(session, task)
 
 
 async def update_todo(
@@ -432,12 +461,15 @@ async def update_todo(
     task_id: int,
     todo_id: int,
     command: TodoUpdateDTO,
-) -> TaskTodoDTO:
+) -> TaskDetailDTO:
     """T-8 — **완료로 바뀌면 같은 트랜잭션에서 로그 한 줄**을 남긴다.
 
     되돌리면(완료 → 미완료) 진행률만 내려가고 **로그는 지워지지 않는다**(로그는 사실의 기록이다).
+
+    **갱신된 상세를 돌려준다**(SPEC-003 §4) — 진행률과 로그가 같이 바뀌므로 부분 응답이면
+    화면이 나머지를 다시 조립해야 한다.
     """
-    await _require_task(session, account_id=account_id, task_id=task_id)
+    task = await _require_task(session, account_id=account_id, task_id=task_id)
 
     current = await task_child_repository.find_todo(
         session, task_id=task_id, todo_id=todo_id
@@ -454,9 +486,9 @@ async def update_todo(
         values["due_date"] = command.due_date
 
     if not values:
-        return current
+        return await _build_detail(session, task)
 
-    updated = await task_child_repository.update_todo(
+    await task_child_repository.update_todo(
         session, task_id=task_id, todo_id=todo_id, values=values
     )
 
@@ -466,7 +498,7 @@ async def update_todo(
             session, task_id=task_id, text="할일 1건 완료"
         )
 
-    return updated
+    return await _build_detail(session, task)
 
 
 async def remove_todo(
@@ -570,8 +602,18 @@ async def link_relations(
 async def unlink_relation(
     session: AsyncSession, *, account_id: int, task_id: int, other_task_id: int
 ) -> None:
-    """해제는 로그를 남기지 않는다 — DEC-002 §6 의 로그 대상은 **연결**이다."""
+    """해제는 로그를 남기지 않는다 — DEC-002 §6 의 로그 대상은 **연결**이다.
+
+    **없는 연관을 지우면 404** 다 — 할일·첨부와 같다(SPEC-003 §4, 2026-09-06 확정).
+    멱등 삭제로 두지 않는다: 지우려는 것이 이미 없다는 건 **화면이 낡았다는 뜻**이고,
+    조용히 204 를 주면 그 사실이 묻힌다.
+    """
     await _require_task(session, account_id=account_id, task_id=task_id)
+
+    linked = await task_child_repository.list_related_ids(session, task_id)
+    if other_task_id not in linked:
+        raise _not_found()
+
     await task_child_repository.delete_relation(
         session, task_id=task_id, other_task_id=other_task_id
     )

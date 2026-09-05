@@ -26,7 +26,6 @@ from schemas.task import (
     TaskDetail,
     TaskUpdate,
     TodoCreate,
-    TodoItem,
     TodoUpdate,
 )
 from service import task_service
@@ -148,7 +147,7 @@ async def update_task(
 
 @router.post(
     "/{task_id}/todos",
-    response_model=TodoItem,
+    response_model=TaskDetail,
     response_model_by_alias=True,
     status_code=status.HTTP_201_CREATED,
 )
@@ -157,8 +156,9 @@ async def add_todo(
     body: TodoCreate,
     account_id: int = Depends(require_account),
     session: AsyncSession = Depends(get_db),
-) -> TodoItem:
-    return TodoItem.from_dto(
+) -> TaskDetail:
+    """**갱신된 상세**를 돌려준다 — 자식 쓰기 표면 넷이 전부 같다(SPEC-003 §4)."""
+    return TaskDetail.from_dto(
         await task_service.add_todo(
             session, account_id=account_id, task_id=task_id, command=body.to_dto()
         )
@@ -166,7 +166,7 @@ async def add_todo(
 
 
 @router.patch(
-    "/{task_id}/todos/{todo_id}", response_model=TodoItem, response_model_by_alias=True
+    "/{task_id}/todos/{todo_id}", response_model=TaskDetail, response_model_by_alias=True
 )
 async def update_todo(
     task_id: int,
@@ -174,8 +174,9 @@ async def update_todo(
     body: TodoUpdate,
     account_id: int = Depends(require_account),
     session: AsyncSession = Depends(get_db),
-) -> TodoItem:
-    return TodoItem.from_dto(
+) -> TaskDetail:
+    """진행률·로그가 함께 바뀌므로 **갱신된 상세**를 돌려준다(SPEC-003 §4)."""
+    return TaskDetail.from_dto(
         await task_service.update_todo(
             session,
             account_id=account_id,
