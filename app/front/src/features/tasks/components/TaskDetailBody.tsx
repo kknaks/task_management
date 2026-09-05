@@ -172,6 +172,8 @@ export function TaskMainBlocks({ task }: { task: TaskDetail }) {
             // 상세는 `excludeId` 만 준다 — 서버가 그 업무의 project·due 를 쓰고
             // **이미 연결된 것도 함께 제외**한다(§4).
             excludeId={task.id}
+            // 무소속 업무면 「이 프로젝트」 칩이 비활성이고 기본이 「전체」다(U-8).
+            hasBaseProject={task.project !== null}
             selectedIds={task.relations.map((relation) => relation.id)}
             onChange={(ids) => void mutations.linkRelations.mutateAsync(ids)}
             trigger={

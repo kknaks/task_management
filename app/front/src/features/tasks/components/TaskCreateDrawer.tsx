@@ -269,6 +269,8 @@ export function TaskCreateDrawer({
               // 생성 드로어는 **자기 id 가 없다** — 폼에 입력 중인 값을 정렬 근거로 준다(§4).
               projectId={project?.id ?? null}
               dueDate={due.dueDate}
+              // **폼의 프로젝트 값이 바뀌면 이 판정도 따라 바뀐다**(U-8).
+              hasBaseProject={project !== null}
               selectedIds={relatedIds}
               onChange={setRelatedIds}
               trigger={

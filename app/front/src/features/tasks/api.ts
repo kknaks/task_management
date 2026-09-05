@@ -80,16 +80,32 @@ export function deleteAttachment(taskId: number, attachmentId: number): Promise<
  *   **이미 연결된 것도 함께 제외**한다
  * - **생성 드로어**: `excludeId` 없이 **폼에 입력 중인** `projectId`·`dueDate` 를 보낸다
  */
+/**
+ * **필터 칩 3 과 1:1**(SPEC-003 §4 `scope` 표 · U-8).
+ *
+ * `projectId`·`dueDate` 가 **정렬 힌트**인 것과 달리 `scope` 는 **후보를 잘라내는 필터**다 —
+ * 역할이 달라서 따로 있다. 칩이 필터인데 서버에 필터가 없으면 화면이 「전체 정렬본」을
+ * 세 번 똑같이 보여주게 된다.
+ */
+export type RelationScope = "project" | "recent30" | "all";
+
 export interface RelationCandidateQuery {
   keyword?: string;
   excludeId?: number | null;
   projectId?: number | null;
   dueDate?: string | null;
+  scope?: RelationScope;
+}
+
+/** `total` 은 **`scope` 를 적용한 뒤의 총계**이고 `items` 는 거기서 상위 20건이다(§4). */
+export interface RelationCandidatePage {
+  items: TaskRelation[];
+  total: number;
 }
 
 export async function fetchRelationCandidates(
   query: RelationCandidateQuery,
-): Promise<TaskRelation[]> {
+): Promise<RelationCandidatePage> {
   const search = new URLSearchParams();
   if (query.keyword && query.keyword.trim().length > 0) {
     search.set("keyword", query.keyword.trim());
@@ -103,12 +119,17 @@ export async function fetchRelationCandidates(
   if (query.dueDate) {
     search.set("dueDate", query.dueDate);
   }
+  if (query.scope) {
+    search.set("scope", query.scope);
+  }
   const suffix = search.size > 0 ? `?${search.toString()}` : "";
-  const response = await apiFetch<{ items: TaskRelation[] }>(
+  const response = await apiFetch<RelationCandidatePage>(
     `/api/tasks/relations/candidates${suffix}`,
     { cache: "no-store" },
   );
-  return response.items;
+  // **`total` 을 `items.length` 로 대신하지 않는다** — 20건을 넘으면 갈리고,
+  // 그게 「n건 중 m」 카운트가 있는 이유다(§4 · U-8).
+  return { items: response.items, total: response.total };
 }
 
 export function linkRelations(taskId: number, taskIds: number[]): Promise<TaskRelation[]> {
