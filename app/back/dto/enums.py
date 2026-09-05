@@ -30,3 +30,47 @@ class ColorToken(StrEnum):
     AMBER = "amber"
     ROSE = "rose"
     GRAPHITE = "graphite"
+
+
+class TaskStatus(StrEnum):
+    """업무 상태 **4종만**(T-4).
+
+    **「지연」은 값이 아니다** — 기한 경과 + 완료·취소 아님으로 조회 시 파생한다(G-7).
+    전이 규칙과 완료 게이트는 **WORK-005** 가 갖는다. 이 work 는 생성 시 `TODO` 만 쓴다.
+    """
+
+    TODO = "todo"
+    IN_PROGRESS = "in_progress"
+    DONE = "done"
+    CANCELLED = "cancelled"
+
+
+class AttachmentRole(StrEnum):
+    """첨부의 쓰임 축 — 참고자료 / 결과자료(T-9).
+
+    `DELIVERABLE` 이 1건 이상인지가 완료 게이트의 한 축이다(T-5 · 판정은 WORK-005).
+    """
+
+    REFERENCE = "reference"
+    DELIVERABLE = "deliverable"
+
+
+class AttachmentKind(StrEnum):
+    """첨부의 대상 축 — 자료함 문서 / URL 링크(T-9).
+
+    `kind` 에 따라 채워지는 컬럼이 갈린다(T-9-a) — `DOC` 은 `document_id` 만,
+    `LINK` 는 `url`·`label` 만.
+    """
+
+    DOC = "doc"
+    LINK = "link"
+
+
+class ScheduleSourceType(StrEnum):
+    """`schedule` 의 원본 종류(C-1 · §3-1).
+
+    v2 의 `external`(외부 캘린더)은 **지금 만들지 않는다**(G-8) — 그때 CHECK 를 넓힌다.
+    """
+
+    TASK = "task"
+    MEETING = "meeting"

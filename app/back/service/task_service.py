@@ -1,0 +1,592 @@
+"""2층 — 업무 도메인 규칙. `fastapi` 도 `schemas/` 도 import 하지 않는다.
+
+정본: SPEC-003 §4 Case Matrix(에러) · §5(규칙) · `domains/task.md` T-1~T-11.
+
+**로그를 쓰는 곳은 이 파일 하나다**(T-8 · WP Internal Interface Contract).
+대상은 **생성·할일 완료·첨부·연관 연결**뿐이고,
+**제목·배경·목표·완료 결과 인라인 편집은 대상이 아니다**(04-task-detail).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import date, datetime, time
+from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from config import get_settings
+from core.exceptions import NotFoundError, ValidationError
+from dto.enums import AttachmentKind, ScheduleSourceType, TaskStatus
+from dto.task import (
+    AttachmentCreateDTO,
+    TaskCreateDTO,
+    TaskDetailDTO,
+    TaskDTO,
+    TaskTodoDTO,
+    TaskUpdateDTO,
+    TodoCreateDTO,
+    TodoUpdateDTO,
+)
+from dto.unset import UNSET
+from repository import (
+    project_repository,
+    task_child_repository,
+    task_repository,
+    work_type_repository,
+)
+from service import schedule_service
+
+# SPEC-003 §4 Case Matrix — 문구까지 계약이다.
+_NOT_FOUND = "업무를 찾을 수 없습니다"
+_INVALID_WORK_TYPE = "사용할 수 없는 유형입니다"
+_INVALID_INPUT = "입력값을 확인해 주세요"
+
+# 06-related-tasks — 상세에는 최근 5건만 싣는다
+_RELATION_PREVIEW = 5
+# SPEC-003 U-8 — 검색어가 없을 때 후보 최대 20건
+_RELATION_CANDIDATE_LIMIT = 20
+
+_ALLOWED_URL_SCHEMES = frozenset({"http", "https"})
+
+
+def _not_found() -> NotFoundError:
+    """**없는 업무와 남의 업무가 같은 응답이다** — 존재를 흘리지 않는다(§5 · §9)."""
+    return NotFoundError(_NOT_FOUND)
+
+
+def _invalid_input() -> ValidationError:
+    return ValidationError(_INVALID_INPUT)
+
+
+def _today() -> date:
+    """D-day 는 **앱 타임존(KST) 기준의 오늘**로 잰다 — 기한이 달력 개념이기 때문이다(G-2-e)."""
+    return datetime.now(ZoneInfo(get_settings().app_timezone)).date()
+
+
+# --- 조회 ---------------------------------------------------------------
+
+
+async def _require_task(
+    session: AsyncSession, *, account_id: int, task_id: int
+) -> TaskDTO:
+    found = await task_repository.find_active(
+        session, account_id=account_id, task_id=task_id
+    )
+    if found is None:
+        raise _not_found()
+    return found
+
+
+async def get_detail(
+    session: AsyncSession, *, account_id: int, task_id: int
+) -> TaskDetailDTO:
+    """상세 — 본체 + 자식 + **파생값**(G-7)."""
+    task = await _require_task(session, account_id=account_id, task_id=task_id)
+    return await _build_detail(session, task)
+
+
+async def _build_detail(session: AsyncSession, task: TaskDTO) -> TaskDetailDTO:
+    relations, relation_total = await task_child_repository.list_relations(
+        session, task_id=task.id, limit=_RELATION_PREVIEW
+    )
+    today = _today()
+
+    return TaskDetailDTO(
+        task=task,
+        todos=await task_child_repository.list_todos(session, task.id),
+        todo_progress=await task_child_repository.count_todo_progress(session, task.id),
+        memos=await task_child_repository.list_memos(session, task.id),
+        attachments=await task_child_repository.list_attachments(session, task.id),
+        relations=relations,
+        relation_total=relation_total,
+        logs=await task_child_repository.list_logs(session, task.id),
+        d_day=None if task.due_date is None else (task.due_date - today).days,
+        # T-4 — 「지연」은 값이 아니다. 기한 경과 + 완료·취소 아님으로 파생한다.
+        is_overdue=(
+            task.due_date is not None
+            and task.due_date < today
+            and task.status not in (TaskStatus.DONE.value, TaskStatus.CANCELLED.value)
+        ),
+    )
+
+
+# --- 검증 ---------------------------------------------------------------
+
+
+async def _require_usable_work_type(
+    session: AsyncSession, *, account_id: int, work_type_id: int
+) -> None:
+    """T-2 — **본인의 삭제되지 않은** 유형이어야 한다.
+
+    삭제됐거나 남의 것이면 `422 invalid_work_type`(SPEC-003 §4 Case Matrix).
+    """
+    found = await work_type_repository.find_active(
+        session, account_id=account_id, work_type_id=work_type_id
+    )
+    if found is None:
+        raise ValidationError(_INVALID_WORK_TYPE, code="invalid_work_type")
+
+
+async def _require_usable_project(
+    session: AsyncSession, *, account_id: int, project_id: int | None
+) -> None:
+    """T-3 — 보내면 본인의 삭제되지 않은 프로젝트여야 한다.
+
+    Case Matrix 에 프로젝트 전용 코드가 없어 **`validation_error` 로 낸다** —
+    코드를 발명하지 않는다.
+    """
+    if project_id is None:
+        return
+    found = await project_repository.find_active(
+        session, account_id=account_id, project_id=project_id
+    )
+    if found is None:
+        raise _invalid_input()
+
+
+def _validate_attachment(attachment: AttachmentCreateDTO) -> None:
+    """T-9 · T-9-a — `kind` 별로 채워지는 값이 갈린다.
+
+    **`doc` 은 이 work 에서 거부한다** — 대상 `document` 테이블이 아직 없어
+    가리킬 수 있는 문서가 존재하지 않는다(WORK-004 §Open Issues 의 임시 계약).
+    문서함 work 가 FK 리비전과 함께 이 갈래를 실체화한다.
+    """
+    if attachment.kind == AttachmentKind.DOC.value:
+        raise _invalid_input()
+
+    if attachment.url is None:
+        raise _invalid_input()
+
+    # `http`/`https` 만(SPEC-003 §4 Validation). `ftp://…` 는 거부한다.
+    parsed = urlparse(attachment.url)
+    if parsed.scheme not in _ALLOWED_URL_SCHEMES or not parsed.netloc:
+        raise _invalid_input()
+
+    if attachment.document_id is not None:
+        raise _invalid_input()
+
+
+async def _resolve_relation_targets(
+    session: AsyncSession, *, account_id: int, task_id: int | None, target_ids: list[int]
+) -> list[int]:
+    """연관 대상 검증 — **본인의 삭제되지 않은 업무**이고 **자기 자신이 아니다**(T-10).
+
+    하나라도 어긋나면 거부한다. 중복은 여기서 걷어낸다(중복 전송이 행을 늘리지 않는다).
+    """
+    unique_ids = list(dict.fromkeys(target_ids))
+    if not unique_ids:
+        return []
+
+    if task_id is not None and task_id in unique_ids:
+        raise _invalid_input()
+
+    usable = await task_repository.exists_active(
+        session, account_id=account_id, task_ids=unique_ids
+    )
+    if len(usable) != len(unique_ids):
+        raise _invalid_input()
+
+    return unique_ids
+
+
+# --- 기한 · 일정 ---------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _Due:
+    date: date | None
+    start: time | None
+    end: time | None
+
+
+def _validate_due(due: _Due) -> None:
+    """T-1-b — 시각 두 개는 함께 있거나 함께 없고, 있으면 기한 날짜가 있어야 하며 `end > start`.
+
+    DB CHECK 가 최종 방어선이지만 **여기서 먼저 잡아 계약대로 `422`** 로 낸다.
+    """
+    if (due.start is None) != (due.end is None):
+        raise _invalid_input()
+    if due.start is not None and due.date is None:
+        raise _invalid_input()
+    if due.start is not None and due.end is not None and due.end <= due.start:
+        raise _invalid_input()
+
+
+async def _apply_due(
+    session: AsyncSession, *, account_id: int, task_id: int, due: _Due
+) -> None:
+    """기한 → `schedule` 파생. **원본 쓰기와 같은 트랜잭션**이다(C-2 · §3-4)."""
+    await schedule_service.sync_from_task(
+        session,
+        account_id=account_id,
+        task_id=task_id,
+        due_date=due.date,
+        due_start_time=due.start,
+        due_end_time=due.end,
+    )
+
+
+# --- 생성 ---------------------------------------------------------------
+
+
+async def create_task(
+    session: AsyncSession, *, account_id: int, command: TaskCreateDTO
+) -> TaskDetailDTO:
+    """생성은 **한 트랜잭션**이다 — 자식이 절반만 남는 상태를 만들지 않는다(§5).
+
+    순서: 검증 → **겹침 검사(원본 쓰기 전)** → 본체 → 자식 → 로그 → 일정 파생.
+    """
+    await _require_usable_work_type(
+        session, account_id=account_id, work_type_id=command.work_type_id
+    )
+    await _require_usable_project(
+        session, account_id=account_id, project_id=command.project_id
+    )
+
+    due = _Due(command.due_date, command.due_start_time, command.due_end_time)
+    _validate_due(due)
+    for attachment in command.attachments:
+        _validate_attachment(attachment)
+    relation_ids = await _resolve_relation_targets(
+        session, account_id=account_id, task_id=None, target_ids=command.related_task_ids
+    )
+
+    # C-9 — 걸리면 원본도 만들어지지 않는다
+    await schedule_service.check_overlap(
+        session,
+        account_id=account_id,
+        placement=schedule_service.build_placement(due.date, due.start, due.end),
+    )
+
+    task_id = await task_repository.create(
+        session,
+        account_id=account_id,
+        work_type_id=command.work_type_id,
+        title=command.title,
+        project_id=command.project_id,
+        due_date=due.date,
+        due_start_time=due.start,
+        due_end_time=due.end,
+        background=command.background,
+        goal=command.goal,
+    )
+
+    for order_index, todo in enumerate(command.todos):
+        await task_child_repository.create_todo(
+            session,
+            task_id=task_id,
+            text=todo.text,
+            due_date=todo.due_date,
+            order_index=order_index,
+        )
+
+    for attachment in command.attachments:
+        await task_child_repository.create_attachment(
+            session,
+            task_id=task_id,
+            role=attachment.role,
+            kind=attachment.kind,
+            document_id=None,
+            url=attachment.url,
+            label=attachment.label,
+        )
+
+    if relation_ids:
+        await task_child_repository.create_relations(
+            session, task_id=task_id, other_ids=relation_ids
+        )
+
+    await task_child_repository.create_log(session, task_id=task_id, text="업무 생성")
+    await _apply_due(session, account_id=account_id, task_id=task_id, due=due)
+
+    task = await task_repository.find_active(
+        session, account_id=account_id, task_id=task_id
+    )
+    assert task is not None  # 방금 만든 행이다
+    return await _build_detail(session, task)
+
+
+# --- 부분 수정 -----------------------------------------------------------
+
+
+async def update_task(
+    session: AsyncSession, *, account_id: int, task_id: int, command: TaskUpdateDTO
+) -> TaskDetailDTO:
+    """보낸 필드만 바꾼다(§5).
+
+    **인라인 편집은 로그에 남지 않는다**(04-task-detail) — 이 함수는 로그를 쓰지 않는다.
+    기한이 바뀌면 겹침 검사가 **원본을 쓰기 전에** 돌고, 걸리면 원본도 바뀌지 않는다(C-9).
+    """
+    current = await _require_task(session, account_id=account_id, task_id=task_id)
+
+    if command.work_type_id is not UNSET:
+        await _require_usable_work_type(
+            session, account_id=account_id, work_type_id=command.work_type_id
+        )
+    if command.project_id is not UNSET:
+        await _require_usable_project(
+            session, account_id=account_id, project_id=command.project_id
+        )
+
+    due = _resolve_due(current, command)
+    _validate_due(due)
+
+    due_changed = (due.date, due.start, due.end) != (
+        current.due_date,
+        current.due_start_time,
+        current.due_end_time,
+    )
+    if due_changed:
+        await schedule_service.check_overlap(
+            session,
+            account_id=account_id,
+            placement=schedule_service.build_placement(due.date, due.start, due.end),
+            exclude_source_type=ScheduleSourceType.TASK.value,
+            exclude_source_id=task_id,
+        )
+
+    values = _changed_columns(command, due, due_changed)
+    if values:
+        await task_repository.update_fields(
+            session, account_id=account_id, task_id=task_id, values=values
+        )
+    if due_changed:
+        await _apply_due(session, account_id=account_id, task_id=task_id, due=due)
+
+    task = await _require_task(session, account_id=account_id, task_id=task_id)
+    return await _build_detail(session, task)
+
+
+def _resolve_due(current: TaskDTO, command: TaskUpdateDTO) -> _Due:
+    """현재 값 위에 보낸 필드만 얹어 **최종 기한**을 만든다.
+
+    `dueDate: null` 은 기한 삭제다 — **시각도 함께 사라진다**(T-1-b 가 시각만 남는 상태를
+    허용하지 않는다). 시각을 따로 지우려면 `dueStartTime`/`dueEndTime` 을 `null` 로 보낸다.
+    """
+    due_date = current.due_date if command.due_date is UNSET else command.due_date
+    if due_date is None:
+        return _Due(None, None, None)
+
+    return _Due(
+        due_date,
+        current.due_start_time if command.due_start_time is UNSET else command.due_start_time,
+        current.due_end_time if command.due_end_time is UNSET else command.due_end_time,
+    )
+
+
+def _changed_columns(
+    command: TaskUpdateDTO, due: _Due, due_changed: bool
+) -> dict[str, object]:
+    values: dict[str, object] = {}
+
+    for field_name, column in (
+        ("title", "title"),
+        ("work_type_id", "work_type_id"),
+        ("project_id", "project_id"),
+        ("background", "background"),
+        ("goal", "goal"),
+        ("completion_result", "completion_result"),
+    ):
+        value = getattr(command, field_name)
+        if value is not UNSET:
+            values[column] = value
+
+    if due_changed:
+        values["due_date"] = due.date
+        values["due_start_time"] = due.start
+        values["due_end_time"] = due.end
+
+    return values
+
+
+# --- 할일 ---------------------------------------------------------------
+
+
+async def add_todo(
+    session: AsyncSession, *, account_id: int, task_id: int, command: TodoCreateDTO
+) -> TaskTodoDTO:
+    await _require_task(session, account_id=account_id, task_id=task_id)
+    order_index = await task_child_repository.next_todo_order_index(session, task_id)
+    return await task_child_repository.create_todo(
+        session,
+        task_id=task_id,
+        text=command.text,
+        due_date=command.due_date,
+        order_index=order_index,
+    )
+
+
+async def update_todo(
+    session: AsyncSession,
+    *,
+    account_id: int,
+    task_id: int,
+    todo_id: int,
+    command: TodoUpdateDTO,
+) -> TaskTodoDTO:
+    """T-8 — **완료로 바뀌면 같은 트랜잭션에서 로그 한 줄**을 남긴다.
+
+    되돌리면(완료 → 미완료) 진행률만 내려가고 **로그는 지워지지 않는다**(로그는 사실의 기록이다).
+    """
+    await _require_task(session, account_id=account_id, task_id=task_id)
+
+    current = await task_child_repository.find_todo(
+        session, task_id=task_id, todo_id=todo_id
+    )
+    if current is None:
+        raise _not_found()
+
+    values: dict[str, object] = {}
+    if command.text is not UNSET:
+        values["content"] = command.text
+    if command.done is not UNSET:
+        values["done"] = command.done
+    if command.due_date is not UNSET:
+        values["due_date"] = command.due_date
+
+    if not values:
+        return current
+
+    updated = await task_child_repository.update_todo(
+        session, task_id=task_id, todo_id=todo_id, values=values
+    )
+
+    became_done = command.done is not UNSET and command.done and not current.done
+    if became_done:
+        await task_child_repository.create_log(
+            session, task_id=task_id, text="할일 1건 완료"
+        )
+
+    return updated
+
+
+async def remove_todo(
+    session: AsyncSession, *, account_id: int, task_id: int, todo_id: int
+) -> None:
+    await _require_task(session, account_id=account_id, task_id=task_id)
+    if (
+        await task_child_repository.find_todo(session, task_id=task_id, todo_id=todo_id)
+        is None
+    ):
+        raise _not_found()
+    await task_child_repository.delete_todo(session, task_id=task_id, todo_id=todo_id)
+
+
+# --- 메모 ---------------------------------------------------------------
+
+
+async def add_memo(
+    session: AsyncSession, *, account_id: int, task_id: int, text: str
+) -> TaskDetailDTO:
+    """메모는 **로그가 아니다** — 등록해도 `task_log` 가 늘지 않는다(DEC-002 §6).
+
+    **수정·삭제 표면을 만들지 않는다**(SPEC-003 S003-OQ-4).
+    """
+    task = await _require_task(session, account_id=account_id, task_id=task_id)
+    await task_child_repository.create_memo(session, task_id=task_id, text=text)
+    return await _build_detail(session, task)
+
+
+# --- 첨부 ---------------------------------------------------------------
+
+
+async def add_attachment(
+    session: AsyncSession, *, account_id: int, task_id: int, command: AttachmentCreateDTO
+) -> TaskDetailDTO:
+    """T-8 — 첨부는 로그를 남긴다. 문구는 `role` 로 갈린다(U-7)."""
+    task = await _require_task(session, account_id=account_id, task_id=task_id)
+    _validate_attachment(command)
+
+    await task_child_repository.create_attachment(
+        session,
+        task_id=task_id,
+        role=command.role,
+        kind=command.kind,
+        document_id=None,
+        url=command.url,
+        label=command.label,
+    )
+    await task_child_repository.create_log(
+        session, task_id=task_id, text=f"{_role_label(command.role)} 1건 첨부"
+    )
+    return await _build_detail(session, task)
+
+
+def _role_label(role: str) -> str:
+    return "참고자료" if role == "reference" else "결과자료"
+
+
+async def remove_attachment(
+    session: AsyncSession, *, account_id: int, task_id: int, attachment_id: int
+) -> None:
+    await _require_task(session, account_id=account_id, task_id=task_id)
+    if (
+        await task_child_repository.find_attachment(
+            session, task_id=task_id, attachment_id=attachment_id
+        )
+        is None
+    ):
+        raise _not_found()
+    await task_child_repository.delete_attachment(
+        session, task_id=task_id, attachment_id=attachment_id
+    )
+
+
+# --- 연관업무 -----------------------------------------------------------
+
+
+async def link_relations(
+    session: AsyncSession, *, account_id: int, task_id: int, target_ids: list[int]
+) -> TaskDetailDTO:
+    """T-10 — 무방향 1행. **중복 재전송이 행을 늘리지 않는다.**
+
+    새로 생긴 연결이 있을 때만 로그를 남긴다.
+    """
+    task = await _require_task(session, account_id=account_id, task_id=task_id)
+    resolved = await _resolve_relation_targets(
+        session, account_id=account_id, task_id=task_id, target_ids=target_ids
+    )
+
+    created = await task_child_repository.create_relations(
+        session, task_id=task_id, other_ids=resolved
+    )
+    if created:
+        await task_child_repository.create_log(
+            session, task_id=task_id, text=f"연관업무 {created}건 연결"
+        )
+
+    return await _build_detail(session, task)
+
+
+async def unlink_relation(
+    session: AsyncSession, *, account_id: int, task_id: int, other_task_id: int
+) -> None:
+    """해제는 로그를 남기지 않는다 — DEC-002 §6 의 로그 대상은 **연결**이다."""
+    await _require_task(session, account_id=account_id, task_id=task_id)
+    await task_child_repository.delete_relation(
+        session, task_id=task_id, other_task_id=other_task_id
+    )
+
+
+async def list_relation_candidates(
+    session: AsyncSession, *, account_id: int, task_id: int, keyword: str | None
+) -> list[TaskDTO]:
+    """SPEC-003 U-8 — 검색어가 없으면 **같은 프로젝트 → 기한 ±7일 → 최근 수정** 순 최대 20건.
+
+    자기 자신과 이미 연결된 업무는 후보에서 빠진다.
+    """
+    task = await _require_task(session, account_id=account_id, task_id=task_id)
+    already_linked = await task_child_repository.list_related_ids(session, task_id)
+
+    return await task_repository.find_relation_candidates(
+        session,
+        account_id=account_id,
+        task_id=task_id,
+        project_id=None if task.project is None else task.project.id,
+        due_date=task.due_date,
+        exclude_ids=already_linked,
+        keyword=keyword,
+        limit=_RELATION_CANDIDATE_LIMIT,
+    )
