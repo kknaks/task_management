@@ -64,7 +64,7 @@ function Item({
       onClick={onSelect}
       className={cn(
         "flex h-9 w-full items-center gap-2 rounded-control px-3 text-left text-meta",
-        selected ? "bg-current font-bold text-current-foreground" : "text-foreground hover:bg-muted",
+        selected ? "bg-pick font-bold text-pick-foreground" : "text-foreground hover:bg-muted",
       )}
     >
       <span className="flex-1">{children}</span>

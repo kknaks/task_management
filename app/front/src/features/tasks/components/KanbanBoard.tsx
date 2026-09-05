@@ -21,12 +21,15 @@ import { DueCell } from "@/features/tasks/components/TaskMeta";
 import { KANBAN_COLUMNS } from "@/features/tasks/hooks/useTasksQuery";
 import { useKanbanDnd } from "@/features/tasks/hooks/useKanbanDnd";
 import type { TaskListItem, TaskStatus } from "@/features/tasks/types";
-import { formatMonth } from "@/features/tasks/hooks/useTasksViewParams";
+import { formatMonth, formatMonthShort, formatTimestamp } from "@/lib/datetime";
 import { cn } from "@/lib/utils";
 
 export function KanbanBoard({
   items,
   month,
+  doneCount,
+  total,
+  limit,
   pendingId,
   onOpen,
   onDropStatus,
@@ -35,6 +38,14 @@ export function KanbanBoard({
 }: {
   items: readonly TaskListItem[];
   month: string;
+  /**
+   * **그 달의 완료 건수** — 응답 `statusCounts.done` 이다(U-2 · §4).
+   * 카드를 세면 「지금 받아온 것 중 완료 수」가 되고 상한에 걸리는 순간 두 수가 갈린다.
+   */
+  doneCount: number;
+  /** 그 달 총계. `limit` 을 넘으면 **조용히 자르지 않고** 하단에 알린다. */
+  total: number;
+  limit: number;
   pendingId: number | null;
   onOpen: (id: number) => void;
   onDropStatus: (task: TaskListItem, next: TaskStatus) => void;
@@ -43,9 +54,11 @@ export function KanbanBoard({
   onAddTask: () => void;
 }) {
   const dnd = useKanbanDnd({ items, onDrop: onDropStatus });
-  const doneCount = items.filter((item) => item.status === "done").length;
+  /** 그 달 업무가 상한을 넘었나 — 넘으면 **말한다**(U-2 「조용히 자르지 않는다」). */
+  const truncated = total > limit;
 
   return (
+    <>
     <div className="flex gap-4 overflow-x-auto pb-2">
       {KANBAN_COLUMNS.map((status) => {
         const columnItems = items.filter((item) => item.status === status);
@@ -81,8 +94,8 @@ export function KanbanBoard({
                 {STATUS_LABEL[status]}
               </span>
               <span className="text-caption text-fg-caption">
-                {/* 완료 컬럼은 건수 대신 **「8월 12」**(월 기준 — U-2) */}
-                {status === "done" ? `${formatMonth(month).split(" ")[1]} ${doneCount}` : columnItems.length}
+                {/* 완료 컬럼은 건수 대신 **「8월 12」**(월 기준 — U-2). 카드를 세지 않는다 */}
+                {status === "done" ? `${formatMonthShort(month)} ${doneCount}` : columnItems.length}
               </span>
             </header>
 
@@ -139,9 +152,19 @@ export function KanbanBoard({
                             />
                             {task.memoCount > 0 ? <span>메모 {task.memoCount}</span> : null}
                           </span>
-                          {/* 취소 카드는 **취소일과 사유**를 함께 적는다(U-2) */}
-                          {task.status === "cancelled" && task.cancelReason ? (
-                            <span className="text-caption text-fg-caption">{task.cancelReason}</span>
+                          {/*
+                            취소 카드는 **취소일과 사유**를 함께 적는다(U-2).
+                            `cancelledAt` 은 서버가 취소 전이 로그에서 파생해 내려준다 — 화면이 세지 않는다.
+                          */}
+                          {task.status === "cancelled" ? (
+                            <span className="text-caption text-fg-caption">
+                              {[
+                                task.cancelledAt ? formatTimestamp(task.cancelledAt) : null,
+                                task.cancelReason,
+                              ]
+                                .filter(Boolean)
+                                .join(" · ")}
+                            </span>
                           ) : null}
                         </article>
                       )}
@@ -173,5 +196,16 @@ export function KanbanBoard({
         );
       })}
     </div>
+
+    {/*
+      **조용히 자르지 않는다**(U-2 「데이터 범위」) — 상한에 걸렸다는 사실과
+      전부 보는 길을 함께 준다. 완료 컬럼의 수는 집계에서 오므로 여기서도 어긋나지 않는다.
+    */}
+    {truncated ? (
+      <p role="status" className="mt-2 text-caption text-fg-caption">
+        이 달 업무가 {total}건이라 {limit}건까지만 그립니다 · 리스트에서 보기
+      </p>
+    ) : null}
+    </>
   );
 }

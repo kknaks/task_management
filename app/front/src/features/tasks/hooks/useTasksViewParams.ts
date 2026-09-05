@@ -15,10 +15,20 @@
 import { useCallback, useMemo } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
+import { currentMonth } from "@/lib/datetime";
 import type { TaskSort, TaskStatus, TasksView } from "@/features/tasks/types";
 
-/** 한 페이지에 12건 — 리스트 하단 페이지네이션의 단위다(§4 응답 예시). */
+/** 한 페이지에 12건 — **리스트** 하단 페이지네이션의 단위다(§4 응답 예시). */
 export const TASKS_PAGE_SIZE = 12;
+
+/**
+ * **칸반은 페이지를 쓰지 않는다**(SPEC-004 U-2 「데이터 범위」, 2026-09-06 확정).
+ *
+ * 리스트의 페이지 크기를 물려받으면 **13번째 업무부터 화면에 나타날 길이 없다** —
+ * 페이지네이션 UI 가 리스트 전용이라 사용자는 그 달 업무가 12건뿐이라고 읽는다(검수 F-2).
+ * 상한 500 은 서버가 받는 최대값이고, 넘으면 **조용히 자르지 않고** 보드 하단에 알린다.
+ */
+export const KANBAN_MAX_SIZE = 500;
 
 const SORTS: readonly TaskSort[] = ["due_asc", "due_desc", "created_desc"];
 const STATUSES: readonly TaskStatus[] = ["todo", "in_progress", "done", "cancelled"];
@@ -36,12 +46,10 @@ export interface TasksViewParams {
   page: number;
 }
 
-/** `?month=` 이 없거나 이상하면 **이번 달**이다(§4 「기본은 이번 달」). */
-function currentMonth(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
-}
-
+/**
+ * `?month=` 이 없거나 이상하면 **이번 달**이다(§4 「기본은 이번 달」).
+ * 「이번 달」 판정은 **KST 기준**이고 `lib/datetime.ts` 가 든다(§3-6 · 검수 W-7).
+ */
 function parseMonth(raw: string | null): string {
   if (raw !== null && /^\d{4}-\d{2}-01$/.test(raw)) {
     return raw;
@@ -84,6 +92,13 @@ export function useTasksViewParams(): TasksViewParams & {
     [params, rawPage, rawSort, rawStatus],
   );
 
+  /**
+   * **뷰 전환만 히스토리를 남긴다**(검수 W-2 · FE §1-2 「쿼리는 … 뒤로가기가 산다」).
+   *
+   * 전부 `replace` 라 리스트↔칸반을 오간 뒤 뒤로가기를 누르면 **이전 뷰가 아니라 페이지를 떠났다.**
+   * 반대로 필터·기간까지 `push` 하면 탭을 몇 번 누른 만큼 히스토리가 쌓여 뒤로가기가 시끄러워진다 —
+   * 그래서 **축을 가른다**: 뷰는 「어디를 보고 있나」라 되돌아갈 자리이고, 나머지는 그 안의 조건이다.
+   */
   const setParams = useCallback(
     (next: Partial<Record<keyof TasksViewParams, string | number | null>>) => {
       const search = new URLSearchParams(params.toString());
@@ -98,7 +113,12 @@ export function useTasksViewParams(): TasksViewParams & {
       if (!("page" in next)) {
         search.delete("page");
       }
-      router.replace(`${pathname}?${search.toString()}`);
+      const url = `${pathname}?${search.toString()}`;
+      if ("view" in next) {
+        router.push(url);
+      } else {
+        router.replace(url);
+      }
     },
     [params, pathname, router],
   );
@@ -117,26 +137,6 @@ export function useTasksViewParams(): TasksViewParams & {
 }
 
 /**
- * 달의 경계를 **UTC 로** 만든다(G-2 — 「기간 조회는 UTC 경계로 보낸다」).
- * 서버가 `from`·`to` 를 함께 받으므로 화면이 한 곳에서만 변환한다.
+ * 달 경계·달 이동·달 표기는 **`lib/datetime.ts` 하나**가 든다(§3-6 「KST 변환은 그 파일 하나」 ·
+ * 검수 W-7). 여기서 다시 내보내지 않는다 — 쓰는 곳이 직접 그 파일에서 가져간다.
  */
-export function monthRange(month: string): { from: string; to: string } {
-  const [year, mon] = month.split("-").map(Number);
-  const first = new Date(Date.UTC(year, mon - 1, 1));
-  const last = new Date(Date.UTC(year, mon, 0));
-  const iso = (date: Date) => date.toISOString().slice(0, 10);
-  return { from: iso(first), to: iso(last) };
-}
-
-/** 달을 앞뒤로 옮긴다. 기간 스테퍼의 `‹`·`›` 가 부른다. */
-export function shiftMonth(month: string, delta: number): string {
-  const [year, mon] = month.split("-").map(Number);
-  const moved = new Date(Date.UTC(year, mon - 1 + delta, 1));
-  return `${moved.getUTCFullYear()}-${String(moved.getUTCMonth() + 1).padStart(2, "0")}-01`;
-}
-
-/** 「2026년 8월」 — 기간 스테퍼와 하단 카운트가 같은 문구를 쓴다. */
-export function formatMonth(month: string): string {
-  const [year, mon] = month.split("-").map(Number);
-  return `${year}년 ${mon}월`;
-}

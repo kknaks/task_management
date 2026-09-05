@@ -157,12 +157,30 @@ export interface TaskTypeCount {
   count: number;
 }
 
+/**
+ * 상태별 총계 — **`typeCounts` 와 같은 결**이다(SPEC-004 §4, 2026-09-06 신설).
+ * 기간·유형·프로젝트 필터는 반영하고 **상태 필터 자신은 반영하지 않는다.**
+ *
+ * 칸반 완료 컬럼의 「8월 12」가 여기서 온다 — **받아온 카드를 세지 않는다.**
+ * 세면 「그 달 완료 건수」가 아니라 「지금 받아온 것 중 완료 건수」가 되고,
+ * 상한 500 에 걸리는 순간 두 수가 조용히 갈린다(검수 F-2).
+ */
+export interface TaskStatusCounts {
+  todo: number;
+  inProgress: number;
+  done: number;
+  cancelled: number;
+}
+
 export interface TaskListResponse {
   items: TaskListItem[];
   total: number;
   page: number;
   size: number;
   typeCounts: TaskTypeCount[];
+  statusCounts: TaskStatusCounts;
+  /** **기간만** 적용한 총계 — U-9 「필터를 지우면 **n건이** 보입니다」의 `n`. */
+  unfilteredTotal: number;
 }
 
 /** 정렬 3종(SPEC-004 §4 Validation). 기본 `due_asc` — **기한 없는 업무가 맨 아래**다. */

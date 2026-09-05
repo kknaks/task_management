@@ -91,7 +91,7 @@ export function TaskContextMenu({
                   className={cn(
                     "flex h-9 w-full items-center gap-2 rounded-control px-3 text-left text-meta",
                     isCurrent
-                      ? "bg-current font-bold text-current-foreground"
+                      ? "bg-pick font-bold text-pick-foreground"
                       : disabled
                         ? "cursor-not-allowed text-fg-caption"
                         : "text-foreground hover:bg-muted",

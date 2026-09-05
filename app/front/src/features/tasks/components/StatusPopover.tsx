@@ -75,7 +75,7 @@ export function StatusPopover({
                   className={cn(
                     "flex h-9 w-full items-center gap-2 rounded-control px-3 text-left text-meta",
                     isCurrent
-                      ? cn("bg-current font-bold", STATUS_TEXT[status])
+                      ? cn("bg-pick font-bold", STATUS_TEXT[status])
                       : disabled
                         ? "cursor-not-allowed text-fg-caption"
                         : "text-foreground hover:bg-muted",

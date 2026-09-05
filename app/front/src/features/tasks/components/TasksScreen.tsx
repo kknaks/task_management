@@ -33,12 +33,11 @@ import { TaskBoardSkeleton, TaskListSkeleton } from "@/features/tasks/components
 import { useTasksQuery } from "@/features/tasks/hooks/useTasksQuery";
 import { useTaskStatus } from "@/features/tasks/hooks/useTaskStatus";
 import {
-  formatMonth,
-  monthRange,
-  shiftMonth,
+  KANBAN_MAX_SIZE,
   TASKS_PAGE_SIZE,
   useTasksViewParams,
 } from "@/features/tasks/hooks/useTasksViewParams";
+import { formatMonth, monthRange, shiftMonth } from "@/lib/datetime";
 import { openTaskCreateDrawer, openTaskDetailDrawer } from "@/features/tasks/openTaskDrawers";
 import { useWorkTypesQuery } from "@/features/settings/hooks/useWorkSettings";
 import type { TaskListItem, TaskStatus } from "@/features/tasks/types";
@@ -52,6 +51,11 @@ export function TasksScreen() {
   const [menu, setMenu] = useState<ContextMenuTarget | null>(null);
 
   const { from, to } = monthRange(params.month);
+  /**
+   * **칸반은 페이지를 쓰지 않는다**(U-2 「데이터 범위」) — 그 달 전체를 한 번에 그린다.
+   * 리스트의 12건을 물려받으면 13번째 업무가 화면에 나타날 길이 없다(검수 F-2).
+   */
+  const board = params.view === "board";
   const query = useTasksQuery({
     from,
     to,
@@ -59,8 +63,8 @@ export function TasksScreen() {
     status: params.status,
     projectId: params.projectId,
     sort: params.sort,
-    page: params.page,
-    size: TASKS_PAGE_SIZE,
+    page: board ? 1 : params.page,
+    size: board ? KANBAN_MAX_SIZE : TASKS_PAGE_SIZE,
   });
 
   /**
@@ -146,7 +150,7 @@ export function TasksScreen() {
               className={cn(
                 "h-8 rounded-control px-3 text-meta",
                 params.view === view
-                  ? "bg-current font-bold text-current-foreground"
+                  ? "bg-pick font-bold text-pick-foreground"
                   : "text-muted-foreground",
               )}
             >
@@ -188,6 +192,7 @@ export function TasksScreen() {
       <TasksBody
         params={params}
         query={query}
+        data={data}
         items={items}
         pendingId={status.pendingId}
         onOpen={openDetail}
@@ -253,6 +258,7 @@ export function TasksScreen() {
 function TasksBody({
   params,
   query,
+  data,
   items,
   pendingId,
   onOpen,
@@ -262,6 +268,7 @@ function TasksBody({
 }: {
   params: ReturnType<typeof useTasksViewParams>;
   query: ReturnType<typeof useTasksQuery>;
+  data: ReturnType<typeof useTasksQuery>["data"];
   items: readonly TaskListItem[];
   pendingId: number | null;
   onOpen: (id: number) => void;
@@ -297,7 +304,8 @@ function TasksBody({
     return params.activeFilterCount > 0 ? (
       <EmptyState
         message="조건에 맞는 업무가 없습니다"
-        hint="유형·상태 필터를 지우면 더 많은 업무가 보입니다"
+        /* `n` 은 **기간만 적용한 총계**다(U-9 · §4 `unfilteredTotal`) — 「더 많은」이 아니라 수를 적는다 */
+        hint={`유형·상태 필터를 지우면 ${data?.unfilteredTotal ?? 0}건이 보입니다`}
         action={
           <Button type="button" variant="outline" onClick={params.clearFilters}>
             필터 지우기
@@ -325,6 +333,10 @@ function TasksBody({
     <KanbanBoard
       items={items}
       month={params.month}
+      /** **월 기준 수**는 집계에서 온다 — 카드를 세지 않는다(U-2 · 검수 F-2). */
+      doneCount={data?.statusCounts.done ?? 0}
+      total={data?.total ?? 0}
+      limit={KANBAN_MAX_SIZE}
       pendingId={pendingId}
       onOpen={onOpen}
       onDropStatus={onSelectStatus}

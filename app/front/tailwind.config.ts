@@ -41,8 +41,15 @@ const config: Config = {
          * 그 하나이고 뷰 토글은 `current` 로 그린다(SPEC-004 §2 · S004-OQ-2).
          */
         ink: "var(--tm-ink)",
-        /* 고르는 목록의 「현재 값」 — 선택 칩(`select`)과 다른 축이다 */
-        current: { DEFAULT: "var(--tm-current-bg)", foreground: "var(--tm-select-fg)" },
+        /**
+         * 고르는 목록의 **「현재 값」** — 선택 칩(`select`)과 다른 축이다.
+         *
+         * 이름이 `current` 면 **Tailwind 관용구를 덮는다**(검수 W-1): `current` 는 내장 색으로
+         * `currentColor` 이고 `text-current`·`fill-current`·`stroke-current` 는 「상속색을 그대로」라는
+         * 표준 표현이다. 덮는 순간 shadcn 생성물(`checkbox.tsx` 의 `text-current`)이 조용히
+         * 다른 색이 된다 — 그래서 **값·규격은 그대로 두고 이름만** `pick` 으로 옮겼다.
+         */
+        pick: { DEFAULT: "var(--tm-current-bg)", foreground: "var(--tm-select-fg)" },
         /* 칸반 드롭 플레이스홀더(U-4) */
         "drop-placeholder": {
           DEFAULT: "var(--tm-drop-placeholder-bg)",
