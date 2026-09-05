@@ -119,16 +119,85 @@
  * 팔레트 토큰명(`work_type.color_token`)이고, 배지·칩은 `data-color-token="<name>"`
  * 속성만 받는다 — 인라인 `style={{ background: hex }}` 를 쓰지 않는다.
  *
- * **팔레트 8종의 실제 값 등록은 WORK-003 이다**(SPEC-002 §4 Data Contract 가 정본).
- * WORK-001 은 자리와 중립 폴백만 만든다 — 없는 토큰명이 와도 조용히 숨기지 않고
- * 중립 색으로 떨어뜨린다(§5-3 규칙 4).
+ * **팔레트 8종의 값은 여기가 프론트의 유일한 정의처다**(SPEC-002 §4 Data Contract 가 정본).
+ * 서버 쪽 정의처는 `app/back/dto/enums.py` 의 `ColorToken` 하나 — 합쳐서 **두 곳뿐**이다
+ * (WORK-003 Done Criteria 「중복 정의 없음」). 값이 바뀌어도 토큰명이 그대로면
+ * 고칠 파일이 이 둘로 끝난다(S002-OQ-5).
+ *
+ * **레시피는 하나다** — 배경은 매우 옅은 틴트, 전경은 같은 색상의 어두운 값.
+ * 상태 5색·채널 3색의 hex 를 재사용하지 않는다. 축이 섞이면 배지 색으로 상태를 읽게 된다
+ * (SPEC-002 §4 규칙 2). **팔레트를 화면에서 늘리지 않는다**(규칙 4).
  */
 :root {
+  /* 기본 유형 시드 3종 — 디자인 시스템 [02] 배지 값 그대로 */
+  --tm-palette-indigo-bg: #eef1fe;
+  --tm-palette-indigo-fg: #4a55b8;
+  --tm-palette-violet-bg: #f1f2fe;
+  --tm-palette-violet-fg: #4b52a8;
+  --tm-palette-steel-bg: #f4f7ff;
+  --tm-palette-steel-fg: #3f5f94;
+
+  /* 같은 레시피로 확장한 5종 */
+  --tm-palette-mint-bg: #eaf7f0;
+  --tm-palette-mint-fg: #2f7f5b;
+  --tm-palette-sky-bg: #e9f3fd;
+  --tm-palette-sky-fg: #2e6fa8;
+  --tm-palette-amber-bg: #fbf2dc;
+  --tm-palette-amber-fg: #8a6714;
+  --tm-palette-rose-bg: #fceeec;
+  --tm-palette-rose-fg: #a34a3f;
+  --tm-palette-graphite-bg: #f1f2f5;
+  --tm-palette-graphite-fg: #4a4e58;
+
+  /* 팔레트 밖 토큰명이 왔을 때의 폴백 */
   --tm-palette-neutral-bg: #f4f5f7;
   --tm-palette-neutral-fg: #5f6470;
+
+  /**
+   * 색 팝오버에서 **현재 값** 스와치의 글로우(SPEC-002 U-4 상태).
+   * `--tm-primary` 의 알파 변형이라 Tailwind 불투명도 수정자로는 못 만든다(변수는 합성이 안 된다).
+   */
+  --tm-swatch-current-ring: 0 0 0 3px rgba(113, 129, 248, 0.16);
 }
 
+/**
+ * **중립이 기본값이다.** 아래 8개 규칙 중 하나도 맞지 않으면(삭제된 유형의 옛 토큰명 등)
+ * 이 선언이 남아 중립 색으로 그려진다 — **항목을 숨기지 않는다**(§5-3 규칙 4).
+ */
 [data-color-token] {
   --tm-palette-bg: var(--tm-palette-neutral-bg);
   --tm-palette-fg: var(--tm-palette-neutral-fg);
+}
+
+[data-color-token="indigo"] {
+  --tm-palette-bg: var(--tm-palette-indigo-bg);
+  --tm-palette-fg: var(--tm-palette-indigo-fg);
+}
+[data-color-token="violet"] {
+  --tm-palette-bg: var(--tm-palette-violet-bg);
+  --tm-palette-fg: var(--tm-palette-violet-fg);
+}
+[data-color-token="steel"] {
+  --tm-palette-bg: var(--tm-palette-steel-bg);
+  --tm-palette-fg: var(--tm-palette-steel-fg);
+}
+[data-color-token="mint"] {
+  --tm-palette-bg: var(--tm-palette-mint-bg);
+  --tm-palette-fg: var(--tm-palette-mint-fg);
+}
+[data-color-token="sky"] {
+  --tm-palette-bg: var(--tm-palette-sky-bg);
+  --tm-palette-fg: var(--tm-palette-sky-fg);
+}
+[data-color-token="amber"] {
+  --tm-palette-bg: var(--tm-palette-amber-bg);
+  --tm-palette-fg: var(--tm-palette-amber-fg);
+}
+[data-color-token="rose"] {
+  --tm-palette-bg: var(--tm-palette-rose-bg);
+  --tm-palette-fg: var(--tm-palette-rose-fg);
+}
+[data-color-token="graphite"] {
+  --tm-palette-bg: var(--tm-palette-graphite-bg);
+  --tm-palette-fg: var(--tm-palette-graphite-fg);
 }

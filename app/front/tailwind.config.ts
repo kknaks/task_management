@@ -75,6 +75,8 @@ const config: Config = {
         drawer: "var(--tm-shadow-drawer)",
         modal: "var(--tm-shadow-modal)",
         popover: "var(--tm-shadow-popover)",
+        /* 색 팝오버의 현재 값 스와치 글로우(SPEC-002 U-4) */
+        "swatch-current": "var(--tm-swatch-current-ring)",
       },
 
       fontFamily: {
@@ -99,6 +101,8 @@ const config: Config = {
         body: ["14px", { lineHeight: "1.6", letterSpacing: "-0.02em" }],
         meta: ["13px", { lineHeight: "1.5", letterSpacing: "-0.02em" }],
         caption: ["12px", { lineHeight: "1.5", letterSpacing: "-0.02em" }],
+        /* 유형 배지 — `09-design-tokens.md` §상태·유형 「h20 r4 11px/600」 */
+        badge: ["11px", { lineHeight: "1", letterSpacing: "-0.02em", fontWeight: "600" }],
       },
 
       /* 컨트롤 높이 — 09-design-tokens §형태 (입력 38~48 · 버튼 34) */

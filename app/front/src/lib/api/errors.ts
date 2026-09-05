@@ -38,6 +38,15 @@ export const API_ERROR_CODE = {
   INVALID_REFRESH_TOKEN: "invalid_refresh_token",
   /** v2 게이트가 샜을 때의 안전망. 정상 경로가 아니다. */
   V2_NOT_AVAILABLE: "v2_not_available",
+
+  /** 같은 계정에서 삭제되지 않은 것끼리 이름이 겹쳤다(SPEC-002 §4). */
+  DUPLICATE_NAME: "duplicate_name",
+  /** 기본 유형 3종의 이름·종류 변경과 삭제(A-4). **서버 판정이 정본**이다. */
+  WORK_TYPE_LOCKED: "work_type_locked",
+  /** 팔레트 밖 토큰명·임의 hex(A-5). */
+  INVALID_COLOR_TOKEN: "invalid_color_token",
+  /** 없는 항목·남의 항목. **존재를 흘리지 않는다**(SPEC-002 §5). */
+  NOT_FOUND: "not_found",
 } as const;
 
 /**

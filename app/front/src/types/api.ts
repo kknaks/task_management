@@ -41,3 +41,44 @@ export interface AccountSummary {
 export interface SessionResponse {
   account: AccountSummary;
 }
+
+/**
+ * 허용 색 팔레트 8종의 **토큰명**(SPEC-002 §4 Data Contract).
+ *
+ * **hex 는 여기 없다** — 값은 `styles/tokens.css` 한 곳이 정본이고, 이 타입은 백엔드
+ * `dto/enums.py` 의 `ColorToken` 을 미러한 것이다(§3-6 「`types/api.ts` 는 백엔드 schema 의 미러」).
+ */
+export type ColorToken =
+  | "indigo"
+  | "violet"
+  | "steel"
+  | "mint"
+  | "sky"
+  | "amber"
+  | "rose"
+  | "graphite";
+
+/** 유형의 종류. **저장·전송 모두 영문 소문자**이고 화면의 「미팅」/「업무」는 표시 매핑이다(DB G-4). */
+export type WorkTypeKind = "meeting" | "task";
+
+/** `GET /api/work-types` 의 항목 — SPEC-002 §4 Data Contract */
+export interface WorkType {
+  id: number;
+  kind: WorkTypeKind;
+  name: string;
+  colorToken: ColorToken;
+  /** 기본 유형 3종. **이름·종류 고정, 삭제 불가, 색만 편집**(A-4) */
+  isDefault: boolean;
+}
+
+/** `GET /api/projects` 의 항목. 유형과 달리 **종류가 없다**(이름 + 색뿐 — DEC-001 §3). */
+export interface Project {
+  id: number;
+  name: string;
+  colorToken: ColorToken;
+}
+
+/** 목록 응답 봉투. **`items` 를 꺼내는 것은 영역별 `api.ts` 까지**이고 훅 위로는 배열이 올라간다(§3-6). */
+export interface ListResponse<T> {
+  items: T[];
+}

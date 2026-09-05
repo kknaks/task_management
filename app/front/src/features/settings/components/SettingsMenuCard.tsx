@@ -62,7 +62,12 @@ export function SettingsMenuCard() {
   };
 
   return (
-    <aside className="flex w-[260px] shrink-0 flex-col gap-2 rounded-card border border-border bg-card p-3">
+    /**
+     * 폭은 구간에 따라 갈린다 — **1280~1439 는 240 · ≥1440 은 260**(SPEC-002 U-8).
+     * 높이는 **내용만큼만** 차지하고 상단에 고정된다. 1920 규칙의 「메뉴 카드 높이를 패널과
+     * 같은 값으로」는 고정 캔버스에서 나온 값이라 유동에서는 성립하지 않는다(같은 절).
+     */
+    <aside className="flex w-[240px] shrink-0 flex-col gap-2 self-start rounded-card border border-border bg-card p-3 wide:w-[260px]">
       <ul className="flex flex-col">
         {MENU.map((item) => {
           const current = pathname === item.href;
