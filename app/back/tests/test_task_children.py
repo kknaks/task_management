@@ -6,12 +6,14 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.task import TaskLog, TaskRelation
+from models.task import Task, TaskLog, TaskRelation
 from tests.task_fixtures import TaskOwner, owner, stranger  # noqa: F401
 
 BASE = "/api/tasks"
@@ -482,36 +484,143 @@ async def test_the_detail_shows_only_five_relations_but_the_full_count(
     assert detail["relationTotal"] == 7
 
 
-# --- 연관업무 후보 (U-8) -------------------------------------------------
+# --- 연관업무 후보 (U-8 · §4 2026-09-06 개정) ----------------------------
+#
+# **업무에 매달리지 않는 컬렉션 표면**이다. U-1 이 생성 드로어에도 「업무 연결」을 두는데
+# 그 시점에는 자기 id 가 없기 때문이다.
+
+CANDIDATES = f"{BASE}/relations/candidates"
 
 
-async def test_candidates_exclude_self_and_already_linked(
+async def test_the_candidates_route_is_matched_before_the_task_id_route(
     client: AsyncClient, owner: TaskOwner
 ) -> None:
-    first = await _create(client, owner, title="기준")
+    """**선언 순서가 계약이다.**
+
+    `GET /{task_id}` 의 `task_id` 는 `int` 라, 이 라우트가 뒤에 선언되면
+    `relations` 를 id 로 파싱하려다 422 가 난다. 200 이어야 순서가 맞은 것이다.
+    """
+    response = await client.get(CANDIDATES, headers=owner.headers)
+
+    assert response.status_code == 200, response.text
+    assert "items" in response.json()
+
+
+async def test_candidates_work_without_an_exclude_id(
+    client: AsyncClient, owner: TaskOwner
+) -> None:
+    """생성 드로어 경로 — 자기 id 가 없어도 **200 이고 후보가 온다.**"""
+    first = await _create(client, owner, title="후보 A")
+    second = await _create(client, owner, title="후보 B")
+
+    response = await client.get(CANDIDATES, headers=owner.headers)
+
+    assert response.status_code == 200
+    ids = [item["id"] for item in response.json()["items"]]
+    assert first["id"] in ids
+    assert second["id"] in ids
+
+
+async def test_exclude_id_drops_itself_and_already_linked(
+    client: AsyncClient, owner: TaskOwner
+) -> None:
+    """상세 드로어 경로 — 자기 자신과 **이미 연결된 업무가 함께 빠진다.**"""
+    base = await _create(client, owner, title="기준")
     linked = await _create(client, owner, title="이미 연결")
     free = await _create(client, owner, title="후보")
     await client.post(
-        f"{BASE}/{first['id']}/relations",
+        f"{BASE}/{base['id']}/relations",
         json={"taskIds": [linked["id"]]},
         headers=owner.headers,
     )
 
     response = await client.get(
-        f"{BASE}/{first['id']}/relations/candidates", headers=owner.headers
+        CANDIDATES, params={"excludeId": base["id"]}, headers=owner.headers
     )
 
     assert response.status_code == 200
     ids = [item["id"] for item in response.json()["items"]]
-    assert first["id"] not in ids
+    assert base["id"] not in ids
     assert linked["id"] not in ids
     assert free["id"] in ids
 
+    # `excludeId` 를 빼면 둘 다 다시 후보다 — 제외는 그 파라미터의 몫이다
+    without = await client.get(CANDIDATES, headers=owner.headers)
+    assert {base["id"], linked["id"]} <= {
+        item["id"] for item in without.json()["items"]
+    }
 
-async def test_candidates_prefer_the_same_project(
+
+async def test_exclude_id_of_another_account_is_404(
+    client: AsyncClient, owner: TaskOwner, stranger: TaskOwner
+) -> None:
+    """남의 업무를 `excludeId` 로 줘도 **404** 다 — 존재를 흘리지 않는다."""
+    theirs = await _create(client, stranger, title="남의 업무")
+
+    response = await client.get(
+        CANDIDATES, params={"excludeId": theirs["id"]}, headers=owner.headers
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "업무를 찾을 수 없습니다", "code": "not_found"}
+
+
+async def test_exclude_id_that_does_not_exist_is_404(
     client: AsyncClient, owner: TaskOwner
 ) -> None:
-    """검색어가 없으면 **같은 프로젝트 → 기한 ±7일 → 최근 수정** 순이다(U-8)."""
+    response = await client.get(
+        CANDIDATES, params={"excludeId": 987654321}, headers=owner.headers
+    )
+
+    assert response.status_code == 404
+    assert response.json()["code"] == "not_found"
+
+
+async def test_query_project_id_moves_the_same_project_to_the_front(
+    client: AsyncClient, owner: TaskOwner
+) -> None:
+    """생성 드로어는 **폼에 입력 중인** 값을 보낸다 — 그것으로 정렬이 바뀐다.
+
+    같은 프로젝트 업무를 **먼저** 만든다 — 정렬 근거가 없을 때의 기본이 「최근 수정 순」이라,
+    나중에 만들면 힌트 없이도 맨 앞이라 아무것도 증명하지 못한다.
+    """
+    same_project = await _create(
+        client, owner, title="같은 프로젝트", projectId=owner.project_id
+    )
+    await _create(client, owner, title="무소속")
+
+    without = await client.get(CANDIDATES, headers=owner.headers)
+    with_project = await client.get(
+        CANDIDATES, params={"projectId": owner.project_id}, headers=owner.headers
+    )
+
+    # 정렬 근거가 없으면 최근 수정 순이라 「같은 프로젝트」가 맨 앞이 아니다
+    assert without.json()["items"][0]["id"] != same_project["id"]
+    assert with_project.json()["items"][0]["id"] == same_project["id"]
+
+
+async def test_query_due_date_moves_nearby_deadlines_up(
+    client: AsyncClient, owner: TaskOwner
+) -> None:
+    """기한 ±7일이 그 다음 순위다(U-8)."""
+    far = await _create(client, owner, title="먼 기한", dueDate="2026-12-01")
+    near = await _create(client, owner, title="가까운 기한", dueDate="2026-09-12")
+
+    response = await client.get(
+        CANDIDATES, params={"dueDate": "2026-09-10"}, headers=owner.headers
+    )
+
+    ids = [item["id"] for item in response.json()["items"]]
+    assert ids.index(near["id"]) < ids.index(far["id"])
+
+
+async def test_exclude_id_wins_over_the_query_sort_hints(
+    client: AsyncClient, owner: TaskOwner
+) -> None:
+    """§4 — **`excludeId` 가 있으면 서버가 그 업무의 값을 쓴다**(쿼리 값보다 우선).
+
+    상세 드로어가 정렬 근거를 따로 보내지 않아도 되게 하는 규칙이다.
+    """
     await _create(client, owner, title="무소속")
     same_project = await _create(
         client, owner, title="같은 프로젝트", projectId=owner.project_id
@@ -519,7 +628,10 @@ async def test_candidates_prefer_the_same_project(
     base = await _create(client, owner, title="기준", projectId=owner.project_id)
 
     response = await client.get(
-        f"{BASE}/{base['id']}/relations/candidates", headers=owner.headers
+        CANDIDATES,
+        # 쿼리로는 「프로젝트 없음」을 주장해도 기준 업무의 프로젝트가 이긴다
+        params={"excludeId": base["id"], "projectId": 987654321},
+        headers=owner.headers,
     )
 
     assert response.json()["items"][0]["id"] == same_project["id"]
@@ -528,27 +640,55 @@ async def test_candidates_prefer_the_same_project(
 async def test_candidates_can_be_searched_by_keyword(
     client: AsyncClient, owner: TaskOwner
 ) -> None:
-    base = await _create(client, owner, title="기준")
     await _create(client, owner, title="소개서 리뷰")
     await _create(client, owner, title="관계 없는 것")
 
     response = await client.get(
-        f"{BASE}/{base['id']}/relations/candidates",
-        params={"keyword": "소개서"},
-        headers=owner.headers,
+        CANDIDATES, params={"keyword": "소개서"}, headers=owner.headers
     )
 
     assert [item["title"] for item in response.json()["items"]] == ["소개서 리뷰"]
 
 
-async def test_candidates_never_include_another_account(
-    client: AsyncClient, owner: TaskOwner, stranger: TaskOwner
+async def test_candidates_never_include_another_account_or_deleted_tasks(
+    client: AsyncClient, db_session: AsyncSession, owner: TaskOwner, stranger: TaskOwner
 ) -> None:
-    base = await _create(client, owner, title="기준")
+    mine = await _create(client, owner, title="내 업무")
     theirs = await _create(client, stranger, title="남의 업무")
+    removed = await _create(client, owner, title="지운 업무")
+    row = (await db_session.scalars(select(Task).where(Task.id == removed["id"]))).one()
+    row.deleted_at = datetime.now(UTC)
+    await db_session.flush()
+
+    response = await client.get(CANDIDATES, headers=owner.headers)
+
+    ids = [item["id"] for item in response.json()["items"]]
+    assert mine["id"] in ids
+    assert theirs["id"] not in ids
+    assert removed["id"] not in ids
+
+
+async def test_candidates_require_a_session(client: AsyncClient) -> None:
+    response = await client.get(CANDIDATES)
+
+    assert response.status_code == 401
+    assert response.json()["code"] == "token_expired"
+
+
+async def test_the_old_per_task_candidates_route_is_gone(
+    client: AsyncClient, owner: TaskOwner
+) -> None:
+    """표면을 둘로 두지 않는다 — 옛 경로에 **GET 이 없다**(§4 개정).
+
+    404 가 아니라 **405** 다: 그 경로는 아직 `DELETE /{task_id}/relations/{otherTaskId}` 의
+    패턴과 겹쳐서(`candidates` 가 그 자리에 들어간다) Starlette 이 「경로는 있고 메서드가 없다」로
+    답한다. 어느 쪽이든 **후보 검색이 여기 없다**는 사실은 같다.
+    """
+    task = await _create(client, owner)
 
     response = await client.get(
-        f"{BASE}/{base['id']}/relations/candidates", headers=owner.headers
+        f"{BASE}/{task['id']}/relations/candidates", headers=owner.headers
     )
 
-    assert theirs["id"] not in [item["id"] for item in response.json()["items"]]
+    assert response.status_code == 405
+    assert "items" not in response.text

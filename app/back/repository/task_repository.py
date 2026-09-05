@@ -164,19 +164,19 @@ async def find_relation_candidates(
     session: AsyncSession,
     *,
     account_id: int,
-    task_id: int,
     project_id: int | None,
     due_date: date | None,
     exclude_ids: set[int],
     keyword: str | None,
     limit: int,
 ) -> list[TaskDTO]:
-    """연관업무 후보(SPEC-003 U-8).
+    """연관업무 후보(SPEC-003 U-8 · §4 2026-09-06 개정).
 
     검색어가 없으면 **같은 프로젝트 → 기한 ±7일 → 최근 수정** 순이다.
-    자기 자신과 이미 연결된 것은 뺀다.
+    **어떤 업무에도 매달리지 않는다** — 뺄 id 는 service 가 정해서 `exclude_ids` 로 넘긴다
+    (생성 드로어는 뺄 것이 없고, 상세 드로어는 자기 자신 + 이미 연결된 것을 뺀다).
     """
-    query = _with_refs(account_id).where(Task.id != task_id)
+    query = _with_refs(account_id)
     if exclude_ids:
         query = query.where(Task.id.not_in(exclude_ids))
     if keyword:

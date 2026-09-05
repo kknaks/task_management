@@ -571,22 +571,41 @@ async def unlink_relation(
 
 
 async def list_relation_candidates(
-    session: AsyncSession, *, account_id: int, task_id: int, keyword: str | None
+    session: AsyncSession,
+    *,
+    account_id: int,
+    keyword: str | None = None,
+    exclude_id: int | None = None,
+    project_id: int | None = None,
+    due_date: date | None = None,
 ) -> list[TaskDTO]:
-    """SPEC-003 U-8 — 검색어가 없으면 **같은 프로젝트 → 기한 ±7일 → 최근 수정** 순 최대 20건.
+    """SPEC-003 U-8 · §4(2026-09-06 개정) — **업무에 매달리지 않는 컬렉션 표면**이다.
 
-    자기 자신과 이미 연결된 업무는 후보에서 빠진다.
+    U-1 이 **생성 드로어에도** 「업무 연결」을 두는데 그 시점에는 **자기 id 가 없다** —
+    그래서 정렬 근거를 쿼리로 받고, 뺄 대상도 쿼리로 받는다.
+
+    - `exclude_id` 없음(생성 드로어) — 뺄 것이 없고, **폼에 입력 중인** `project_id`·`due_date` 로 정렬한다
+    - `exclude_id` 있음(상세 드로어) — 그 업무와 **이미 연결된 것도 함께 빠지고**,
+      정렬 근거는 **그 업무의 값이 쿼리 값을 이긴다**(화면이 두 번 보내지 않아도 된다)
+
+    검색어가 없어도 기본 정렬로 최대 20건을 준다. 삭제된 업무는 처음부터 조회에서 빠진다.
     """
-    task = await _require_task(session, account_id=account_id, task_id=task_id)
-    already_linked = await task_child_repository.list_related_ids(session, task_id)
+    exclude_ids: set[int] = set()
+
+    if exclude_id is not None:
+        # 남의 업무·없는 업무면 404 다 — 존재를 흘리지 않는다(§5 · §9).
+        task = await _require_task(session, account_id=account_id, task_id=exclude_id)
+        project_id = None if task.project is None else task.project.id
+        due_date = task.due_date
+        exclude_ids = await task_child_repository.list_related_ids(session, exclude_id)
+        exclude_ids.add(exclude_id)
 
     return await task_repository.find_relation_candidates(
         session,
         account_id=account_id,
-        task_id=task_id,
-        project_id=None if task.project is None else task.project.id,
-        due_date=task.due_date,
-        exclude_ids=already_linked,
+        project_id=project_id,
+        due_date=due_date,
+        exclude_ids=exclude_ids,
         keyword=keyword,
         limit=_RELATION_CANDIDATE_LIMIT,
     )

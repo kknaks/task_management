@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,6 +35,55 @@ router = APIRouter(
     tags=["task"],
     dependencies=[Depends(require_account)],
 )
+
+
+# --- 연관업무 후보 -------------------------------------------------------
+#
+# **선언 순서가 계약이다.** 아래 `GET /{task_id}` 의 `task_id` 는 `int` 라,
+# 이 라우트를 뒤에 두면 `/relations/candidates` 의 `relations` 를 id 로 파싱하려다 422 가 난다.
+# FastAPI 는 **선언 순서대로** 매칭하므로 고정 경로가 먼저 와야 한다(테스트로 고정했다).
+
+
+@router.get(
+    "/relations/candidates",
+    response_model=RelationCandidateListResponse,
+    response_model_by_alias=True,
+)
+async def list_relation_candidates(
+    # 쿼리 키도 **camelCase** 다 — 응답과 같은 계약이다(§3 규칙 6).
+    # `Query(alias=...)` 없이는 `CamelModel` 의 alias 가 적용되지 않는다(그건 본문 모델의 규칙이다).
+    keyword: str | None = Query(default=None, max_length=200),
+    exclude_id: int | None = Query(default=None, alias="excludeId"),
+    project_id: int | None = Query(default=None, alias="projectId"),
+    due_date: date | None = Query(default=None, alias="dueDate"),
+    account_id: int = Depends(require_account),
+    session: AsyncSession = Depends(get_db),
+) -> RelationCandidateListResponse:
+    """U-8 · §4(2026-09-06 개정) — **업무에 매달리지 않는 컬렉션 표면**이다.
+
+    생성 드로어는 자기 id 가 없어 `excludeId` 를 보내지 않고 **폼에 입력 중인** 정렬 근거를 준다.
+    상세 드로어는 `excludeId` 만 보내면 되고, **서버가 그 업무의 값을 정렬 근거로 쓴다.**
+    """
+    candidates = await task_service.list_relation_candidates(
+        session,
+        account_id=account_id,
+        keyword=keyword,
+        exclude_id=exclude_id,
+        project_id=project_id,
+        due_date=due_date,
+    )
+    return RelationCandidateListResponse(
+        items=[
+            RelationCandidateItem(
+                id=candidate.id,
+                title=candidate.title,
+                status=candidate.status,  # type: ignore[arg-type]
+                project_name=None if candidate.project is None else candidate.project.name,
+                due_date=candidate.due_date,
+            )
+            for candidate in candidates
+        ]
+    )
 
 
 # --- 본체 ---------------------------------------------------------------
@@ -201,35 +252,6 @@ async def remove_attachment(
 
 
 # --- 연관업무 -----------------------------------------------------------
-
-
-@router.get(
-    "/{task_id}/relations/candidates",
-    response_model=RelationCandidateListResponse,
-    response_model_by_alias=True,
-)
-async def list_relation_candidates(
-    task_id: int,
-    keyword: str | None = Query(default=None, max_length=200),
-    account_id: int = Depends(require_account),
-    session: AsyncSession = Depends(get_db),
-) -> RelationCandidateListResponse:
-    """U-8 — 검색어가 없으면 **같은 프로젝트 → 기한 ±7일 → 최근 수정** 순 최대 20건."""
-    candidates = await task_service.list_relation_candidates(
-        session, account_id=account_id, task_id=task_id, keyword=keyword
-    )
-    return RelationCandidateListResponse(
-        items=[
-            RelationCandidateItem(
-                id=candidate.id,
-                title=candidate.title,
-                status=candidate.status,  # type: ignore[arg-type]
-                project_name=None if candidate.project is None else candidate.project.name,
-                due_date=candidate.due_date,
-            )
-            for candidate in candidates
-        ]
-    )
 
 
 @router.post(
