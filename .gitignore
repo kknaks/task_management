@@ -5,6 +5,12 @@ __pycache__/
 .env
 .env.*
 !.env.example
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# 로컬 저장소 루트(STORAGE_ROOT 기본값)
+.storage/
 
 # node
 node_modules/

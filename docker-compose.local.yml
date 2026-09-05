@@ -1,0 +1,53 @@
+# 로컬 개발 스택 — PostgreSQL + API.
+# SPEC-000 §5 「백엔드는 compose 로 PostgreSQL + API 를 함께 띄운다」.
+# Redis · open-kknaks worker · 파일 저장소는 회의록 배치에서 여기에 합류한다.
+
+name: task-management-local
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: ./app/back
+    env_file:
+      - .env
+    environment:
+      # 컨테이너 안에서는 DB 호스트가 `db` 다. 호스트용 .env 값을 덮어쓴다.
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      # 볼륨 경로. 이 work 는 자리만 만들고 쓰지 않는다(SPEC-000 §5).
+      STORAGE_ROOT: /data
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./app/back:/app
+      - storage:/data
+    command:
+      - uvicorn
+      - main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --reload
+
+volumes:
+  pgdata:
+  storage:

@@ -1,0 +1,27 @@
+[project]
+name = "task-management-back"
+version = "0.1.0"
+description = "task-management 백엔드 — FastAPI + SQLAlchemy 2.0 async + PostgreSQL"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    # [asyncio] = greenlet. async 엔진의 sync 브리지에 필요하다.
+    "sqlalchemy[asyncio]>=2.0.36",
+    "psycopg[binary]>=3.2.0",
+    "pydantic-settings>=2.6.0",
+    "alembic>=1.14.0",
+    "bcrypt>=4.2.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "httpx>=0.28.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["."]
+testpaths = ["tests"]
