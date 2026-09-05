@@ -19,6 +19,7 @@ import { useCollectionSave } from "@/features/tasks/hooks/useTaskFieldSave";
 import { useTaskMutations } from "@/features/tasks/hooks/useTaskMutations";
 import type { TaskDetail } from "@/features/tasks/types";
 import { tokenStore } from "@/lib/auth/tokenStore";
+import { API_ERROR_CODE, ApiError, isApiError } from "@/lib/api/errors";
 import { queryKeys } from "@/lib/api/queryKeys";
 import { API_BASE, server } from "@/test/server";
 
@@ -206,6 +207,66 @@ describe("U-7 — 되돌린 뒤에도 **말이 남는다**", () => {
       await result.current.run("todo:11", () => Promise.resolve());
     });
     expect(result.current.hasFailed("todo:11")).toBe(false);
+  });
+});
+
+describe("U-7 — 화면이 낡아서 난 실패는 「다시 저장」이 아니다", () => {
+  it("없는 연관을 해제해 404 가 나면 **표시를 켜지 않고** 목록 갱신으로 푼다", async () => {
+    const refreshed: string[] = [];
+    const { result } = renderHook(() => useCollectionSave(TASK.id, "연관업무", false));
+
+    await act(async () => {
+      await result.current.run(
+        "relation:99",
+        () => Promise.reject(new ApiError(404, API_ERROR_CODE.NOT_FOUND, "업무를 찾을 수 없습니다")),
+        {
+          onStale: (error) => {
+            if (!isApiError(error) || error.code !== API_ERROR_CODE.NOT_FOUND) {
+              return false;
+            }
+            refreshed.push("refresh");
+            return true;
+          },
+        },
+      );
+    });
+
+    // 같은 요청을 다시 보내도 또 404 다 — 「다시 저장」을 붙이지 않는다.
+    expect(result.current.hasFailed("relation:99")).toBe(false);
+    expect(refreshed).toEqual(["refresh"]);
+  });
+
+  it("404 가 아닌 실패는 그대로 표시가 켜진다 — 분기가 **404 에만** 걸린다", async () => {
+    const { result } = renderHook(() => useCollectionSave(TASK.id, "연관업무", false));
+
+    await act(async () => {
+      await result.current.run(
+        "relation:99",
+        () => Promise.reject(new ApiError(500, "internal_error", "서버 오류")),
+        { onStale: (error) => isApiError(error) && error.code === API_ERROR_CODE.NOT_FOUND },
+      );
+    });
+
+    expect(result.current.hasFailed("relation:99")).toBe(true);
+  });
+
+  it("「다시 저장」은 **정확히 1건**만 보낸다 — 자동 재시도가 없다", async () => {
+    let sent = 0;
+    const { result } = renderHook(() => useCollectionSave(TASK.id, "참고자료", false));
+
+    await act(async () => {
+      await result.current.run("attachment:new", () => {
+        sent += 1;
+        return Promise.reject(new ApiError(500, "internal_error", "서버 오류"));
+      });
+    });
+    expect(sent).toBe(1);
+
+    // 시간이 지나도 저절로 나가지 않는다.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    });
+    expect(sent).toBe(1);
   });
 });
 

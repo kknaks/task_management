@@ -17,7 +17,10 @@
 import { useCallback } from "react";
 import { toast } from "sonner";
 
-import { AutoSaveFailureNotice } from "@/components/shared/AutoSaveFailureNotice";
+import {
+  AutoSaveFailureNotice,
+  type AutoSaveFailure,
+} from "@/components/shared/AutoSaveFailureNotice";
 import { autoSaveErrorToast, taskInlineError } from "@/features/tasks/errors";
 import { useTaskMutations } from "@/features/tasks/hooks/useTaskMutations";
 import { useRowFailures } from "@/features/settings/useRowFailures";
@@ -85,20 +88,23 @@ export function useTaskFieldSave(task: TaskDetail) {
    * **소유자는 블록**이다 — 캡션·「다시 저장」을 그 필드가 있는 블록 안에 둔다.
    * 자리는 **블록당 하나**이고 그 블록에서 여러 필드가 실패하면 줄이 늘어난다.
    */
+  const failureList = useCallback(
+    (...fields: TaskField[]): AutoSaveFailure[] =>
+      fields
+        .filter((field) => field in rowFailures)
+        .map((field) => ({
+          field,
+          label: TASK_FIELD_LABEL[field],
+          onRetry: () => void rowFailures[field].retry(),
+        })),
+    [rowFailures],
+  );
+
   const noticeFor = useCallback(
     (...fields: TaskField[]) => (
-      <AutoSaveFailureNotice
-        busy={mutations.update.isPending}
-        failures={fields
-          .filter((field) => field in rowFailures)
-          .map((field) => ({
-            field,
-            label: TASK_FIELD_LABEL[field],
-            onRetry: () => void rowFailures[field].retry(),
-          }))}
-      />
+      <AutoSaveFailureNotice busy={mutations.update.isPending} failures={failureList(...fields)} />
     ),
-    [mutations.update.isPending, rowFailures],
+    [failureList, mutations.update.isPending],
   );
 
   return {
@@ -106,6 +112,11 @@ export function useTaskFieldSave(task: TaskDetail) {
     saving: mutations.update.isPending,
     hasFailed: (field: TaskField) => hasFailed(task.id, field),
     noticeFor,
+    /**
+     * 한 블록이 **본체 필드와 자식 컬렉션을 함께** 들 때 쓴다(결과자료 카드 —
+     * 완료 결과 + 결과자료 첨부). 줄을 합쳐 **자리를 하나로** 유지한다.
+     */
+    failureList,
   };
 }
 
@@ -117,20 +128,50 @@ export function useTaskFieldSave(task: TaskDetail) {
  * **체크가 안 눌린 줄 안다** — 그래서 롤백 뒤에 U-7 표시가 반드시 남아야 한다.
  * (검수 W-2 의 「롤백 시 U-7 실패 표시가 그대로 뜨는지」가 이 자리다.)
  *
- * 필드 키는 **행마다 다르다**(`todo:<id>`) — 두 행이 동시에 실패하면 줄이 둘로 늘고
- * 「다시 저장」도 각자 자기 요청만 낸다.
+ * 필드 키는 **행마다 다르다**(`todo:<id>` · `attachment:<id>` · `relation:<otherId>`) —
+ * 두 행이 동시에 실패하면 줄이 둘로 늘고 「다시 저장」도 각자 자기 요청만 낸다.
+ * 아직 행이 없는 추가·연결은 **블록 단위 키**(`…:new`)를 쓰고 넣으려던 입력을 그대로 다시 보낸다.
+ *
+ * **낙관적 갱신 여부와 실패 표시는 별개 축이다** — 낙관적이면 「되돌린다 + 말한다」,
+ * 아니면 「안 바뀐다 + 말한다」다. 어느 쪽이든 **말은 해야 한다**(DEC-001 §7 · SPEC-002 U-7).
  */
+export interface CollectionRunOptions {
+  /**
+   * **화면이 낡아서 난 실패**를 가로챈다 — 「다시 저장」으로 풀 일이 아니다.
+   * 없는 연관을 해제하면 서버가 404 를 내는데(2026-09-06), 그건 이미 없는 것을 지우려 한 것이라
+   * 같은 요청을 다시 보내도 또 404 다. **목록을 갱신해 화면을 맞추는 것**이 해법이다.
+   *
+   * `true` 를 돌려주면 실패 표시를 켜지 않는다(호출자가 이미 처리했다는 뜻).
+   */
+  onStale?: (error: unknown) => boolean;
+}
+
 export function useCollectionSave(taskId: number, label: string, busy: boolean) {
   const { failures, markFailed, clearFailed, hasFailed } = useRowFailures();
 
   const run = useCallback(
-    async (field: string, request: () => Promise<unknown>): Promise<void> => {
+    async (
+      field: string,
+      request: () => Promise<unknown>,
+      options?: CollectionRunOptions,
+    ): Promise<boolean> => {
       try {
         await request();
         clearFailed(taskId, field);
-      } catch {
+        return true;
+      } catch (error) {
+        if (options?.onStale?.(error)) {
+          // 저장 실패가 아니라 **화면이 낡은 것**이다 — 표시를 켜지 않는다.
+          clearFailed(taskId, field);
+          return true;
+        }
         toast.error(autoSaveErrorToast(label));
-        markFailed(taskId, field, { retry: () => run(field, request) });
+        markFailed(taskId, field, {
+          retry: async () => {
+            await run(field, request, options);
+          },
+        });
+        return false;
       }
     },
     [clearFailed, label, markFailed, taskId],
@@ -138,19 +179,18 @@ export function useCollectionSave(taskId: number, label: string, busy: boolean) 
 
   const rowFailures = failures[taskId] ?? {};
 
+  const failureList = (): AutoSaveFailure[] =>
+    Object.keys(rowFailures).map((field) => ({
+      field,
+      label,
+      onRetry: () => void rowFailures[field].retry(),
+    }));
+
   return {
     run,
     hasFailed: (field: string) => hasFailed(taskId, field),
+    failureList,
     /** 캡션·「다시 저장」의 **블록당 하나뿐인 자리**. */
-    notice: (
-      <AutoSaveFailureNotice
-        busy={busy}
-        failures={Object.keys(rowFailures).map((field) => ({
-          field,
-          label,
-          onRetry: () => void rowFailures[field].retry(),
-        }))}
-      />
-    ),
+    notice: <AutoSaveFailureNotice busy={busy} failures={failureList()} />,
   };
 }

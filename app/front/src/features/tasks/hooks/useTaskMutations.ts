@@ -117,6 +117,13 @@ export function useTaskMutations(taskId?: number) {
   };
 
   return {
+    /**
+     * **화면이 낡았을 때 맞추는 문**(§3-3 표의 무효화만 쓴다).
+     * 없는 자식을 지우려다 404 를 받은 자리가 이걸 부른다 — 같은 요청을 다시 보내도 또 404 라
+     * 「다시 저장」이 아니라 **목록 갱신**이 해법이다.
+     */
+    refresh: () => invalidateTask(client),
+
     create: useMutation({
       mutationFn: (input: CreateTaskInput) => createTask(input),
       onSuccess: (detail) =>

@@ -31,7 +31,15 @@ export function AttachmentPopover({
   role: AttachmentRole;
   trigger: ReactNode;
   /** URL 링크 한 건을 붙인다. **팝오버는 닫히지 않는다**(연달아 붙이기 위해). */
-  onAddLink: (input: { role: AttachmentRole; url: string; label: string | null }) => Promise<void>;
+  /**
+   * `false` 를 돌려주면 **입력을 그대로 둔다** — 저장이 실패했다는 뜻이다.
+   * 그 밖의 값(`void` 포함)은 성공으로 보고 입력을 비운다.
+   */
+  onAddLink: (input: {
+    role: AttachmentRole;
+    url: string;
+    label: string | null;
+  }) => Promise<boolean | void>;
 }) {
   const [open, setOpen] = useState(false);
   const [segment, setSegment] = useState<Segment>("link");
@@ -47,14 +55,18 @@ export function AttachmentPopover({
     }
     setAdding(true);
     try {
-      await onAddLink({
+      const added = await onAddLink({
         role,
         url: url.trim(),
         // 비우면 URL 을 그대로 이름으로 쓴다 — 서버가 그렇게 처리하도록 `null` 을 보낸다.
         label: label.trim().length > 0 ? label.trim() : null,
       });
-      setUrl("");
-      setLabel("");
+      // **저장에 실패했으면 입력을 비우지 않는다** — 비우면 저장된 것처럼 보인다(U-7 「값 유지」).
+      // 실패 캡션·「다시 저장」은 부르는 블록이 그린다.
+      if (added !== false) {
+        setUrl("");
+        setLabel("");
+      }
     } finally {
       setAdding(false);
     }

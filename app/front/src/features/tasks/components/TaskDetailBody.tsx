@@ -23,6 +23,7 @@ import { Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import { AttachmentList } from "@/components/shared/AttachmentList";
+import { AutoSaveFailureNotice } from "@/components/shared/AutoSaveFailureNotice";
 import { AttachmentPopover } from "@/components/shared/AttachmentPopover";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { InlineEditText } from "@/components/shared/InlineEditText";
@@ -37,6 +38,7 @@ import { useCollectionSave, useTaskFieldSave } from "@/features/tasks/hooks/useT
 import type { CompletionCardFocus } from "@/features/tasks/hooks/useCompletionCardFocus";
 import { useTaskMutations } from "@/features/tasks/hooks/useTaskMutations";
 import type { TaskAttachment, TaskDetail } from "@/features/tasks/types";
+import { API_ERROR_CODE, isApiError } from "@/lib/api/errors";
 import { formatDueDate, formatTimestamp } from "@/lib/datetime";
 import { cn } from "@/lib/utils";
 
@@ -72,7 +74,34 @@ export function TaskMainBlocks({
    * 헤더와 **같은 규격**을 탄다 — 배선은 `useTaskFieldSave` 한 벌이다.
    * 훅을 블록마다 따로 부르므로 **실패 상태는 섞이지 않는다**(소유자는 블록 — U-7).
    */
-  const { save, hasFailed, noticeFor } = useTaskFieldSave(task);
+  const { save, hasFailed, noticeFor, failureList } = useTaskFieldSave(task);
+
+  /**
+   * 첨부·연관 쓰기는 **낙관적이지 않다** — 값이 안 바뀌므로 원복은 저절로 되지만,
+   * 그 말이 없으면 **조용히 아무 일도 안 일어난 것처럼 보인다.**
+   * 카드가 셋이라 훅도 셋이다 — **소유자는 블록**이고 실패 상태가 섞이지 않는다(U-7).
+   */
+  const attachmentBusy = mutations.addAttachment.isPending || mutations.removeAttachment.isPending;
+  const references = useCollectionSave(task.id, "참고자료", attachmentBusy);
+  const deliverables = useCollectionSave(task.id, "결과자료", attachmentBusy);
+  const relations = useCollectionSave(
+    task.id,
+    "연관업무",
+    mutations.linkRelations.isPending || mutations.unlinkRelation.isPending,
+  );
+
+  /**
+   * **없는 연관을 해제하려 했다** — 서버가 404 를 낸다(2026-09-06). 같은 요청을 다시 보내도
+   * 또 404 라 「다시 저장」이 답이 아니다. **목록을 갱신해 화면을 맞춘다.**
+   */
+  const relationGone = (error: unknown): boolean => {
+    if (!isApiError(error) || error.code !== API_ERROR_CODE.NOT_FOUND) {
+      return false;
+    }
+    toast.error("이미 해제된 연관업무입니다 · 목록을 새로 고칩니다");
+    void mutations.refresh();
+    return true;
+  };
 
   return (
     <>
@@ -117,14 +146,17 @@ export function TaskMainBlocks({
             attachments={task.attachments.filter((item) => item.role === "reference")}
             emptyMessage="첨부한 자료가 없습니다"
             onRemove={(attachment: TaskAttachment) =>
-              void mutations.removeAttachment.mutateAsync(attachment.id)
+              void references.run(`attachment:${attachment.id}`, () =>
+                mutations.removeAttachment.mutateAsync(attachment.id),
+              )
             }
           />
           <AttachmentPopover
             role="reference"
-            onAddLink={async (input) => {
-              await mutations.addAttachment.mutateAsync(input);
-            }}
+            // 아직 행이 없다 — 키는 블록 단위고 「다시 저장」이 **같은 입력**을 다시 보낸다.
+            onAddLink={(input) =>
+              references.run("attachment:new", () => mutations.addAttachment.mutateAsync(input))
+            }
             trigger={
               <Button type="button" variant="outline" className="mt-1 h-9 w-full px-3 text-meta">
                 <Plus aria-hidden />
@@ -132,10 +164,23 @@ export function TaskMainBlocks({
               </Button>
             }
           />
+          {references.notice}
         </Block>
 
         <Block title="연관업무">
-          <RelationList task={task} />
+          <RelationList
+            task={task}
+            onUnlink={(relation) =>
+              void relations.run(
+                `relation:${relation.id}`,
+                () => mutations.unlinkRelation.mutateAsync(relation.id),
+                { onStale: relationGone },
+              )
+            }
+            failedIds={task.relations
+              .map((relation) => relation.id)
+              .filter((id) => relations.hasFailed(`relation:${id}`))}
+          />
           <RelationPopover
             // 상세는 `excludeId` 만 준다 — 서버가 그 업무의 project·due 를 쓰고
             // **이미 연결된 것도 함께 제외**한다(§4).
@@ -143,7 +188,9 @@ export function TaskMainBlocks({
             // 무소속 업무면 「이 프로젝트」 칩이 비활성이고 기본이 「전체」다(U-8).
             hasBaseProject={task.project !== null}
             selectedIds={task.relations.map((relation) => relation.id)}
-            onChange={(ids) => void mutations.linkRelations.mutateAsync(ids)}
+            onChange={(ids) =>
+              void relations.run("relation:new", () => mutations.linkRelations.mutateAsync(ids))
+            }
             trigger={
               <Button type="button" variant="outline" className="mt-1 h-9 w-full px-3 text-meta">
                 <Plus aria-hidden />
@@ -151,6 +198,7 @@ export function TaskMainBlocks({
               </Button>
             }
           />
+          {relations.notice}
         </Block>
       </div>
 
@@ -159,11 +207,24 @@ export function TaskMainBlocks({
         task={task}
         saveFailed={hasFailed("completionResult")}
         onSave={(next) => save("completionResult", { completionResult: next || null })}
-        onAddLink={async (input) => {
-          await mutations.addAttachment.mutateAsync(input);
-        }}
-        onRemove={(attachment) => void mutations.removeAttachment.mutateAsync(attachment.id)}
-        notice={noticeFor("completionResult")}
+        onAddLink={(input) =>
+          deliverables.run("attachment:new", () => mutations.addAttachment.mutateAsync(input))
+        }
+        onRemove={(attachment) =>
+          void deliverables.run(`attachment:${attachment.id}`, () =>
+            mutations.removeAttachment.mutateAsync(attachment.id),
+          )
+        }
+        /**
+         * 이 카드는 **본체 필드(완료 결과)와 자식 컬렉션(결과자료)을 함께** 든다.
+         * 줄은 늘어나도 **자리는 하나**여야 하므로 두 목록을 합쳐 한 번만 그린다(U-7).
+         */
+        notice={
+          <AutoSaveFailureNotice
+            busy={mutations.update.isPending || attachmentBusy}
+            failures={[...failureList("completionResult"), ...deliverables.failureList()]}
+          />
+        }
         completion={completion}
       />
     </>
@@ -319,7 +380,17 @@ function TodoList({ task }: { task: TaskDetail }) {
   );
 }
 
-function RelationList({ task }: { task: TaskDetail }) {
+function RelationList({
+  task,
+  onUnlink,
+  failedIds,
+}: {
+  task: TaskDetail;
+  /** 연관 해제(§4 `DELETE /{id}/relations/{otherId}`). 실패해도 값이 안 바뀐다 — 말만 붙는다. */
+  onUnlink: (relation: TaskDetail["relations"][number]) => void;
+  /** 해제가 실패한 행 — 컨트롤은 **테두리·색만** 바꾸고 문구는 블록 아래 자리가 그린다(U-7). */
+  failedIds: readonly number[];
+}) {
   if (task.relations.length === 0) {
     return <EmptyState message="연결한 업무가 없습니다" />;
   }
@@ -327,7 +398,10 @@ function RelationList({ task }: { task: TaskDetail }) {
     <>
       <ul className="flex flex-col">
         {task.relations.map((relation) => (
-          <li key={relation.id} className="flex h-todo items-center gap-2 px-1">
+          <li
+            key={relation.id}
+            className="group flex h-todo items-center gap-2 border-b border-row-divider px-1 last:border-b-0 hover:bg-row-hover"
+          >
             <StatusDot status={relation.status} />
             <span className="min-w-0 flex-1 truncate text-body text-foreground">
               {relation.title}
@@ -335,6 +409,19 @@ function RelationList({ task }: { task: TaskDetail }) {
             <span className="shrink-0 text-caption text-fg-caption">
               {STATUS_LABEL[relation.status]}
             </span>
+            {/* 참고자료 행의 「제거」와 **같은 규격**이다 — 호버로 드러나는 고스트 버튼 */}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className={cn(
+                "shrink-0 opacity-0 group-hover:opacity-100 hover:text-destructive",
+                failedIds.includes(relation.id) ? "text-destructive opacity-100" : "text-muted-foreground",
+              )}
+              onClick={() => onUnlink(relation)}
+            >
+              해제
+            </Button>
           </li>
         ))}
       </ul>
@@ -419,11 +506,12 @@ function CompletionCard({
   task: TaskDetail;
   saveFailed: boolean;
   onSave: (next: string) => Promise<void>;
+  /** `false` 면 저장에 실패했다는 뜻 — 팝오버가 입력을 그대로 둔다(U-7 「값 유지」). */
   onAddLink: (input: {
     role: "reference" | "deliverable";
     url: string;
     label: string | null;
-  }) => Promise<void>;
+  }) => Promise<boolean | void>;
   onRemove: (attachment: TaskAttachment) => void;
   /** 이 카드의 자동 저장 실패 자리(U-7). 소유자는 블록이다. */
   notice: ReactNode;
