@@ -24,7 +24,7 @@ target_metadata = Base.metadata
 
 
 def _database_url() -> str:
-    """마이그레이션 대상 URL. 테스트 DB 로 돌릴 때만 `TEST_DATABASE_URL` 이 이긴다."""
+    """마이그레이션 대상 URL. 테스트 DB 로 돌릴 때만 `ALEMBIC_DATABASE_URL` 이 이긴다."""
     override = os.environ.get("ALEMBIC_DATABASE_URL")
     if override:
         return override

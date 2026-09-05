@@ -6,10 +6,11 @@
 from __future__ import annotations
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from api import health_router
+from api import auth_router, health_router
 from config import get_settings
 from core.exceptions import AppError
 
@@ -20,6 +21,20 @@ async def app_error_handler(request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(
         status_code=exc.status,
         content={"detail": exc.detail, "code": exc.code},
+    )
+
+
+async def request_validation_error_handler(
+    request: Request, exc: Exception
+) -> JSONResponse:
+    """본문 검증 실패 → `422 validation_error`(SPEC-001 §4 Case Matrix).
+
+    FastAPI 기본 응답은 `{"detail": [...]}` 라 계약의 `{detail, code}` 와 형태가 다르다.
+    **어느 필드가 왜 틀렸는지 싣지 않는다** — 프론트는 `code` 로 분기한다.
+    """
+    return JSONResponse(
+        status_code=422,
+        content={"detail": "입력값을 확인해 주세요", "code": "validation_error"},
     )
 
 
@@ -39,7 +54,11 @@ def create_app() -> FastAPI:
     )
 
     app.add_exception_handler(AppError, app_error_handler)
+    app.add_exception_handler(RequestValidationError, request_validation_error_handler)
+
     app.include_router(health_router.router)
+    app.include_router(auth_router.public_router)
+    app.include_router(auth_router.session_router)
 
     return app
 
