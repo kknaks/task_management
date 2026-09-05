@@ -1,0 +1,20 @@
+# python
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.env.*
+!.env.example
+
+# node
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+
+# tauri
+src-tauri/target/
+src-tauri/gen/
+
+# os
+.DS_Store
