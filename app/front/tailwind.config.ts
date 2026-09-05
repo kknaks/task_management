@@ -45,6 +45,8 @@ const config: Config = {
         divider: "var(--tm-divider)",
         "row-divider": "var(--tm-row-divider)",
         "row-hover": "var(--tm-row-hover)",
+        /* 인라인 추가 행 배경 — 행 hover 와 다른 면이다(SPEC-002 U-2) */
+        "row-add": "var(--tm-row-add-bg)",
         "sidebar-border": "var(--tm-sidebar-border)",
         column: "var(--tm-column)",
         surface: "var(--tm-surface)",

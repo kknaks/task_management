@@ -29,15 +29,27 @@ export function ColorPickerPopover({
   onSelect,
   variant = "badge",
   disabled = false,
+  saveFailed = false,
   label = "색",
+  className,
 }: {
   value: ColorToken | string;
   /** 고른 즉시 불린다. 저장은 호출자가 한다 — 확인 단계가 없다. */
   onSelect: (token: ColorToken) => void;
   variant?: ColorPickerVariant;
   disabled?: boolean;
+  /**
+   * **U-7 실패 표시.** 색 트리거는 「고르면 즉시 저장」이라 **자동 저장 컨트롤**이다(U-3 CTA) —
+   * `InlineEditText` 와 **같은 prop 을 공통으로** 갖는다(FE §3-5).
+   *
+   * 여기서 그리는 것은 **테두리 실패색뿐**이다. 캡션·「다시 저장」은 세로 공간이 없어
+   * **행 아래 인라인 자리 하나**(`AutoSaveFailureNotice`)에 모은다(U-7 팝오버 규격).
+   */
+  saveFailed?: boolean;
   /** 접근성 라벨. 화면에는 글자를 쓰지 않는다. */
   label?: string;
+  /** 트리거 높이 등 자리별 차이를 흡수한다(추가 행 36 / 목록 행 34). */
+  className?: string;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -48,11 +60,17 @@ export function ColorPickerPopover({
           type="button"
           disabled={disabled}
           aria-label={label}
+          // `button` 롤은 `aria-invalid` 를 받지 않는다 — 상태는 data 속성으로 드러낸다.
+          // 사람에게 읽히는 사유는 행 아래 `role="alert"` 인라인 자리가 말한다(U-7).
+          data-save-failed={saveFailed || undefined}
           data-color-token={value}
           className={cn(
-            "flex h-control w-14 shrink-0 items-center justify-center rounded-control border border-border bg-card",
+            "flex h-control w-14 shrink-0 items-center justify-center rounded-control border bg-card",
             "disabled:cursor-not-allowed disabled:opacity-50",
             !disabled && "hover:bg-muted",
+            // **실패한 컨트롤 자신에 테두리 실패색 + 값 유지**(U-7 팝오버 규격)
+            saveFailed ? "border-destructive" : "border-border",
+            className,
           )}
         >
           {variant === "dot" ? (

@@ -34,6 +34,12 @@
   --tm-surface: #ffffff;
   --tm-hover: #f5f6f8;
   --tm-row-hover: #fafbfc;
+  /**
+   * 인라인 **추가/편집 행** 배경 — SPEC-002 U-2 가 값을 직접 적었다(`#FBFCFF`).
+   * `09-design-tokens.md` §색에는 아직 자리가 없다(문서공백 G-11) — 그래서 값이 SPEC 에만
+   * 있고, 행 hover(`#FAFBFC`)로 대체하면 **추가 행과 hover 행이 같은 색**이 된다(검수 W-2).
+   */
+  --tm-row-add-bg: #fbfcff;
   --tm-border: #d9d9d9;
   --tm-divider: #ebebeb;
   --tm-row-divider: #f1f2f5;

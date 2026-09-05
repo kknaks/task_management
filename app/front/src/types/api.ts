@@ -45,18 +45,13 @@ export interface SessionResponse {
 /**
  * 허용 색 팔레트 8종의 **토큰명**(SPEC-002 §4 Data Contract).
  *
- * **hex 는 여기 없다** — 값은 `styles/tokens.css` 한 곳이 정본이고, 이 타입은 백엔드
- * `dto/enums.py` 의 `ColorToken` 을 미러한 것이다(§3-6 「`types/api.ts` 는 백엔드 schema 의 미러」).
+ * **여기서 다시 나열하지 않는다** — 목록의 프론트 정본은 `lib/palette.ts` 의 `PALETTE_TOKENS`
+ * 하나이고 이 타입은 거기서 파생한다(검수 W-1). 손으로 두 번 적으면 유니온에만 더했을 때
+ * 팝오버에서 조용히 빠진다.
  */
-export type ColorToken =
-  | "indigo"
-  | "violet"
-  | "steel"
-  | "mint"
-  | "sky"
-  | "amber"
-  | "rose"
-  | "graphite";
+import type { ColorToken } from "@/lib/palette";
+
+export type { ColorToken };
 
 /** 유형의 종류. **저장·전송 모두 영문 소문자**이고 화면의 「미팅」/「업무」는 표시 매핑이다(DB G-4). */
 export type WorkTypeKind = "meeting" | "task";

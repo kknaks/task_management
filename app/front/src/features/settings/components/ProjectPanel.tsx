@@ -6,29 +6,35 @@
  * 유형과 같은 구조인데 **종류가 없다** — 프로젝트는 이름 + 색뿐이다(DEC-001 §3).
  * **기본 프로젝트는 없다** — 전부 삭제 가능하다. 하나도 없으면 **빈 상태**가 보인다.
  *
- * **프로젝트는 업무의 필수값이 아니다**(DEC-002 §3 — 0..1). 하나도 없어도 다음 배치가 막히지 않는다.
+ * 추가 행과 자동 저장 실패 규격은 유형 패널과 **같은 컴포넌트·같은 훅**을 쓴다 —
+ * 복제하면 규격이 갈린다(검수 F-1 · W-6 이 그것이다).
  */
 
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { AutoSaveFailureNotice } from "@/components/shared/AutoSaveFailureNotice";
 import { ColorDot } from "@/components/shared/ColorDot";
 import { ColorPickerPopover } from "@/components/shared/ColorPickerPopover";
 import { InlineEditText } from "@/components/shared/InlineEditText";
+import { InlineAddRow, ADD_ROW_CONTROL_HEIGHT } from "@/features/settings/components/InlineAddRow";
 import { SettingsPanel } from "@/features/settings/components/SettingsPanel";
 import { autoSaveErrorToast, inlineErrorMessage, isNotFound } from "@/features/settings/errors";
 import { useProjectMutations, useProjectsQuery } from "@/features/settings/hooks/useWorkSettings";
+import { useRowFailures } from "@/features/settings/useRowFailures";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { DEFAULT_COLOR_TOKEN } from "@/lib/palette";
+import { DEFAULT_COLOR_TOKEN, type ColorToken } from "@/lib/palette";
 import { useOverlay } from "@/lib/overlay/OverlayProvider";
-import { cn } from "@/lib/utils";
-import type { ColorToken, Project } from "@/types/api";
+import type { Project } from "@/types/api";
+
+const FIELD_LABEL = { name: "프로젝트 이름", color: "프로젝트 색" } as const;
 
 export function ProjectPanel() {
   const { data: projects = [], isPending, isError, refetch } = useProjectsQuery();
   const { create, update, remove } = useProjectMutations();
   const { openConfirm } = useOverlay();
+  const { failures, markFailed, clearFailed, clearRow, hasFailed, attemptedValue } =
+    useRowFailures();
 
   const [addOpen, setAddOpen] = useState(false);
   const [draftName, setDraftName] = useState("");
@@ -50,55 +56,55 @@ export function ProjectPanel() {
 
   const canSubmit = draftName.trim().length > 0 && !create.isPending;
 
-  const submitAdd = async () => {
+  const submitAdd = () => {
     if (!canSubmit) {
       return;
     }
     setAddError(null);
+    void create
+      .mutateAsync({ name: draftName.trim(), colorToken: draftColor })
+      .then(() => {
+        setDraftName("");
+        setDraftColor(DEFAULT_COLOR_TOKEN);
+      })
+      .catch((error: unknown) => {
+        const inline = inlineErrorMessage(error, "project");
+        if (inline) {
+          setAddError(inline);
+          return;
+        }
+        toast.error("프로젝트를 추가하지 못했습니다");
+      });
+  };
+
+  /** 유형 패널과 **같은 규칙**이다 — U-7 은 컨트롤 종류·영역과 무관하게 같다. */
+  const save = async (
+    project: Project,
+    field: keyof typeof FIELD_LABEL,
+    input: { name: string } | { colorToken: ColorToken },
+  ): Promise<void> => {
+    setRowErrors((prev) => ({ ...prev, [project.id]: null }));
     try {
-      await create.mutateAsync({ name: draftName.trim(), colorToken: draftColor });
-      setDraftName("");
-      setDraftColor(DEFAULT_COLOR_TOKEN);
+      await update.mutateAsync({ id: project.id, input });
+      clearFailed(project.id, field);
     } catch (error) {
-      const inline = inlineErrorMessage(error, "project");
-      if (inline) {
-        setAddError(inline);
+      if (isNotFound(error)) {
+        toast.error("항목을 찾을 수 없습니다");
+        clearRow(project.id);
+        void refetch();
         return;
       }
-      toast.error("프로젝트를 추가하지 못했습니다");
-    }
-  };
-
-  const handleRowError = (error: unknown, id: number, fieldLabel: string) => {
-    if (isNotFound(error)) {
-      toast.error("항목을 찾을 수 없습니다");
-      void refetch();
-      return;
-    }
-    const inline = inlineErrorMessage(error, "project");
-    if (inline) {
-      setRowErrors((prev) => ({ ...prev, [id]: inline }));
-      return;
-    }
-    toast.error(autoSaveErrorToast(fieldLabel));
-  };
-
-  const saveName = async (project: Project, name: string) => {
-    setRowErrors((prev) => ({ ...prev, [project.id]: null }));
-    try {
-      await update.mutateAsync({ id: project.id, input: { name } });
-    } catch (error) {
-      handleRowError(error, project.id, "프로젝트 이름");
-      throw error;
-    }
-  };
-
-  const saveColor = async (project: Project, colorToken: ColorToken) => {
-    setRowErrors((prev) => ({ ...prev, [project.id]: null }));
-    try {
-      await update.mutateAsync({ id: project.id, input: { colorToken } });
-    } catch (error) {
-      handleRowError(error, project.id, "프로젝트 색");
+      const inline = inlineErrorMessage(error, "project");
+      if (inline) {
+        setRowErrors((prev) => ({ ...prev, [project.id]: inline }));
+        return;
+      }
+      toast.error(autoSaveErrorToast(FIELD_LABEL[field]));
+      markFailed(project.id, field, {
+        retry: () => save(project, field, input),
+        // **값 유지**(U-7) — 팝오버 컨트롤이 옛 값으로 되돌아 보이지 않게 넣으려던 값을 든다.
+        attempted: "colorToken" in input ? input.colorToken : input.name,
+      });
     }
   };
 
@@ -113,9 +119,11 @@ export function ProjectPanel() {
       onConfirm: async () => {
         try {
           await remove.mutateAsync(project.id);
+          clearRow(project.id);
         } catch (error) {
           if (isNotFound(error)) {
             toast.error("항목을 찾을 수 없습니다");
+            clearRow(project.id);
             void refetch();
             return;
           }
@@ -133,39 +141,26 @@ export function ProjectPanel() {
       onAction={openAddRow}
     >
       {addOpen ? (
-        <div className="border-b border-row-divider bg-row-hover px-5 py-2.5">
-          <div className="flex h-9 items-center gap-3">
-            {/* 프로젝트 추가 행은 색이 앞이다(U-5) */}
+        <InlineAddRow
+          nameLabel="프로젝트 이름"
+          namePlaceholder="프로젝트 이름 (예: 9월 요금제 개편)"
+          name={draftName}
+          onNameChange={setDraftName}
+          onSubmit={submitAdd}
+          onCancel={closeAddRow}
+          canSubmit={canSubmit}
+          errorMessage={addError}
+          // 프로젝트 추가 행은 색이 앞이다(U-5)
+          leading={
             <ColorPickerPopover
               value={draftColor}
               onSelect={setDraftColor}
               variant="dot"
               label="색"
+              className={ADD_ROW_CONTROL_HEIGHT}
             />
-
-            <Input
-              aria-label="프로젝트 이름"
-              autoFocus
-              placeholder="프로젝트 이름 (예: 9월 요금제 개편)"
-              value={draftName}
-              onChange={(event) => setDraftName(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") void submitAdd();
-                if (event.key === "Escape") closeAddRow();
-              }}
-              className={cn("h-9 min-w-[200px] flex-1", addError && "border-destructive")}
-            />
-
-            <Button type="button" variant="ghost" size="sm" onClick={closeAddRow}>
-              취소
-            </Button>
-            <Button type="button" size="sm" disabled={!canSubmit} onClick={() => void submitAdd()}>
-              추가
-            </Button>
-          </div>
-
-          {addError ? <p className="mt-1 text-caption text-destructive">{addError}</p> : null}
-        </div>
+          }
+        />
       ) : null}
 
       {isError ? (
@@ -190,40 +185,54 @@ export function ProjectPanel() {
         </div>
       ) : (
         <ul>
-          {projects.map((project) => (
-            <li
-              key={project.id}
-              className="flex h-16 items-center gap-3 border-b border-row-divider px-5 last:border-b-0 hover:bg-row-hover"
-            >
-              <ColorDot colorToken={project.colorToken} />
+          {projects.map((project) => {
+            const rowFailures = failures[project.id] ?? {};
+            return (
+              <li key={project.id} className="border-b border-row-divider last:border-b-0">
+                <div className="flex h-16 items-center gap-3 px-5 hover:bg-row-hover">
+                  <ColorDot colorToken={project.colorToken} />
 
-              <div className="min-w-0 flex-1">
-                <InlineEditText
-                  ariaLabel={`${project.name} 이름`}
-                  value={project.name}
-                  errorMessage={rowErrors[project.id] ?? null}
-                  onSave={(next) => saveName(project, next)}
+                  <div className="min-w-0 flex-1">
+                    <InlineEditText
+                      ariaLabel={`${project.name} 이름`}
+                      value={project.name}
+                      saveFailed={hasFailed(project.id, "name")}
+                      errorMessage={rowErrors[project.id] ?? null}
+                      onSave={(next) => save(project, "name", { name: next })}
+                    />
+                  </div>
+
+                  <ColorPickerPopover
+                    // 실패했으면 **넣으려던 색**을 그대로 보여준다(U-7 값 유지)
+                    value={attemptedValue(project.id, "color") ?? project.colorToken}
+                    onSelect={(token) => void save(project, "color", { colorToken: token })}
+                    saveFailed={hasFailed(project.id, "color")}
+                    variant="dot"
+                    label={`${project.name} 색`}
+                  />
+
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="w-14 shrink-0 text-muted-foreground hover:text-destructive"
+                    onClick={() => confirmDelete(project)}
+                  >
+                    삭제
+                  </Button>
+                </div>
+
+                <AutoSaveFailureNotice
+                  busy={update.isPending}
+                  failures={Object.entries(rowFailures).map(([field, failure]) => ({
+                    field,
+                    label: FIELD_LABEL[field as keyof typeof FIELD_LABEL],
+                    onRetry: () => void failure.retry(),
+                  }))}
                 />
-              </div>
-
-              <ColorPickerPopover
-                value={project.colorToken}
-                onSelect={(token) => void saveColor(project, token)}
-                variant="dot"
-                label={`${project.name} 색`}
-              />
-
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="w-14 shrink-0 text-muted-foreground hover:text-destructive"
-                onClick={() => confirmDelete(project)}
-              >
-                삭제
-              </Button>
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ul>
       )}
     </SettingsPanel>
