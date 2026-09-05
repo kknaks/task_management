@@ -47,6 +47,13 @@ export const API_ERROR_CODE = {
   INVALID_COLOR_TOKEN: "invalid_color_token",
   /** 없는 항목·남의 항목. **존재를 흘리지 않는다**(SPEC-002 §5). */
   NOT_FOUND: "not_found",
+
+  /** 삭제된 유형을 골랐다(SPEC-003 §4 Case Matrix). */
+  INVALID_WORK_TYPE: "invalid_work_type",
+  /** 시간까지 지정한 기한이 다른 일정과 겹친다(DEC-005 §7). **저장되지 않는다.** */
+  SCHEDULE_OVERLAP: "schedule_overlap",
+  /** 자료함 첨부는 md 문서만(T-9 · DEC-004 §8). */
+  UNSUPPORTED_FILE_TYPE: "unsupported_file_type",
 } as const;
 
 /**

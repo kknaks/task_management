@@ -6,9 +6,9 @@
  * API 두 개가 곧 용도 규칙이다 — **편집은 드로어, 결정은 모달.**
  * 컴포넌트가 `Sheet`·`Dialog` 를 직접 import 하지 않는다(§11 금지 목록 3).
  *
- * **WORK-001 은 뼈대다.** 스택과 §6-2 의 규칙(드로어 위에 모달 금지)은 지금 세우고,
- * 실제 표면인 `DrawerFrame`(S-04)·`ConfirmModal`(S-05)은 그 화면을 만드는 work 가
- * 이 Provider 아래에 끼운다. 그때까지 열린 항목은 상태로만 남고 그려지지 않는다.
+ * 표면은 `components/shared/OverlayHost.tsx` 가 그린다 — `DrawerFrame`(S-04)·`ConfirmModal`(S-05).
+ * **드로어 규격(폭 등)은 이 파일이 아니라 `DrawerFrame` 하나가 정한다**(§6-2) —
+ * 여기 요청 타입에 `width`·`size`·`className` 같은 자리를 두지 않는 이유가 그것이다.
  */
 
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
@@ -18,6 +18,8 @@ export interface DrawerRequest {
   key: string;
   title: string;
   badge?: ReactNode;
+  /** 헤더 우측 컨트롤(상태 드롭다운·기한·`⋯`). 화면이 자리를 채운다. */
+  headerActions?: ReactNode;
   /** ⤢ 로 승격될 전체 페이지 라우트(F-5). 예) `/tasks/detail?id=12` */
   expandTo?: string;
   content: ReactNode;
@@ -46,6 +48,8 @@ interface OverlayContextValue {
   stack: readonly OverlayEntry[];
   openDrawer: (request: DrawerRequest) => void;
   openConfirm: (request: ConfirmRequest) => void;
+  /** 열려 있는 드로어를 닫는다 — 위에 모달이 얹혀 있어도 드로어만 걷는다. */
+  closeDrawer: () => void;
   closeTop: () => void;
   closeAll: () => void;
 }
@@ -77,6 +81,10 @@ export function OverlayProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const closeDrawer = useCallback(() => {
+    setStack((prev) => prev.filter((entry) => entry.kind !== "drawer"));
+  }, []);
+
   const closeTop = useCallback(() => {
     setStack((prev) => prev.slice(0, -1));
   }, []);
@@ -84,8 +92,8 @@ export function OverlayProvider({ children }: { children: ReactNode }) {
   const closeAll = useCallback(() => setStack([]), []);
 
   const value = useMemo<OverlayContextValue>(
-    () => ({ stack, openDrawer, openConfirm, closeTop, closeAll }),
-    [stack, openDrawer, openConfirm, closeTop, closeAll],
+    () => ({ stack, openDrawer, openConfirm, closeDrawer, closeTop, closeAll }),
+    [stack, openDrawer, openConfirm, closeDrawer, closeTop, closeAll],
   );
 
   return <OverlayContext.Provider value={value}>{children}</OverlayContext.Provider>;

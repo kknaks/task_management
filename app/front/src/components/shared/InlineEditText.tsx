@@ -38,6 +38,11 @@ export interface InlineEditTextProps {
    * 저장 성공」 둘뿐이고 **시간 경과로 사라지지 않는다** — 그 판정도 소유자가 한다.
    */
   saveFailed?: boolean;
+  /**
+   * 여러 줄 입력인가 — 배경·목표·완료 결과가 그렇다(SPEC-003 U-2).
+   * **편집 모드가 따로 없다**는 규칙은 같다. 한 줄이면 `input`, 여러 줄이면 `textarea` 다.
+   */
+  multiline?: boolean;
   /** 인라인 안내 — 중복 이름·잠금처럼 **그 항목 옆에 붙는** 사유(§3-5). */
   errorMessage?: string | null;
   placeholder?: string;
@@ -49,6 +54,7 @@ export function InlineEditText({
   value,
   onSave,
   readOnly = false,
+  multiline = false,
   saveFailed = false,
   errorMessage = null,
   placeholder,
@@ -57,7 +63,7 @@ export function InlineEditText({
 }: InlineEditTextProps) {
   const [draft, setDraft] = useState(value);
   const [saving, setSaving] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
 
   // 서버가 정본이다. 목록이 갱신되면 그 값을 따라간다 — 단 편집 중에는 빼앗지 않는다.
   useEffect(() => {
@@ -93,10 +99,49 @@ export function InlineEditText({
 
   const invalid = saveFailed || errorMessage !== null;
 
+  const shared = {
+    "aria-label": ariaLabel,
+    "aria-invalid": invalid,
+    placeholder,
+    value: draft,
+    disabled: saving,
+    // **포커스 해제 = 저장 시점**(DEC-001 §5)
+    onBlur: (event: { target: { value: string } }) => void commit(event.target.value.trim()),
+  };
+
+  const fieldClass = cn(
+    "w-full min-w-0 rounded-control border bg-transparent px-2 text-body text-foreground",
+    "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+    "disabled:opacity-60",
+    // **실패한 컨트롤 자신에 테두리 실패색 + 값 유지**(U-7)
+    invalid ? "border-destructive" : "border-transparent hover:border-border",
+  );
+
+  if (multiline) {
+    return (
+      <div className={cn("flex min-w-0 flex-col gap-1", className)}>
+        <textarea
+          {...shared}
+          ref={inputRef as React.RefObject<HTMLTextAreaElement>}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              // 되돌리고 저장하지 않는다.
+              setDraft(value);
+              event.currentTarget.blur();
+            }
+          }}
+          className={cn(fieldClass, "min-h-[96px] resize-y py-1.5")}
+        />
+        {errorMessage ? <p className="text-caption text-destructive">{errorMessage}</p> : null}
+      </div>
+    );
+  }
+
   return (
     <div className={cn("flex min-w-0 flex-col gap-1", className)}>
       <input
-        ref={inputRef}
+        ref={inputRef as React.RefObject<HTMLInputElement>}
         type="text"
         aria-label={ariaLabel}
         aria-invalid={invalid}

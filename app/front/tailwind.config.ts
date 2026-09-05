@@ -123,8 +123,14 @@ const config: Config = {
         drawer: "var(--tm-drawer-width)",
         modal: "var(--tm-modal-width)",
         sidebar: "var(--tm-sidebar-width)",
+        /* 첨부 팝오버 360 · 연관업무 팝오버 382 — 팝오버 200–400 범위(§6) */
+        "popover-attach": "var(--tm-popover-attach-width)",
+        "popover-relation": "var(--tm-popover-relation-width)",
+        /* 전체 페이지 우측 단 — ≥1440 은 528, 1280~1439 는 400(SPEC-003 U-11) */
+        "detail-aside": "528px",
       },
 
+      /* 첨부 팝오버 360 — 오버레이 팝오버 200–400 범위(§6 · SPEC-003 U-7) */
       /* shadcn `DialogContent` 의 `max-w-lg`(512) 를 오버레이 규격으로 덮는다(§6) */
       maxWidth: {
         drawer: "var(--tm-drawer-width)",

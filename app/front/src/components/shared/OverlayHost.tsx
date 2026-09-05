@@ -11,17 +11,31 @@
  */
 
 import { ConfirmModal } from "@/components/shared/ConfirmModal";
+import { DrawerFrame } from "@/components/shared/DrawerFrame";
 import { useOverlay } from "@/lib/overlay/OverlayProvider";
 
 export function OverlayHost() {
-  const { stack, closeTop } = useOverlay();
+  const { stack, closeDrawer, closeTop } = useOverlay();
 
   return (
     <>
       {stack.map((entry, index) =>
         entry.kind === "confirm" ? (
           <ConfirmModal key={`confirm-${index}`} request={entry} onClose={closeTop} />
-        ) : null,
+        ) : (
+          // 규격(폭·스크림·헤더·푸터)은 전부 `DrawerFrame` 안이다 — 숫자를 여기 적지 않는다.
+          // 요청은 **내용과 제목만** 준다(§6-2).
+          <DrawerFrame
+            key={entry.key}
+            title={entry.title}
+            badge={entry.badge}
+            headerActions={entry.headerActions}
+            expandTo={entry.expandTo}
+            onClose={closeDrawer}
+          >
+            {entry.content}
+          </DrawerFrame>
+        ),
       )}
     </>
   );

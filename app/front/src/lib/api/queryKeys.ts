@@ -17,10 +17,16 @@ export const queryKeys = {
   projects: () => ["projects"] as const,
 
   /**
-   * **아직 아무도 읽지 않는 키.** 유형·프로젝트가 바뀌면 배지 이름·색이 딸려 있어
-   * 이 둘도 무효화해야 한다(§3-3 무효화 표). 그 화면이 없는 지금은 **키만 등록**해 두고
-   * 무효화 연결은 소비 그룹이 한다(WORK-003 Internal Interface Contract).
+   * 업무. 유형·프로젝트가 바뀌면 **배지 이름·색이 딸려 있어** 이 키도 무효화한다(§3-3 표) —
+   * WORK-003 이 그 무효화를 이미 걸어 두었고 WORK-004 가 읽는 화면을 붙였다.
    */
   tasks: () => ["tasks"] as const,
+  taskDetail: (id: number) => ["tasks", "detail", id] as const,
+
+  /**
+   * **아직 아무도 읽지 않는 키.** 회의 화면이 생기면 그 work 가 붙인다.
+   * 기한이 바뀌면 `['schedules']` 도 무효화한다(§3-3 표) — 캘린더 work 가 읽는다.
+   */
   meetings: () => ["meetings"] as const,
+  schedules: () => ["schedules"] as const,
 } as const;

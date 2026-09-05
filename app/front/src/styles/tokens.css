@@ -87,6 +87,9 @@
   --tm-modal-width: 600px;
   --tm-popover-min-width: 200px;
   --tm-popover-max-width: 400px;
+  /* 첨부 360 · 연관업무 382 — 둘 다 팝오버 200–400 범위 안이다(SPEC-003 U-7·U-8) */
+  --tm-popover-attach-width: 360px;
+  --tm-popover-relation-width: 382px;
   --tm-scrim-drawer: rgba(30, 30, 30, 0.32);
   --tm-scrim-modal: rgba(30, 30, 30, 0.36);
 
