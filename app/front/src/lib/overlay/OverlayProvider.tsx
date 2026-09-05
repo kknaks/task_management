@@ -28,6 +28,14 @@ export interface DrawerRequest {
 export interface ConfirmRequest {
   title: string;
   summary: ReactNode;
+  /**
+   * **결정에 필요한 입력 슬롯** — 취소 사유 칩처럼 「결정 하나」에 딸린 최소 입력이다
+   * (SPEC-004 U-7). 편집은 드로어라는 규칙과 어긋나지 않는다: 여기 들어오는 것은
+   * 저장할 필드가 아니라 **그 결정의 근거**다.
+   *
+   * `setCanConfirm` 으로 확인 버튼의 활성 여부를 슬롯이 정한다 — 프레임은 판단하지 않는다.
+   */
+  body?: (ctx: { setCanConfirm: (ok: boolean) => void }) => ReactNode;
   /** 경고 슬롯. **비워 두면 줄 자체가 없다**(SPEC-001 U-5 — 조건부 노출). */
   warning?: ReactNode;
   /** 확인 버튼 문구. 「확인」이 아니라 **하려는 동작**을 적는다(U-5 「로그아웃」·U-6 「계정 삭제」). */

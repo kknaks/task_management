@@ -60,6 +60,16 @@ export const API_ERROR_CODE = {
   SCHEDULE_OVERLAP: "schedule_overlap",
   /** 자료함 첨부는 md 문서만(T-9 · DEC-004 §8). */
   UNSUPPORTED_FILE_TYPE: "unsupported_file_type",
+
+  /**
+   * **완료 게이트가 막았다**(422 · SPEC-004 §4 · T-5) — 결과자료 ≥1 또는 완료 결과가 없다.
+   * **상태가 바뀌지 않는다.** 세 진입점이 같은 문구로 거부된다.
+   */
+  TASK_COMPLETION_BLOCKED: "task_completion_blocked",
+  /** 전이 그래프 밖이다(409 · T-6). **같은 상태로 다시 보내도 이 코드**다. */
+  INVALID_STATUS_TRANSITION: "invalid_status_transition",
+  /** 실행취소 조건 3개(마지막 로그가 전이 · 그 뒤 변경 없음 · 4초 이내)를 못 채웠다(409). */
+  UNDO_NOT_AVAILABLE: "undo_not_available",
 } as const;
 
 /**

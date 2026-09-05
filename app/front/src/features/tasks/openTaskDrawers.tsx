@@ -34,7 +34,18 @@ export function openTaskCreateDrawer(
   });
 }
 
-export function openTaskDetailDrawer(overlay: Overlay, taskId: number): void {
+export function openTaskDetailDrawer(
+  overlay: Overlay,
+  taskId: number,
+  options: {
+    /**
+     * **게이트 유도 진입**(SPEC-004 U-6) — 거부 토스트의 「결과 입력」으로 들어온 경우다.
+     * 상세가 열리면 「결과자료 · 완료 결과」 카드로 스크롤하고 입력에 포커스가 잡힌다.
+     * 규격은 WORK-004 의 `useCompletionCardFocus()` 가 든다 — 여기서 만들지 않는다.
+     */
+    focusCompletion?: boolean;
+  } = {},
+): void {
   overlay.openDrawer({
     key: `task-detail-${taskId}`,
     /**
@@ -45,6 +56,6 @@ export function openTaskDetailDrawer(overlay: Overlay, taskId: number): void {
     title: "업무 상세",
     // **⤢ 는 전체 페이지로 승격**된다(F-5 · U-4). 드로어가 닫히고 이 라우트로 간다.
     expandTo: `/tasks/detail/?id=${taskId}`,
-    content: <TaskDetailDrawer taskId={taskId} />,
+    content: <TaskDetailDrawer taskId={taskId} focusCompletion={options.focusCompletion} />,
   });
 }

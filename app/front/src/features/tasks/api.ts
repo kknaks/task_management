@@ -2,14 +2,19 @@
  * 업무 영역의 **엔드포인트 호출 함수만** 둔다(frontend/README.md §2).
  * 모든 호출은 `lib/api/client.ts` 를 지난다(§2 규칙 5).
  *
- * **상태 전이 호출이 없다** — 전용 엔드포인트이고 SPEC-004(WORK-005)가 소유한다(SPEC-003 §4).
+ * **상태 전이 호출은 아래 `changeTaskStatus` 하나**다 — 전용 엔드포인트이고
+ * 세 진입점이 `useTaskStatus.ts` 를 지나 이 함수 하나로 모인다(SPEC-004 §4).
  */
 
 import { apiFetch } from "@/lib/api/client";
 import type {
   CreateTaskInput,
   TaskDetail,
+  TaskListItem,
+  TaskListResponse,
   TaskRelation,
+  TaskStatusInput,
+  TasksListQuery,
   UpdateTaskInput,
 } from "@/features/tasks/types";
 
@@ -148,4 +153,52 @@ export function linkRelations(taskId: number, taskIds: number[]): Promise<TaskDe
 
 export function unlinkRelation(taskId: number, otherTaskId: number): Promise<void> {
   return apiFetch<void>(`/api/tasks/${taskId}/relations/${otherTaskId}`, { method: "DELETE" });
+}
+
+// --- SPEC-004 목록 · 상태 전이 -------------------------------------------
+
+/** `?` 에 실제로 값이 있는 것만 싣는다 — 서버가 「없음」과 「빈 문자열」을 구분한다. */
+function toSearch(query: TasksListQuery): string {
+  const search = new URLSearchParams({
+    from: query.from,
+    to: query.to,
+    sort: query.sort,
+    page: String(query.page),
+    size: String(query.size),
+  });
+  if (query.workTypeId !== null) {
+    search.set("workTypeId", String(query.workTypeId));
+  }
+  if (query.status !== null) {
+    search.set("status", query.status);
+  }
+  if (query.projectId !== null) {
+    search.set("projectId", String(query.projectId));
+  }
+  return search.toString();
+}
+
+export function fetchTasks(query: TasksListQuery): Promise<TaskListResponse> {
+  return apiFetch<TaskListResponse>(`/api/tasks?${toSearch(query)}`, { cache: "no-store" });
+}
+
+/**
+ * **상태 전이 — 전용 엔드포인트 하나**(SPEC-004 §4).
+ *
+ * 일반 `PATCH` 에 섞지 않는다: 완료 게이트 판정이 붙기 때문이다. 리스트 셀·상세 드롭다운·
+ * 칸반 DnD·(WORK-008 의) 회의록이 **전부 이 하나를 지난다** — 그래서 이 함수를 부르는 곳도
+ * **`useTaskStatus.ts` 하나**여야 한다(WP §Internal Interface Contract).
+ */
+export function changeTaskStatus(id: number, input: TaskStatusInput): Promise<TaskListItem> {
+  return apiFetch<TaskListItem>(`/api/tasks/${id}/status`, { method: "PATCH", body: input });
+}
+
+/** 마지막 전이 되돌리기 — **직전 상태 복원 + 그 전이 로그 삭제**(4초 이내). */
+export function undoTaskStatus(id: number): Promise<TaskListItem> {
+  return apiFetch<TaskListItem>(`/api/tasks/${id}/status/undo`, { method: "POST" });
+}
+
+/** **소프트 딜리트** — 목록·집계에서 빠지고 자식 행은 남는다(T-11). 복원 표면은 없다. */
+export function deleteTask(id: number): Promise<void> {
+  return apiFetch<void>(`/api/tasks/${id}`, { method: "DELETE" });
 }

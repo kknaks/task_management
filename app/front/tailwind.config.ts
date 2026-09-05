@@ -36,8 +36,18 @@ const config: Config = {
         input: "var(--input)",
         ring: "var(--ring)",
 
-        /* 「검정은 위치」 — Sidebar 활성 pill · 뷰 토글 · UnderlineTabs 밑줄만(§5-2) */
+        /**
+         * 「검정은 위치」 — **화면당 하나**(§5-2). 내 업무 화면에서는 **유형 탭 밑줄**이
+         * 그 하나이고 뷰 토글은 `current` 로 그린다(SPEC-004 §2 · S004-OQ-2).
+         */
         ink: "var(--tm-ink)",
+        /* 고르는 목록의 「현재 값」 — 선택 칩(`select`)과 다른 축이다 */
+        current: { DEFAULT: "var(--tm-current-bg)", foreground: "var(--tm-select-fg)" },
+        /* 칸반 드롭 플레이스홀더(U-4) */
+        "drop-placeholder": {
+          DEFAULT: "var(--tm-drop-placeholder-bg)",
+          border: "var(--tm-drop-placeholder-border)",
+        },
 
         /* 본문 계열 · 면과 선 — shadcn 시맨틱으로 덮이지 않는 축만 노출한다 */
         "fg-meta": "var(--tm-fg-meta)",
@@ -134,6 +144,10 @@ const config: Config = {
         "popover-relation": "var(--tm-popover-relation-width)",
         /* 전체 페이지 우측 단 — ≥1440 은 528, 1280~1439 는 400(SPEC-003 U-11) */
         "detail-aside": "528px",
+        /* 칸반 카드·컬럼 320 — 1280~1439 에서 **고정**이고 가로 스크롤이 된다(U-13) */
+        "kanban-col": "320px",
+        /* 우클릭 컨텍스트 메뉴 220 — 팝오버 200–400 범위(§6 · U-5) */
+        "popover-menu": "220px",
       },
 
       /* 첨부 팝오버 360 — 오버레이 팝오버 200–400 범위(§6 · SPEC-003 U-7) */

@@ -23,6 +23,12 @@ export const queryKeys = {
   tasks: () => ["tasks"] as const,
   taskDetail: (id: number) => ["tasks", "detail", id] as const,
   /**
+   * `GET /api/tasks` — 리스트와 칸반이 **같은 키·같은 응답**을 본다(WP Phase 2).
+   * 조건이 전부 키에 들어가므로 기간·필터를 바꾸면 새 쿼리이고, `placeholderData` 로
+   * **이전 결과를 유지한 채** 진행 표시만 띄운다(SPEC-004 U-11).
+   */
+  tasksList: (query: Record<string, string | number | null>) => ["tasks", "list", query] as const,
+  /**
    * 연관업무 후보 검색(U-8). `['tasks', …]` 로 시작해 **업무 무효화에 함께 걸린다**.
    * 컴포넌트가 배열 리터럴을 직접 만들지 않는다(§3-3).
    */

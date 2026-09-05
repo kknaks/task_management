@@ -13,8 +13,12 @@
  * 제목은 로드 후에 오기 때문이다. 그래서 **드로어와 전체 페이지가 같은 컴포넌트**로 제목을
  * 그린다(U-4 「두 표면이 다른 규격을 갖지 않는다」).
  *
- * **상태 드롭다운 · 「완료 처리」 · `⋯` 는 자리와 표시만**이다 — 동작은 SPEC-004(WORK-005)가
- * 정의한다. 여기서는 **비활성**이고 눌러도 아무 요청이 나가지 않는다.
+ * ## 헤더 드롭다운은 **진입점 ②** 다(WORK-005 에서 살아났다)
+ *
+ * 상태 드롭다운 · 「완료 처리」 · `⋯` 는 WORK-004 가 **자리와 표시만** 그려 둔 곳이었다.
+ * 이제 리스트 상태 셀과 **같은 `StatusPopover`**, 같은 `useTaskStatus()` 훅을 지난다 —
+ * 「완료 처리」도 그 전이의 지름길일 뿐 다른 경로가 아니다(SPEC-004 U-3 · U-6).
+ * **여기서 전이 호출을 새로 만들지 않는다** — 만들면 요청 본문·에러 분기·토스트가 갈린다.
  *
  * **낙관적 갱신을 하지 않는다** — 기한·유형·프로젝트는 겹침·삭제된 항목이 **거부할 수 있다**
  * (§5 표). 그래서 **원복은 저절로 된다**: 값이 애초에 안 바뀐다.
@@ -28,13 +32,21 @@ import { Selector } from "@/components/shared/Selector";
 import { StatusDot, STATUS_LABEL } from "@/components/shared/StatusDot";
 import { Button } from "@/components/ui/button";
 import { DueDateField } from "@/features/tasks/components/DueDateField";
+import { openCancelModal } from "@/features/tasks/components/CancelModal";
+import { StatusPopover } from "@/features/tasks/components/StatusPopover";
+import {
+  TaskContextMenu,
+  type ContextMenuTarget,
+} from "@/features/tasks/components/TaskContextMenu";
+import { useTaskStatus } from "@/features/tasks/hooks/useTaskStatus";
+import { useOverlay } from "@/lib/overlay/OverlayProvider";
 import {
   useTaskFieldSave,
   type FieldInlineErrors,
   type TaskField,
 } from "@/features/tasks/hooks/useTaskFieldSave";
 import { useProjectsQuery, useWorkTypesQuery } from "@/features/settings/hooks/useWorkSettings";
-import type { TaskDetail } from "@/features/tasks/types";
+import type { TaskDetail, TaskStatus } from "@/features/tasks/types";
 
 /** 로딩 — 회색 블록(`--tm-row-divider`), **애니메이션 없음**(데스크톱 도구라 깜빡임을 만들지 않는다). */
 export function TaskDetailSkeleton() {
@@ -54,6 +66,23 @@ export function TaskHeaderControls({ task }: { task: TaskDetail }) {
   const { save, hasFailed, noticeFor } = useTaskFieldSave(task);
   /** 삭제된 유형·프로젝트처럼 **그 컨트롤 옆에 붙는** 사유(§4 Case Matrix). */
   const [inlineErrors, setInlineErrors] = useState<FieldInlineErrors>({});
+  const [menu, setMenu] = useState<ContextMenuTarget | null>(null);
+  const overlay = useOverlay();
+  /**
+   * **진입점 ② 는 새 호출을 만들지 않는다** — 리스트·칸반과 같은 훅이다.
+   * 여기서 `changeTaskStatus` 를 직접 부르면 요청 본문·에러 분기·토스트가 갈린다.
+   */
+  const statusMutation = useTaskStatus();
+
+  /** 「취소」만 모달을 거쳐 **같은 훅으로** 돌아온다(U-3 CTA · 팝오버가 먼저 닫힌다). */
+  const selectStatus = (next: TaskStatus) => {
+    setMenu(null);
+    if (next === "cancelled") {
+      openCancelModal(overlay, task, (input) => statusMutation.setStatus(task, input));
+      return;
+    }
+    void statusMutation.setStatus(task, { status: next });
+  };
 
   const onInlineError = (field: TaskField, message: string) =>
     setInlineErrors((prev) => ({ ...prev, [field]: message }));
@@ -129,26 +158,59 @@ export function TaskHeaderControls({ task }: { task: TaskDetail }) {
         <span className="flex-1" />
 
         {/*
-          아래 셋은 **자리와 표시만**이다 — 동작은 SPEC-004(WORK-005).
-          `disabled` 라 눌러도 **아무 요청이 나가지 않는다.**
+          **진입점 ② — 상세 헤더 드롭다운.** 리스트 상태 셀과 **같은 `StatusPopover`** 를 쓰고
+          **같은 `useTaskStatus()` 훅**을 지난다(SPEC-004 U-3 · WP §Internal Interface Contract).
+          「완료 처리」는 그 전이의 지름길일 뿐 다른 경로가 아니다.
         */}
-        <Button type="button" variant="outline" size="sm" disabled title="다음 배치에서 연결됩니다">
-          상태 변경
-        </Button>
-        <Button type="button" size="sm" disabled title="다음 배치에서 연결됩니다">
+        <StatusPopover
+          current={task.status}
+          align="end"
+          onSelect={(next) => selectStatus(next)}
+          trigger={
+            <Button type="button" variant="outline" size="sm">
+              상태 변경
+            </Button>
+          }
+        />
+        <Button
+          type="button"
+          size="sm"
+          disabled={task.status === "done" || statusMutation.isPending}
+          onClick={() => void statusMutation.setStatus(task, { status: "done" })}
+        >
           완료 처리
         </Button>
         <Button
           type="button"
           variant="ghost"
           size="icon"
-          disabled
           aria-label="더 보기"
-          title="다음 배치에서 연결됩니다"
+          onClick={(event) => setMenu({ ...task, x: event.clientX, y: event.clientY })}
         >
           <MoreHorizontal aria-hidden />
         </Button>
       </div>
+
+      {/* 마우스 없는 경로 — 헤더 `⋯` 가 행·카드 우클릭과 **같은 메뉴**를 연다(U-5) */}
+      <TaskContextMenu
+        target={menu}
+        onClose={() => setMenu(null)}
+        onOpen={() => setMenu(null)}
+        onSelectStatus={(next) => selectStatus(next)}
+        onDelete={() => {
+          // **드로어 위에 모달을 겹치지 않는다** — 먼저 닫고 연다(FE §6-2).
+          overlay.closeDrawer();
+          overlay.openConfirm({
+            title: `'${task.title}' 업무를 삭제할까요?`,
+            summary:
+              "목록·칸반에서 사라지고 집계에서도 빠집니다. 할일·메모·첨부·로그도 함께 보이지 않게 됩니다.",
+            warning: "v1 에는 복원 화면이 없습니다.",
+            confirmLabel: "삭제",
+            destructive: true,
+            onConfirm: () => void statusMutation.removeTask(task.id),
+          });
+        }}
+      />
 
       {/* 기한 — 시간까지 지정하면 겹침 검사 대상이다(DEC-005 §7). 거부되면 값이 안 바뀐다 */}
       <DueDateField

@@ -119,3 +119,76 @@ export type UpdateTaskInput =
   | { workTypeId: number }
   | { projectId: number | null }
   | { dueDate: string | null; dueStartTime?: string | null; dueEndTime?: string | null };
+
+// --- SPEC-004 목록 · 상태 전이 -------------------------------------------
+
+/**
+ * `GET /api/tasks` 의 **목록 항목**. 상세(`TaskDetail`)와 **다른 형태**다 —
+ * 목록은 파생값(`overdueDays`·`memoCount`)을 더 들고 자식 컬렉션을 들지 않는다.
+ *
+ * **`overdueDays` 는 목록에만 있다**(상세 계약에 없다 — SPEC-003 이 안 정했다).
+ * 상세에서 지연 일수를 그려야 하면 목록에서 받은 값을 쓰고, **화면이 다시 계산하지 않는다**(T-4).
+ */
+export interface TaskListItem {
+  id: number;
+  title: string;
+  status: TaskStatus;
+  workType: TaskWorkTypeSummary;
+  project: TaskRefSummary | null;
+  dueDate: string | null;
+  dueStartTime: string | null;
+  dueEndTime: string | null;
+  dDay: number | null;
+  isOverdue: boolean;
+  overdueDays: number | null;
+  memoCount: number;
+  todoProgress: { done: number; total: number };
+  cancelReason: string | null;
+  cancelledAt: string | null;
+}
+
+/**
+ * 유형 탭에 붙는 수. **그 기간에 업무가 있는 유형만 담긴다**(+전체) —
+ * 0건 유형은 **행이 아예 없으므로 화면이 0 을 그린다**(없는 키로 탭을 감추지 않는다).
+ */
+export interface TaskTypeCount {
+  workTypeId: number | null;
+  name: string;
+  count: number;
+}
+
+export interface TaskListResponse {
+  items: TaskListItem[];
+  total: number;
+  page: number;
+  size: number;
+  typeCounts: TaskTypeCount[];
+}
+
+/** 정렬 3종(SPEC-004 §4 Validation). 기본 `due_asc` — **기한 없는 업무가 맨 아래**다. */
+export type TaskSort = "due_asc" | "due_desc" | "created_desc";
+
+/** `?view=` — 리스트·칸반(FE §1-2 Q-32). */
+export type TasksView = "list" | "board";
+
+/** `GET /api/tasks` 쿼리. **전부 `?` 에 남는다** — 컴포넌트가 자체 상태로 들지 않는다. */
+export interface TasksListQuery {
+  from: string;
+  to: string;
+  workTypeId: number | null;
+  status: TaskStatus | null;
+  projectId: number | null;
+  sort: TaskSort;
+  page: number;
+  size: number;
+}
+
+/**
+ * `PATCH /api/tasks/{id}/status` — **세 진입점 공통**.
+ * `cancelReason` 은 `cancelled` 일 때만 받는다(T-7). `logCancelReason` 기본 참.
+ */
+export interface TaskStatusInput {
+  status: TaskStatus;
+  cancelReason?: string;
+  logCancelReason?: boolean;
+}

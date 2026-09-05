@@ -35,12 +35,17 @@ export function ConfirmModal({
   onClose: () => void;
 }) {
   const [pending, setPending] = useState(false);
+  /** 입력 슬롯이 없으면 언제나 확인할 수 있다 — 슬롯이 있을 때만 그쪽이 정한다. */
+  const [canConfirm, setCanConfirm] = useState(true);
 
   const handleConfirm = async () => {
     setPending(true);
     try {
       await request.onConfirm();
       onClose();
+    } catch {
+      // **실패하면 닫지 않는다** — 사유 인라인이 모달 안에 떠야 하고(§4 Case Matrix),
+      // 닫아 버리면 사용자가 무엇이 잘못됐는지 볼 자리를 잃는다.
     } finally {
       setPending(false);
     }
@@ -72,6 +77,9 @@ export function ConfirmModal({
           </DialogDescription>
         </DialogHeader>
 
+        {/* 입력 슬롯 — 결정의 근거(취소 사유 등). 비어 있으면 줄 자체가 없다 */}
+        {request.body ? <div className="px-8">{request.body({ setCanConfirm })}</div> : null}
+
         {/* 경고 슬롯 — 비어 있으면 줄 자체가 없다 */}
         {request.warning ? (
           <p className="mx-8 rounded-control bg-muted px-4 py-3 text-body font-bold text-foreground">
@@ -87,7 +95,7 @@ export function ConfirmModal({
             type="button"
             variant={request.destructive ? "destructive" : "default"}
             onClick={() => void handleConfirm()}
-            disabled={pending}
+            disabled={pending || !canConfirm}
           >
             {pending ? <Loader2 className="animate-spin" aria-hidden /> : null}
             {request.confirmLabel}
