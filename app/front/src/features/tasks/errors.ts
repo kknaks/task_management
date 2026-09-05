@@ -11,7 +11,7 @@ export interface TaskInlineError {
   /** 필드 옆이 아니라 **토스트**로 알려야 하는 것(`schedule_overlap`). */
   toast: boolean;
   /** 어느 컨트롤 옆에 붙는가 — 없으면 폼 전체다. */
-  field?: "title" | "workType" | "due";
+  field?: "title" | "workType" | "project" | "due";
 }
 
 /**
@@ -28,6 +28,13 @@ export function taskInlineError(error: unknown): TaskInlineError | null {
       return { message: error.detail, toast: false, field: "title" };
     case API_ERROR_CODE.INVALID_WORK_TYPE:
       return { message: "삭제된 유형입니다. 다시 골라 주세요", toast: false, field: "workType" };
+    case API_ERROR_CODE.INVALID_PROJECT:
+      // **유형과 분기를 가른다** — 셀렉터가 둘이라 코드를 나눈 이유가 그것이다(§4).
+      return {
+        message: "삭제된 프로젝트입니다. 다시 골라 주세요",
+        toast: false,
+        field: "project",
+      };
     case API_ERROR_CODE.SCHEDULE_OVERLAP:
       // **토스트**이고 기한 값은 이전으로 되돌린다 — 저장되지 않는다(Case Matrix).
       return { message: "그 시간에 다른 일정이 있습니다", toast: true, field: "due" };

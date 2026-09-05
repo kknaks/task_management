@@ -24,7 +24,6 @@ import { toast } from "sonner";
 
 import { AttachmentList } from "@/components/shared/AttachmentList";
 import { AttachmentPopover } from "@/components/shared/AttachmentPopover";
-import { AutoSaveFailureNotice } from "@/components/shared/AutoSaveFailureNotice";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { InlineEditText } from "@/components/shared/InlineEditText";
 import { LogRow } from "@/components/shared/LogRow";
@@ -34,77 +33,46 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { RelationPopover } from "@/features/tasks/components/RelationPopover";
-import { autoSaveErrorToast, taskInlineError } from "@/features/tasks/errors";
+import { useCollectionSave, useTaskFieldSave } from "@/features/tasks/hooks/useTaskFieldSave";
+import type { CompletionCardFocus } from "@/features/tasks/hooks/useCompletionCardFocus";
 import { useTaskMutations } from "@/features/tasks/hooks/useTaskMutations";
-import { useRowFailures } from "@/features/settings/useRowFailures";
-import type { TaskAttachment, TaskDetail, UpdateTaskInput } from "@/features/tasks/types";
+import type { TaskAttachment, TaskDetail } from "@/features/tasks/types";
 import { formatDueDate, formatTimestamp } from "@/lib/datetime";
 import { cn } from "@/lib/utils";
-
-/** U-7 문구에 들어가는 필드 이름. 토스트와 행 아래 캡션이 **같은 이름**을 쓴다. */
-const FIELD_LABEL = {
-  background: "배경",
-  goal: "목표",
-  completionResult: "완료 결과",
-} as const;
-
-type EditableField = keyof typeof FIELD_LABEL;
 
 export function TaskDetailBody({
   task,
   /** 메모·로그를 우측 단으로 떼어 갈 때 `false`. **규격이 아니라 배치만** 다르다(U-4). */
   includeAside = true,
+  completion,
 }: {
   task: TaskDetail;
   includeAside?: boolean;
+  /** 게이트 유도 진입(U-6) — WORK-005 가 `useCompletionCardFocus()` 로 만들어 넘긴다. */
+  completion?: CompletionCardFocus;
 }) {
   return (
     <div className="flex flex-col gap-6">
-      <TaskMainBlocks task={task} />
+      <TaskMainBlocks task={task} completion={completion} />
       {includeAside ? <TaskAsideBlocks task={task} /> : null}
     </div>
   );
 }
 
 /** 블록 ①~④ — 두 표면 모두 본문 자리에 둔다. */
-export function TaskMainBlocks({ task }: { task: TaskDetail }) {
+export function TaskMainBlocks({
+  task,
+  completion,
+}: {
+  task: TaskDetail;
+  completion?: CompletionCardFocus;
+}) {
   const mutations = useTaskMutations(task.id);
-  const { failures, markFailed, clearFailed, hasFailed } = useRowFailures();
-
   /**
-   * 인라인 텍스트 자동 저장 한 번. **성공하면 그 필드의 실패 표시를 지우고**(해제 조건 ①·②),
-   * 실패하면 켠다. **자동 재시도는 없다** — 눌린 만큼만 불린다.
+   * 헤더와 **같은 규격**을 탄다 — 배선은 `useTaskFieldSave` 한 벌이다.
+   * 훅을 블록마다 따로 부르므로 **실패 상태는 섞이지 않는다**(소유자는 블록 — U-7).
    */
-  const save = async (field: EditableField, input: UpdateTaskInput): Promise<void> => {
-    try {
-      await mutations.update.mutateAsync({ id: task.id, input });
-      clearFailed(task.id, field);
-    } catch (error) {
-      const inline = taskInlineError(error);
-      toast.error(inline?.message ?? autoSaveErrorToast(FIELD_LABEL[field]));
-      markFailed(task.id, field, { retry: () => save(field, input) });
-    }
-  };
-
-  const rowFailures = failures[task.id] ?? {};
-
-  /**
-   * **소유자는 블록**이다(WP Phase 6) — 캡션·「다시 저장」을 그 필드가 있는 블록 안에 둔다.
-   * 전부를 화면 맨 아래 한 자리에 모으면 무엇이 실패했는지 **필드에서 멀어진다.**
-   * 자리는 여전히 **블록당 하나**이고 그 블록에서 여러 필드가 실패하면 줄이 늘어난다.
-   */
-  const noticeFor = (...fields: EditableField[]) => (
-    <AutoSaveFailureNotice
-      busy={mutations.update.isPending}
-      failures={fields
-        .filter((field) => field in rowFailures)
-        .map((field) => ({
-          field,
-          label: FIELD_LABEL[field],
-          onRetry: () => void rowFailures[field].retry(),
-        }))}
-    />
-  );
+  const { save, hasFailed, noticeFor } = useTaskFieldSave(task);
 
   return (
     <>
@@ -116,7 +84,7 @@ export function TaskMainBlocks({ task }: { task: TaskDetail }) {
             value={task.background ?? ""}
             placeholder="왜 하는가"
             multiline
-            saveFailed={hasFailed(task.id, "background")}
+            saveFailed={hasFailed("background")}
             onSave={(next) => save("background", { background: next || null })}
           />
           {noticeFor("background")}
@@ -127,7 +95,7 @@ export function TaskMainBlocks({ task }: { task: TaskDetail }) {
             value={task.goal ?? ""}
             placeholder="무엇이 되면 끝인가"
             multiline
-            saveFailed={hasFailed(task.id, "goal")}
+            saveFailed={hasFailed("goal")}
             onSave={(next) => save("goal", { goal: next || null })}
           />
           {noticeFor("goal")}
@@ -189,13 +157,14 @@ export function TaskMainBlocks({ task }: { task: TaskDetail }) {
       {/* ④ 결과자료 · 완료 결과 — 완료 게이트의 두 축을 **한 카드에 나란히**(U-6) */}
       <CompletionCard
         task={task}
-        saveFailed={hasFailed(task.id, "completionResult")}
+        saveFailed={hasFailed("completionResult")}
         onSave={(next) => save("completionResult", { completionResult: next || null })}
         onAddLink={async (input) => {
           await mutations.addAttachment.mutateAsync(input);
         }}
         onRemove={(attachment) => void mutations.removeAttachment.mutateAsync(attachment.id)}
         notice={noticeFor("completionResult")}
+        completion={completion}
       />
     </>
   );
@@ -203,12 +172,10 @@ export function TaskMainBlocks({ task }: { task: TaskDetail }) {
 
 /** 블록 ⑤⑥ — 전체 페이지에서는 우측 단으로 간다(U-4). */
 export function TaskAsideBlocks({ task }: { task: TaskDetail }) {
-  const now = new Date();
-
   return (
     <>
       <Block title="메모">
-        <MemoList task={task} now={now} />
+        <MemoList task={task} />
       </Block>
 
       <Block title="로그">
@@ -222,7 +189,6 @@ export function TaskAsideBlocks({ task }: { task: TaskDetail }) {
                 text={log.text}
                 createdAt={log.createdAt}
                 latest={index === 0}
-                now={now}
               />
             ))}
           </ul>
@@ -255,13 +221,25 @@ function Block({
 function TodoList({ task }: { task: TaskDetail }) {
   const mutations = useTaskMutations(task.id);
   const [draft, setDraft] = useState("");
+  /**
+   * 체크는 **낙관적**이라(§5 표) 실패하면 값이 되돌아간다 — 되돌아가기만 하면 사용자는
+   * 체크가 안 눌린 줄 안다. 그래서 U-7 표시를 **이 블록이 소유**한다.
+   */
+  const saves = useCollectionSave(
+    task.id,
+    "할일",
+    mutations.addTodo.isPending || mutations.updateTodo.isPending || mutations.removeTodo.isPending,
+  );
 
   const add = () => {
     const text = draft.trim();
     if (text.length === 0) {
       return;
     }
-    void mutations.addTodo.mutateAsync(text).then(() => setDraft(""));
+    void saves.run("add", async () => {
+      await mutations.addTodo.mutateAsync(text);
+      setDraft("");
+    });
   };
 
   return (
@@ -278,11 +256,15 @@ function TodoList({ task }: { task: TaskDetail }) {
               <Checkbox
                 checked={todo.done}
                 aria-label={todo.text}
+                // 컨트롤은 **테두리만** 바꾼다 — 문구는 블록 아래 인라인 자리가 그린다(U-7)
+                className={cn(saves.hasFailed(`todo:${todo.id}`) && "border-destructive")}
                 onCheckedChange={(checked) =>
-                  void mutations.updateTodo.mutateAsync({
-                    todoId: todo.id,
-                    input: { done: checked === true },
-                  })
+                  void saves.run(`todo:${todo.id}`, () =>
+                    mutations.updateTodo.mutateAsync({
+                      todoId: todo.id,
+                      input: { done: checked === true },
+                    }),
+                  )
                 }
               />
               <span
@@ -303,7 +285,9 @@ function TodoList({ task }: { task: TaskDetail }) {
                 variant="ghost"
                 size="sm"
                 className="shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-destructive"
-                onClick={() => void mutations.removeTodo.mutateAsync(todo.id)}
+                onClick={() =>
+                  void saves.run(`todo:${todo.id}`, () => mutations.removeTodo.mutateAsync(todo.id))
+                }
               >
                 삭제
               </Button>
@@ -328,6 +312,9 @@ function TodoList({ task }: { task: TaskDetail }) {
           추가
         </Button>
       </div>
+
+      {/* U-7 — 롤백된 뒤에도 **말이 남는다**. 자리는 이 블록에 하나 */}
+      {saves.notice}
     </>
   );
 }
@@ -359,16 +346,21 @@ function RelationList({ task }: { task: TaskDetail }) {
   );
 }
 
-function MemoList({ task, now }: { task: TaskDetail; now: Date }) {
+function MemoList({ task }: { task: TaskDetail }) {
   const mutations = useTaskMutations(task.id);
   const [draft, setDraft] = useState("");
+  /** 메모 추가도 **낙관적**이라(§5 표) 실패하면 붙었던 행이 사라진다 — 말이 남아야 한다. */
+  const saves = useCollectionSave(task.id, "메모", mutations.addMemo.isPending);
 
   const add = () => {
     const text = draft.trim();
     if (text.length === 0) {
       return;
     }
-    void mutations.addMemo.mutateAsync(text).then(() => setDraft(""));
+    void saves.run("add", async () => {
+      await mutations.addMemo.mutateAsync(text);
+      setDraft("");
+    });
   };
 
   return (
@@ -384,7 +376,7 @@ function MemoList({ task, now }: { task: TaskDetail; now: Date }) {
                 dateTime={memo.createdAt}
                 className="w-[78px] shrink-0 text-caption text-fg-caption"
               >
-                {formatTimestamp(memo.createdAt, now)}
+                {formatTimestamp(memo.createdAt)}
               </time>
               <span className="min-w-0 flex-1 whitespace-pre-wrap text-body text-foreground">
                 {memo.text}
@@ -409,6 +401,8 @@ function MemoList({ task, now }: { task: TaskDetail; now: Date }) {
           등록
         </Button>
       </div>
+
+      {saves.notice}
     </>
   );
 }
@@ -420,6 +414,7 @@ function CompletionCard({
   onAddLink,
   onRemove,
   notice,
+  completion,
 }: {
   task: TaskDetail;
   saveFailed: boolean;
@@ -432,6 +427,8 @@ function CompletionCard({
   onRemove: (attachment: TaskAttachment) => void;
   /** 이 카드의 자동 저장 실패 자리(U-7). 소유자는 블록이다. */
   notice: ReactNode;
+  /** 게이트 유도 진입 — 스크롤 대상·포커스 대상·1.5초 강조를 훅이 들고 온다(U-6). */
+  completion?: CompletionCardFocus;
 }) {
   const deliverables = task.attachments.filter((item) => item.role === "deliverable");
   /**
@@ -446,7 +443,12 @@ function CompletionCard({
   return (
     <section
       id="task-completion-card"
-      className="flex min-w-0 flex-col gap-2 rounded-card border border-border bg-card p-4"
+      ref={completion?.cardRef}
+      className={cn(
+        "flex min-w-0 flex-col gap-2 rounded-card border bg-card p-4",
+        // 게이트 유도 진입에서 **1.5초 동안** 테두리가 primary 다(U-6).
+        completion?.highlighted ? "border-primary" : "border-border",
+      )}
     >
       <header className="flex items-center justify-between gap-3">
         <h3 className="text-section text-foreground">결과자료 · 완료 결과</h3>
@@ -480,6 +482,7 @@ function CompletionCard({
         multiline
         saveFailed={saveFailed}
         onSave={onSave}
+        fieldRef={completion?.inputRef}
       />
       {notice}
     </section>

@@ -59,6 +59,9 @@ const config: Config = {
           overdue: "var(--tm-status-overdue)",
         },
 
+        /* 검색어 하이라이트 — 검색 결과의 일치 구간(§색 · SPEC-003 U-8) */
+        "search-highlight": "var(--tm-search-highlight)",
+
         /* 동적 유형 색 — `data-color-token` 이 고른 팔레트 쌍(§5-3) */
         palette: { bg: "var(--tm-palette-bg)", fg: "var(--tm-palette-fg)" },
       },
@@ -77,8 +80,11 @@ const config: Config = {
         drawer: "var(--tm-shadow-drawer)",
         modal: "var(--tm-shadow-modal)",
         popover: "var(--tm-shadow-popover)",
-        /* 색 팝오버의 현재 값 스와치 글로우(SPEC-002 U-4) */
-        "swatch-current": "var(--tm-swatch-current-ring)",
+        /**
+         * **입력 포커스 글로우** — 색 스와치의 「현재 값」 표시와 **같은 토큰**이다
+         * (`09-design-tokens.md` §색: 「이름을 일반화해 한 토큰을 재사용한다」).
+         */
+        focus: "var(--tm-focus-ring)",
       },
 
       fontFamily: {

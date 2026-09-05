@@ -49,7 +49,10 @@ export function TaskDetailPage() {
         <span className="truncate text-fg-meta">{task.title}</span>
       </nav>
 
-      <h1 className="text-detail-title text-foreground">{task.title}</h1>
+      {/*
+        제목은 **헤더 컴포넌트가 편집 가능하게** 그린다 — 드로어와 같은 컨트롤이다.
+        여기 정적 `<h1>` 을 따로 두면 두 표면이 다른 규격을 갖는다(U-4).
+      */}
       <TaskHeaderControls task={task} />
 
       {/* 좌(유동) + 우(≥1440 은 528 · 1280~1439 는 400) 2단(U-11) */}

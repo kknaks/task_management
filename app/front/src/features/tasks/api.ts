@@ -27,6 +27,12 @@ export function updateTask(id: number, input: UpdateTaskInput): Promise<TaskDeta
 
 // --- 할일 -----------------------------------------------------------------
 
+/**
+ * **자식 컬렉션의 쓰기 표면은 전부 갱신된 `TaskDetail` 을 돌려준다**(SPEC-003 §4, 2026-09-06 확정).
+ * 부분 응답을 주지 않는다 — 자식 하나를 건드리면 로그 한 줄이 늘고 `todoProgress`·파생값이 함께
+ * 바뀌므로, 부분 응답이면 화면이 나머지를 다시 조립해야 하고 그 조립 규칙이 화면마다 갈린다.
+ * **삭제만 `204`** 다.
+ */
 export function addTodo(taskId: number, text: string): Promise<TaskDetail> {
   return apiFetch<TaskDetail>(`/api/tasks/${taskId}/todos`, { method: "POST", body: { text } });
 }
@@ -132,8 +138,9 @@ export async function fetchRelationCandidates(
   return { items: response.items, total: response.total };
 }
 
-export function linkRelations(taskId: number, taskIds: number[]): Promise<TaskRelation[]> {
-  return apiFetch<TaskRelation[]>(`/api/tasks/${taskId}/relations`, {
+/** 연관 연결도 같은 계약이다 — **갱신된 `TaskDetail`**(§4 자식 컬렉션 응답 절 · 검수 W-7). */
+export function linkRelations(taskId: number, taskIds: number[]): Promise<TaskDetail> {
+  return apiFetch<TaskDetail>(`/api/tasks/${taskId}/relations`, {
     method: "POST",
     body: { taskIds },
   });

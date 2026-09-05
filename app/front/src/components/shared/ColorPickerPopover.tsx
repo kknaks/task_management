@@ -103,7 +103,7 @@ export function ColorPickerPopover({
                 className={cn(
                   "flex h-6 w-6 items-center justify-center rounded-chip border border-transparent bg-palette-bg",
                   // 현재 값 표시 — 1px primary 테두리 + 3px 글로우(U-4 상태)
-                  current && "border-primary shadow-swatch-current",
+                  current && "border-primary shadow-focus",
                 )}
               >
                 {variant === "dot" ? (

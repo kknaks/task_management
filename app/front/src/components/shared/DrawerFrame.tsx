@@ -109,6 +109,9 @@ export function DrawerFrame({
          */
         className={cn(
           "flex flex-col gap-0 border-l border-border bg-card p-0 shadow-drawer",
+          // 생성물의 기본 닫기 버튼은 **지우지 않고 래퍼가 숨긴다** — 헤더가 자기 ×/← 를 그린다.
+          // 지우면 재생성 때 되살아나 조용히 두 개가 된다(`ConfirmModal` 과 같은 방식).
+          "[&>button:last-child]:hidden",
           fullscreen ? "inset-0 w-full max-w-none border-l-0" : "w-drawer max-w-drawer",
         )}
         // 전체 화면 구간에서는 뒤 화면이 보일 이유가 없다 — 스크림을 지운다.

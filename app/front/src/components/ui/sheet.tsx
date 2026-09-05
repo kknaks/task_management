@@ -1,16 +1,25 @@
 /**
- * shadcn CLI 생성물(`npx shadcn add sheet`). **원본을 그대로 둔다**(frontend/README.md §2 규칙 2).
+ * shadcn CLI 생성물(`npx shadcn add sheet`). **생성물에 손댄 곳은 둘뿐이고 둘 다 규칙의 허용
+ * 예외다**(frontend/README.md §2 규칙 2, 2026-09-06 예외 둘째 신설).
  *
- * 단 하나의 손댐 — 허용된 예외인 **「토큰 변수 이름을 맞추는 className 조정」**이다.
- * 스크림이 생성물에서는 `bg-black/80` 인데 우리 드로어 스크림은 `rgba(30,30,30,0.32)` 고정이고
- * (`09-design-tokens.md` §오버레이 3종) 그 값은 `--tm-scrim-drawer` 하나가 정본이다.
- * **드로어는 뒤 화면이 보인다**(F-3) — 그 불투명도를 화면이 덮어쓰지 못하게 여기서 고정한다.
+ * 1. **스크림 className** — 「토큰 변수 이름을 맞추는 조정」(첫째 예외). 생성물은 `bg-black/80`
+ *    인데 드로어 스크림은 `rgba(30,30,30,0.32)` 고정이고(`09-design-tokens.md` §오버레이 3종)
+ *    그 값은 `--tm-scrim-drawer` 하나가 정본이다. **드로어는 뒤 화면이 보인다**(F-3) —
+ *    그 불투명도를 화면이 덮어쓰지 못하게 여기서 고정한다.
+ * 2. **`overlayClassName` 통로 prop** — 「생성물이 **내부에서만 렌더하는 요소**에 래퍼가 닿을 수
+ *    있게 하는 통로 prop 하나」(둘째 예외). 오버레이가 `SheetContent` 안에서만 렌더돼
+ *    래퍼가 손댈 길이 없다. **값을 정하는 자리는 여전히 `DrawerFrame` 하나**이고 여기는 통로다.
+ *
+ * **생성물의 기본 닫기 버튼(`SheetPrimitive.Close`)은 지우지 않았다** — 지우면 재생성 때
+ * 되살아나 조용히 두 개가 된다. 규격상 숨겨야 하는 자리는 **래퍼가 className 으로 숨긴다**
+ * (`ConfirmModal.tsx` 와 같은 방식).
  *
  * 폭·헤더·푸터 규격은 **`components/shared/DrawerFrame.tsx` 한 곳**이 정한다(FE §6-2).
  * 이 파일 밖에서 `Sheet` 를 import 하면 리뷰 반려다(§11 금지 목록 3).
  */
 import * as React from "react"
 import * as SheetPrimitive from "@radix-ui/react-dialog"
+import { X } from "lucide-react"
 import { cva, type VariantProps } from "class-variance-authority"
 
 import { cn } from "@/lib/utils"
@@ -80,6 +89,10 @@ const SheetContent = React.forwardRef<
       {...props}
     >
       {children}
+      <SheetPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-secondary">
+        <X className="h-4 w-4" />
+        <span className="sr-only">Close</span>
+      </SheetPrimitive.Close>
     </SheetPrimitive.Content>
   </SheetPortal>
 ))

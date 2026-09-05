@@ -50,6 +50,12 @@ export const API_ERROR_CODE = {
 
   /** 삭제된 유형을 골랐다(SPEC-003 §4 Case Matrix). */
   INVALID_WORK_TYPE: "invalid_work_type",
+  /**
+   * 삭제된 프로젝트를 골랐다 — **2026-09-06 신설**(SPEC-003 §4).
+   * 그전엔 `validation_error` 로 합류해 **화면이 유형과 프로젝트를 구분할 수 없었다** —
+   * 상세에 두 셀렉터가 나란히 생기면서 어디가 틀렸는지 못 짚는 문제가 실제가 됐다.
+   */
+  INVALID_PROJECT: "invalid_project",
   /** 시간까지 지정한 기한이 다른 일정과 겹친다(DEC-005 §7). **저장되지 않는다.** */
   SCHEDULE_OVERLAP: "schedule_overlap",
   /** 자료함 첨부는 md 문서만(T-9 · DEC-004 §8). */

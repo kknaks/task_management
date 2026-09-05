@@ -22,6 +22,17 @@ export const queryKeys = {
    */
   tasks: () => ["tasks"] as const,
   taskDetail: (id: number) => ["tasks", "detail", id] as const,
+  /**
+   * 연관업무 후보 검색(U-8). `['tasks', …]` 로 시작해 **업무 무효화에 함께 걸린다**.
+   * 컴포넌트가 배열 리터럴을 직접 만들지 않는다(§3-3).
+   */
+  relationCandidates: (params: {
+    excludeId: number | null;
+    projectId: number | null;
+    dueDate: string | null;
+    keyword: string;
+    scope: string;
+  }) => ["tasks", "relationCandidates", params] as const,
 
   /**
    * **아직 아무도 읽지 않는 키.** 회의 화면이 생기면 그 work 가 붙인다.

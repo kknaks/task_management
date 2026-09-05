@@ -48,6 +48,11 @@ export interface InlineEditTextProps {
   placeholder?: string;
   ariaLabel: string;
   className?: string;
+  /**
+   * 바깥에서 이 입력에 **포커스를 주고 싶을 때** 건다(게이트 유도 진입 — SPEC-003 U-6).
+   * 내부 ref 는 그대로 두고 여기에 같은 노드를 실어 보낸다.
+   */
+  fieldRef?: React.RefObject<HTMLTextAreaElement | HTMLInputElement | null>;
 }
 
 export function InlineEditText({
@@ -60,10 +65,21 @@ export function InlineEditText({
   placeholder,
   ariaLabel,
   className,
+  fieldRef,
 }: InlineEditTextProps) {
   const [draft, setDraft] = useState(value);
   const [saving, setSaving] = useState(false);
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
+
+  /** 내부 ref 와 바깥 ref 에 같은 노드를 싣는다. */
+  const attachRef = (node: HTMLInputElement | HTMLTextAreaElement | null) => {
+    (inputRef as React.MutableRefObject<HTMLInputElement | HTMLTextAreaElement | null>).current =
+      node;
+    if (fieldRef) {
+      (fieldRef as React.MutableRefObject<HTMLInputElement | HTMLTextAreaElement | null>).current =
+        node;
+    }
+  };
 
   // 서버가 정본이다. 목록이 갱신되면 그 값을 따라간다 — 단 편집 중에는 빼앗지 않는다.
   useEffect(() => {
@@ -122,7 +138,7 @@ export function InlineEditText({
       <div className={cn("flex min-w-0 flex-col gap-1", className)}>
         <textarea
           {...shared}
-          ref={inputRef as React.RefObject<HTMLTextAreaElement>}
+          ref={attachRef}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Escape") {
@@ -141,7 +157,7 @@ export function InlineEditText({
   return (
     <div className={cn("flex min-w-0 flex-col gap-1", className)}>
       <input
-        ref={inputRef as React.RefObject<HTMLInputElement>}
+        ref={attachRef}
         type="text"
         aria-label={ariaLabel}
         aria-invalid={invalid}

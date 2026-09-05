@@ -34,6 +34,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { fetchRelationCandidates, type RelationScope } from "@/features/tasks/api";
+import { queryKeys } from "@/lib/api/queryKeys";
 import { formatDueDate } from "@/lib/datetime";
 import { cn } from "@/lib/utils";
 
@@ -88,11 +89,7 @@ export function RelationPopover({
   }, [hasBaseProject]);
 
   const { data, isPending } = useQuery({
-    queryKey: [
-      "tasks",
-      "relationCandidates",
-      { excludeId, projectId, dueDate, keyword, scope },
-    ],
+    queryKey: queryKeys.relationCandidates({ excludeId, projectId, dueDate, keyword, scope }),
     queryFn: () => fetchRelationCandidates({ keyword, excludeId, projectId, dueDate, scope }),
     enabled: open,
     staleTime: 0,
@@ -123,7 +120,8 @@ export function RelationPopover({
           placeholder="업무 검색"
           value={keyword}
           onChange={(event) => setKeyword(event.target.value)}
-          className="h-9"
+          // 포커스 시 테두리 `--tm-primary` + 3px 글로우(U-8 · `09-design-tokens.md` §색)
+          className="h-9 focus-visible:border-primary focus-visible:shadow-focus"
         />
 
         {/* 필터 칩 3 + 우측 카운트 「n건 중 m」 */}
@@ -188,7 +186,7 @@ export function RelationPopover({
                     <Checkbox checked={checked} tabIndex={-1} aria-hidden />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-body text-foreground">
-                        {candidate.title}
+                        <HighlightedTitle title={candidate.title} keyword={keyword} />
                       </span>
                       <span className="block truncate text-caption text-fg-caption">
                         {[
@@ -223,5 +221,29 @@ export function RelationPopover({
         </div>
       </PopoverContent>
     </Popover>
+  );
+}
+
+/**
+ * 검색어 일치 구간을 `--tm-search-highlight` 로 감싼다(U-8 · `09-design-tokens.md` §색).
+ * **컴포넌트에 hex 를 넣지 않는다**(§11 금지 4) — 토큰 하나를 쓴다.
+ */
+function HighlightedTitle({ title, keyword }: { title: string; keyword: string }) {
+  const needle = keyword.trim();
+  if (needle.length === 0) {
+    return <>{title}</>;
+  }
+  const at = title.toLowerCase().indexOf(needle.toLowerCase());
+  if (at < 0) {
+    return <>{title}</>;
+  }
+  return (
+    <>
+      {title.slice(0, at)}
+      <mark className="bg-search-highlight text-foreground">
+        {title.slice(at, at + needle.length)}
+      </mark>
+      {title.slice(at + needle.length)}
+    </>
   );
 }
