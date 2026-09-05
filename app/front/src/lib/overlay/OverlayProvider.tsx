@@ -26,7 +26,15 @@ export interface DrawerRequest {
 export interface ConfirmRequest {
   title: string;
   summary: ReactNode;
+  /** 경고 슬롯. **비워 두면 줄 자체가 없다**(SPEC-001 U-5 — 조건부 노출). */
   warning?: ReactNode;
+  /** 확인 버튼 문구. 「확인」이 아니라 **하려는 동작**을 적는다(U-5 「로그아웃」·U-6 「계정 삭제」). */
+  confirmLabel: string;
+  /**
+   * 파괴적 색(`--tm-status-overdue`)을 쓸지. **데이터가 사라지는 결정에만** 켠다 —
+   * 로그아웃은 아무것도 지우지 않으므로 끈다(U-5 CTA).
+   */
+  destructive?: boolean;
   onConfirm: () => void | Promise<void>;
 }
 

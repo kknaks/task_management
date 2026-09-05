@@ -1,5 +1,7 @@
 import type { NextConfig } from "next";
 
+import pkg from "./package.json";
+
 /**
  * 정적 빌드 계약 — `frontend/README.md` §1-3.
  *
@@ -13,6 +15,11 @@ const nextConfig: NextConfig = {
   trailingSlash: true,
   // 이미지 최적화 서버가 없다.
   images: { unoptimized: true },
+  /**
+   * 설정 화면 하단의 버전 캡션 「Managment v<버전>」(SPEC-001 U-4)이 읽는 값.
+   * `package.json` 이 정본이라 **사람이 `.env` 에 다시 적지 않는다** — 두 곳이 갈리지 않는다.
+   */
+  env: { NEXT_PUBLIC_APP_VERSION: pkg.version },
 };
 
 export default nextConfig;

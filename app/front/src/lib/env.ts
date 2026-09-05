@@ -24,4 +24,10 @@ export const env = {
   apiBase: normalizeBase(
     requireEnv("NEXT_PUBLIC_API_BASE", process.env.NEXT_PUBLIC_API_BASE),
   ),
+
+  /**
+   * 설정 화면의 버전 캡션(SPEC-001 U-4). `next.config.ts` 가 `package.json` 에서 주입하므로
+   * `.env` 에 적을 값이 아니다 — 정본이 둘로 갈리지 않는다.
+   */
+  appVersion: requireEnv("NEXT_PUBLIC_APP_VERSION", process.env.NEXT_PUBLIC_APP_VERSION),
 } as const;

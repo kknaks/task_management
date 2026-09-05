@@ -95,10 +95,14 @@ const config: Config = {
         caption: ["12px", { lineHeight: "1.5", letterSpacing: "-0.02em" }],
       },
 
-      /* 컨트롤 높이 — 09-design-tokens §형태 */
+      /* 컨트롤 높이 — 09-design-tokens §형태 (입력 38~48 · 버튼 34) */
       height: {
         control: "34px",
         input: "38px",
+        /* 로그인·설정 폼의 큰 입력. 범위 상단(48) — `11-auth-profile.md §로그인` */
+        "input-lg": "48px",
+        /* 화면 주 CTA. 로그인 화면의 두 버튼이 50px 이다(같은 문서) */
+        cta: "50px",
         row: "52px",
         todo: "44px",
       },
@@ -109,14 +113,29 @@ const config: Config = {
         sidebar: "var(--tm-sidebar-width)",
       },
 
-      /* 본문 좌우 여백 — 1440 에서 80, 1920 에서 240 으로 연속 보간(§7-1) */
+      /* shadcn `DialogContent` 의 `max-w-lg`(512) 를 오버레이 규격으로 덮는다(§6) */
+      maxWidth: {
+        drawer: "var(--tm-drawer-width)",
+        modal: "var(--tm-modal-width)",
+      },
+
+      /**
+       * 본문 좌우 여백 — 값은 `tokens.css` 의 `--tm-gutter` 가 정본이다(§5-1).
+       * **구간이 둘이라** 단일 `clamp` 로 못 만든다: 1280~1439 는 48 고정,
+       * ≥1440 은 80→240 보간이고 그 전환을 미디어 쿼리가 한다(§7-1 · 검수 W-2).
+       */
       spacing: {
-        gutter: "clamp(48px, calc(48px + (100vw - 1280px) * 0.3), 240px)",
+        gutter: "var(--tm-gutter)",
       },
 
       backgroundColor: {
         "scrim-drawer": "var(--tm-scrim-drawer)",
         "scrim-modal": "var(--tm-scrim-modal)",
+      },
+
+      /* 로그인 브랜드 패널 — 값은 `tokens.css` 의 `--tm-brand-gradient`(§5-1) */
+      backgroundImage: {
+        brand: "var(--tm-brand-gradient)",
       },
     },
   },

@@ -24,10 +24,20 @@ export function isApiError(error: unknown): error is ApiError {
 
 /**
  * 백엔드가 내는 `code`. 응답 형태는 `{"detail","code"}` 고정이다(backend/README.md §8-2).
- * WORK-001 이 마주치는 것은 `db_unavailable` 하나뿐 — 나머지는 각 work 가 추가한다.
+ * 화면이 분기하는 키가 여기 있고, 나머지는 각 work 가 추가한다.
  */
 export const API_ERROR_CODE = {
   DB_UNAVAILABLE: "db_unavailable",
+  /** 자격 증명 실패 — 로그인 폼 **인라인**. 횟수를 세거나 잠그지 않는다(DEC-001 §4). */
+  INVALID_CREDENTIALS: "invalid_credentials",
+  /** 입력값 검증 실패. 정상 경로에서는 버튼이 비활성이라 도달하지 않는다. */
+  VALIDATION_ERROR: "validation_error",
+  /** access 만료 — **화면이 모른다.** client 가 갱신 1회로 삼킨다(SPEC-001 §4). */
+  TOKEN_EXPIRED: "token_expired",
+  /** refresh 만료·재사용 감지 — 토큰 폐기 후 로그인 화면(SPEC-001 §4 · S001-OQ-2). */
+  INVALID_REFRESH_TOKEN: "invalid_refresh_token",
+  /** v2 게이트가 샜을 때의 안전망. 정상 경로가 아니다. */
+  V2_NOT_AVAILABLE: "v2_not_available",
 } as const;
 
 /**

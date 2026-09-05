@@ -21,6 +21,10 @@ const Toaster = ({ ...props }: ToasterProps) => {
     <Sonner
       theme="light"
       className="toaster group"
+      /* `09-design-tokens.md` §토스트 — 하단 중앙 60px 위, 4초(SPEC-001 U-2 가 참조하는 규격) */
+      position="bottom-center"
+      offset={60}
+      duration={4000}
       toastOptions={{
         classNames: {
           toast:

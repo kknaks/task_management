@@ -10,6 +10,7 @@
 import { useState, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
+import { OverlayHost } from "@/components/shared/OverlayHost";
 import { OverlayProvider } from "@/lib/overlay/OverlayProvider";
 
 function createQueryClient() {
@@ -38,7 +39,11 @@ export function Providers({ children }: { children: ReactNode }) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <OverlayProvider>{children}</OverlayProvider>
+      <OverlayProvider>
+        {children}
+        {/* 스택에 쌓인 오버레이를 그리는 자리 하나 — 화면이 각자 그리지 않는다(§6-1) */}
+        <OverlayHost />
+      </OverlayProvider>
     </QueryClientProvider>
   );
 }
