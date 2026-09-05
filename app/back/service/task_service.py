@@ -33,6 +33,7 @@ from dto.enums import (
 from dto.task import (
     AttachmentCreateDTO,
     StatusChangeDTO,
+    StatusCountsDTO,
     TaskListFilterDTO,
     TaskListItemDTO,
     TaskListResultDTO,
@@ -43,6 +44,7 @@ from dto.task import (
     TaskUpdateDTO,
     TodoCreateDTO,
     TodoUpdateDTO,
+    derive_overdue,
 )
 from dto.unset import UNSET
 from repository import (
@@ -110,6 +112,8 @@ async def _build_detail(session: AsyncSession, task: TaskDTO) -> TaskDetailDTO:
         session, task_id=task.id, limit=_RELATION_PREVIEW
     )
     today = _today()
+    # **목록과 같은 파생 규칙**을 쓴다 — 상세 헤더도 「n일 지남」을 그린다(SPEC-004 U-10)
+    is_overdue, overdue_days = derive_overdue(task.due_date, task.status, today)
 
     return TaskDetailDTO(
         task=task,
@@ -122,11 +126,8 @@ async def _build_detail(session: AsyncSession, task: TaskDTO) -> TaskDetailDTO:
         logs=await task_child_repository.list_logs(session, task.id),
         d_day=None if task.due_date is None else (task.due_date - today).days,
         # T-4 — 「지연」은 값이 아니다. 기한 경과 + 완료·취소 아님으로 파생한다.
-        is_overdue=(
-            task.due_date is not None
-            and task.due_date < today
-            and task.status not in (TaskStatus.DONE.value, TaskStatus.CANCELLED.value)
-        ),
+        is_overdue=is_overdue,
+        overdue_days=overdue_days,
     )
 
 
@@ -927,6 +928,23 @@ async def list_tasks(
         status=command.status,
         project_id=command.project_id,
     )
+    # 상태 축만 뺀 집계 — 상태 필터를 걸어도 칸반의 네 컬럼 수가 흔들리지 않는다
+    by_status = await task_repository.count_by_status(
+        session,
+        account_id=account_id,
+        **bounds,
+        work_type_id=command.work_type_id,
+        project_id=command.project_id,
+    )
+    # U-9 「필터를 지우면 n건이 보입니다」 — **기간만** 남기고 셋 다 뺀다
+    unfiltered_total = await task_repository.count_tasks(
+        session,
+        account_id=account_id,
+        **bounds,
+        work_type_id=None,
+        status=None,
+        project_id=None,
+    )
 
     type_counts = [
         TypeCountDTO(work_type_id=None, name="전체", count=sum(row[2] for row in by_type)),
@@ -941,4 +959,12 @@ async def list_tasks(
         page=command.page,
         size=command.size,
         type_counts=type_counts,
+        # **네 키를 항상 담는다** — 0건 상태도 0 이다(칸반 컬럼이 항상 넷이다)
+        status_counts=StatusCountsDTO(
+            todo=by_status.get(TaskStatus.TODO.value, 0),
+            in_progress=by_status.get(TaskStatus.IN_PROGRESS.value, 0),
+            done=by_status.get(TaskStatus.DONE.value, 0),
+            cancelled=by_status.get(TaskStatus.CANCELLED.value, 0),
+        ),
+        unfiltered_total=unfiltered_total,
     )

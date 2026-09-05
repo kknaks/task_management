@@ -480,3 +480,165 @@ async def test_the_list_requires_a_session(client: AsyncClient) -> None:
 
     assert response.status_code == 401
     assert response.json()["code"] == "token_expired"
+
+
+# --- statusCounts · unfilteredTotal (SPEC-004 §4, 2026-09-06 신설) --------
+
+
+async def test_status_counts_always_carry_all_four_keys(
+    client: AsyncClient, owner: TaskOwner
+) -> None:
+    """**0건 상태도 `0` 으로 온다** — 칸반 컬럼이 항상 넷이라 화면이 빈자리를 메우지 않는다.
+
+    (`typeCounts` 는 유형이 동적이라 사정이 다르다 — 거기는 0건 유형의 행이 없다.)
+    """
+    await _create(client, owner, title="시작전 하나")
+
+    body = await _list(client, owner)
+
+    assert body["statusCounts"] == {
+        "todo": 1,
+        "inProgress": 0,
+        "done": 0,
+        "cancelled": 0,
+    }
+
+
+async def test_status_counts_ignore_the_status_filter_but_follow_the_type_filter(
+    client: AsyncClient, db_session: AsyncSession, owner: TaskOwner
+) -> None:
+    """**`typeCounts` 와 반대 축이다** — 자기 축(상태)만 빼고 나머지 필터는 반영한다.
+
+    상태 필터를 걸었다고 다른 컬럼 수가 0 이 되면 칸반 완료 컬럼의 「8월 12」가 흔들린다.
+    """
+    other_type = WorkType(
+        account_id=owner.id,
+        kind=WorkTypeKind.TASK.value,
+        name="다른 유형",
+        color_token=ColorToken.ROSE.value,
+        is_default=False,
+    )
+    db_session.add(other_type)
+    await db_session.flush()
+
+    moving = await _create(client, owner, title="진행중으로")
+    await _create(client, owner, title="그대로")
+    await _create(client, owner, title="다른 유형", workTypeId=other_type.id)
+    await client.patch(
+        f"{BASE}/{moving['id']}/status",
+        json={"status": "in_progress"},
+        headers=owner.headers,
+    )
+
+    everything = await _list(client, owner)
+    by_status = await _list(client, owner, status="in_progress")
+    by_type = await _list(client, owner, workTypeId=other_type.id)
+
+    # 상태 필터를 걸어도 그대로다
+    assert by_status["statusCounts"] == everything["statusCounts"]
+    assert everything["statusCounts"]["todo"] == 2
+    assert everything["statusCounts"]["inProgress"] == 1
+    # 유형 필터는 반영한다 — 그 유형에는 시작전 1건뿐이다
+    assert by_type["statusCounts"] == {
+        "todo": 1,
+        "inProgress": 0,
+        "done": 0,
+        "cancelled": 0,
+    }
+
+
+async def test_status_counts_survive_the_page_limit(
+    client: AsyncClient, owner: TaskOwner
+) -> None:
+    """**이 필드가 있는 이유다** — `items` 를 세면 상한에 걸린 순간 두 수가 갈린다.
+
+    완료 업무가 페이지 밖으로 밀려도 `statusCounts.done` 은 **그 달 완료 건수**를 그대로 말한다.
+    """
+    done_ids = []
+    for index in range(3):
+        task = await _create(client, owner, title=f"완료 대상 {index}")
+        await client.post(
+            f"{BASE}/{task['id']}/attachments",
+            json={"role": "deliverable", "kind": "link", "url": "https://example.test/o"},
+            headers=owner.headers,
+        )
+        await client.patch(
+            f"{BASE}/{task['id']}/status", json={"status": "done"}, headers=owner.headers
+        )
+        done_ids.append(task["id"])
+    for index in range(4):
+        await _create(client, owner, title=f"시작전 {index}")
+
+    # 나중에 만든 「시작전」이 앞에 오게 해서 완료 3건을 **확실히 페이지 밖으로** 민다
+    narrow = await _list(client, owner, size=2, page=1, sort="created_desc")
+
+    assert len(narrow["items"]) == 2
+    assert narrow["total"] == 7
+
+    counted_in_page = len([row for row in narrow["items"] if row["status"] == "done"])
+    assert counted_in_page == 0  # 받아온 카드에는 완료가 하나도 없는데
+    assert narrow["statusCounts"]["done"] == 3  # 집계는 그 달 완료 3건을 그대로 말한다
+
+
+async def test_unfiltered_total_ignores_every_filter_but_follows_the_period(
+    client: AsyncClient, db_session: AsyncSession, owner: TaskOwner
+) -> None:
+    """U-9 「필터를 지우면 n건이 보입니다」의 `n` — **기간만** 적용한다."""
+    other_type = WorkType(
+        account_id=owner.id,
+        kind=WorkTypeKind.TASK.value,
+        name="다른 유형",
+        color_token=ColorToken.GRAPHITE.value,
+        is_default=False,
+    )
+    db_session.add(other_type)
+    await db_session.flush()
+
+    today = _today()
+    moving = await _create(client, owner, title="진행중으로")
+    await _create(client, owner, title="다른 유형", workTypeId=other_type.id)
+    await _create(
+        client, owner, title="프로젝트 있음", projectId=owner.project_id
+    )
+    await client.patch(
+        f"{BASE}/{moving['id']}/status",
+        json={"status": "in_progress"},
+        headers=owner.headers,
+    )
+
+    everything = await _list(client, owner)
+    filtered = await _list(
+        client, owner, status="in_progress", workTypeId=other_type.id
+    )
+    with_project = await _list(client, owner, projectId=owner.project_id)
+
+    assert everything["unfilteredTotal"] == 3
+    # 어떤 필터를 걸어도 그대로다
+    assert filtered["unfilteredTotal"] == 3
+    assert with_project["unfilteredTotal"] == 3
+    # 그런데 total 은 좁혀진다 — 두 수가 다른 것이 이 필드의 쓸모다
+    assert filtered["total"] == 0
+    assert with_project["total"] == 1
+
+    # 기간을 바꾸면 바뀐다
+    last_month_day = today.replace(day=1) - timedelta(days=5)
+    period_from, period_to = _month_bounds(last_month_day)
+    last_month = await _list(
+        client, owner, **{"from": period_from, "to": period_to}
+    )
+    assert last_month["unfilteredTotal"] == 0
+
+
+async def test_the_size_cap_is_five_hundred(
+    client: AsyncClient, owner: TaskOwner
+) -> None:
+    """칸반이 **그 달 전체를 한 번에** 받는다(U-2). 상한은 500 이고 **없애지 않는다.**"""
+    await _create(client, owner)
+
+    allowed = await client.get(BASE, params={"size": 500}, headers=owner.headers)
+    refused = await client.get(BASE, params={"size": 501}, headers=owner.headers)
+
+    assert allowed.status_code == 200
+    assert allowed.json()["size"] == 500
+    assert refused.status_code == 422
+    assert refused.json()["code"] == "validation_error"

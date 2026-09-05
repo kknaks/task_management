@@ -622,3 +622,54 @@ async def test_the_general_patch_still_refuses_status(
 
     assert response.status_code == 422
     assert response.json()["code"] == "validation_error"
+
+
+async def test_the_detail_carries_is_overdue_and_overdue_days(
+    client: AsyncClient, owner: TaskOwner
+) -> None:
+    """SPEC-003 §4(2026-09-06 추가) — 상세도 「n일 지남」을 그릴 수 있어야 한다(SPEC-004 U-10).
+
+    **목록과 같은 파생 규칙**이다 — 저장하지 않고 조회 시 계산하며(T-4),
+    완료로 보내면 `false` 가 된다.
+    """
+    yesterday = _today() - timedelta(days=1)
+    created = await _create(client, owner, dueDate=yesterday.isoformat())
+    await client.patch(
+        f"{BASE}/{created['id']}/status",
+        json={"status": "in_progress"},
+        headers=owner.headers,
+    )
+
+    detail = (await client.get(f"{BASE}/{created['id']}", headers=owner.headers)).json()
+
+    assert detail["isOverdue"] is True
+    assert detail["overdueDays"] == 1
+    assert detail["dDay"] == -1
+
+    await client.post(
+        f"{BASE}/{created['id']}/attachments",
+        json={"role": "deliverable", "kind": "link", "url": "https://example.test/o"},
+        headers=owner.headers,
+    )
+    await client.patch(
+        f"{BASE}/{created['id']}/status", json={"status": "done"}, headers=owner.headers
+    )
+
+    done = (await client.get(f"{BASE}/{created['id']}", headers=owner.headers)).json()
+
+    assert done["isOverdue"] is False
+    assert done["overdueDays"] is None
+    # 저장한 값이 아니다 — 기한은 그대로다
+    assert done["dueDate"] == yesterday.isoformat()
+
+
+async def test_a_task_without_a_due_date_has_no_overdue_days(
+    client: AsyncClient, owner: TaskOwner
+) -> None:
+    created = await _create(client, owner)
+
+    detail = (await client.get(f"{BASE}/{created['id']}", headers=owner.headers)).json()
+
+    assert detail["isOverdue"] is False
+    assert detail["overdueDays"] is None
+    assert detail["dDay"] is None

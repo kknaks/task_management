@@ -317,6 +317,8 @@ class TaskDetail(CamelModel):
     due_end_time: time | None
     d_day: int | None
     is_overdue: bool
+    # SPEC-003 §4(2026-09-06) — 상세 헤더가 「n일 지남」을 그린다. 목록과 같은 파생 규칙이다
+    overdue_days: int | None
     background: str | None
     goal: str | None
     completion_result: str | None
@@ -360,6 +362,7 @@ class TaskDetail(CamelModel):
             due_end_time=task.due_end_time,
             d_day=detail.d_day,
             is_overdue=detail.is_overdue,
+            overdue_days=detail.overdue_days,
             background=task.background,
             goal=task.goal,
             completion_result=task.completion_result,
@@ -490,12 +493,27 @@ class TypeCount(CamelModel):
     count: int
 
 
+class StatusCounts(CamelModel):
+    """상태별 총계. **네 키가 항상 온다** — 0건 상태도 `0` 이다(칸반 컬럼이 항상 넷).
+
+    칸반 완료 컬럼의 「8월 12」가 여기서 온다 — **받아온 카드를 세지 않는다**(SPEC-004 U-2).
+    """
+
+    todo: int
+    in_progress: int
+    done: int
+    cancelled: int
+
+
 class TaskListResponse(CamelModel):
     items: list[TaskListItem]
     total: int
     page: int
     size: int
     type_counts: list[TypeCount]
+    status_counts: StatusCounts
+    # U-9 「유형·상태 필터를 지우면 n건이 보입니다」의 `n` — 기간만 적용한 총계
+    unfiltered_total: int
 
     @classmethod
     def from_dto(cls, dto: TaskListResultDTO) -> "TaskListResponse":
@@ -508,4 +526,11 @@ class TaskListResponse(CamelModel):
                 TypeCount(work_type_id=row.work_type_id, name=row.name, count=row.count)
                 for row in dto.type_counts
             ],
+            status_counts=StatusCounts(
+                todo=dto.status_counts.todo,
+                in_progress=dto.status_counts.in_progress,
+                done=dto.status_counts.done,
+                cancelled=dto.status_counts.cancelled,
+            ),
+            unfiltered_total=dto.unfiltered_total,
         )

@@ -20,6 +20,7 @@ from dto.task import (
     TaskListItemDTO,
     TodoProgressDTO,
     WorkTypeRefDTO,
+    derive_overdue,
 )
 from models.account import Project, WorkType
 from models.task import Task, TaskLog, TaskMemo, TaskTodo
@@ -496,6 +497,47 @@ async def count_tasks(
     return total or 0
 
 
+async def count_by_status(
+    session: AsyncSession,
+    *,
+    account_id: int,
+    from_date: date,
+    to_date: date,
+    period_from: datetime,
+    period_to: datetime,
+    work_type_id: int | None,
+    project_id: int | None,
+) -> dict[str, int]:
+    """`statusCounts` — **상태 필터 자신은 반영하지 않는다**(SPEC-004 §4).
+
+    `typeCounts` 와 같은 결이다 — 자기 축만 빼고 나머지 필터는 반영한다.
+    상태 필터를 걸었다고 다른 컬럼 수가 0 이 되면 칸반 완료 컬럼의 「8월 12」가 흔들린다.
+
+    **`items` 를 세지 않는다** — `size` 상한에 걸리면 두 수가 갈리고,
+    그때 「그 달 완료 건수」가 「지금 받아온 것 중 완료 건수」로 조용히 바뀐다.
+    """
+    rows = (
+        await session.execute(
+            select(Task.status, func.count().label("count"))
+            .where(
+                Task.account_id == account_id,
+                Task.deleted_at.is_(None),
+                *_list_filters(
+                    from_date=from_date,
+                    to_date=to_date,
+                    period_from=period_from,
+                    period_to=period_to,
+                    work_type_id=work_type_id,
+                    status=None,
+                    project_id=project_id,
+                ),
+            )
+            .group_by(Task.status)
+        )
+    ).all()
+    return {row.status: row.count for row in rows}
+
+
 async def count_by_work_type(
     session: AsyncSession,
     *,
@@ -543,11 +585,7 @@ def _to_list_item(row: object, *, today: date) -> TaskListItemDTO:
     「지연」은 **기한 경과 + 완료·취소 아님**이다(T-4). `today` 는 service 가 앱 타임존으로 정해 넘긴다.
     """
     base = _row_to_dto(row)
-    overdue = (
-        base.due_date is not None
-        and base.due_date < today
-        and base.status not in (TaskStatus.DONE.value, TaskStatus.CANCELLED.value)
-    )
+    is_overdue, overdue_days = derive_overdue(base.due_date, base.status, today)
     return TaskListItemDTO(
         id=base.id,
         title=base.title,
@@ -558,8 +596,8 @@ def _to_list_item(row: object, *, today: date) -> TaskListItemDTO:
         due_start_time=base.due_start_time,
         due_end_time=base.due_end_time,
         d_day=None if base.due_date is None else (base.due_date - today).days,
-        is_overdue=overdue,
-        overdue_days=(today - base.due_date).days if overdue else None,
+        is_overdue=is_overdue,
+        overdue_days=overdue_days,
         memo_count=row.memo_count,  # type: ignore[attr-defined]
         todo_progress=TodoProgressDTO(
             done=row.todo_done,  # type: ignore[attr-defined]

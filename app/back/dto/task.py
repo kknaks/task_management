@@ -12,6 +12,24 @@ from datetime import date, datetime, time
 from dto.unset import UNSET, Unset
 
 
+def derive_overdue(
+    due_date: date | None, status: str, today: date
+) -> tuple[bool, int | None]:
+    """T-4 「지연」 파생 — **저장하지 않는다.** 조회 시 계산해 `(isOverdue, overdueDays)` 로 낸다.
+
+    기한 경과 **+ 완료·취소 아님**이다. 완료로 보내면 `False` 가 된다.
+
+    목록과 상세가 **같은 규칙**을 써야 해서(SPEC-004 U-10 — 상세 헤더도 같은 문구를 그린다)
+    계산을 여기 한 번만 둔다. dto 층에 두는 이유는 **service 와 repository 가 둘 다 부르는**
+    유일한 공통 지점이고, 순수 함수라 어느 쪽 규약도 어기지 않기 때문이다.
+    """
+    if due_date is None or due_date >= today:
+        return False, None
+    if status in ("done", "cancelled"):
+        return False, None
+    return True, (today - due_date).days
+
+
 @dataclass(frozen=True)
 class WorkTypeRefDTO:
     """업무가 참조하는 유형의 표시 정보.
@@ -129,6 +147,8 @@ class TaskDetailDTO:
     logs: list[TaskLogDTO]
     d_day: int | None
     is_overdue: bool
+    # SPEC-003 §4(2026-09-06 추가) — 상세 헤더가 「n일 지남」을 그린다. **목록과 같은 파생 규칙**이다
+    overdue_days: int | None
 
 
 # --- 입력 ---------------------------------------------------------------
@@ -269,9 +289,26 @@ class TaskListFilterDTO:
 
 
 @dataclass(frozen=True)
+class StatusCountsDTO:
+    """상태별 총계(SPEC-004 §4, 2026-09-06 신설).
+
+    **네 키를 항상 담는다** — 칸반 컬럼이 항상 넷이라 0건 상태도 `0` 으로 내야
+    화면이 빈자리를 메우지 않는다(`type_counts` 는 유형이 동적이라 사정이 다르다).
+    """
+
+    todo: int
+    in_progress: int
+    done: int
+    cancelled: int
+
+
+@dataclass(frozen=True)
 class TaskListResultDTO:
     items: list[TaskListItemDTO]
     total: int
     page: int
     size: int
     type_counts: list[TypeCountDTO]
+    status_counts: StatusCountsDTO
+    # U-9 「유형·상태 필터를 지우면 n건이 보입니다」의 `n` — **기간만** 적용한 총계
+    unfiltered_total: int

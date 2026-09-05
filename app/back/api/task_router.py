@@ -112,7 +112,9 @@ async def list_tasks(
     project_id: int | None = Query(default=None, alias="projectId"),
     sort: TaskSort = Query(default=TaskSort.DUE_ASC, alias="sort"),
     page: int = Query(default=1, ge=1, alias="page"),
-    size: int = Query(default=12, ge=1, le=100, alias="size"),
+    # 칸반은 페이지를 쓰지 않고 **그 달 전체를 한 번에** 받는다(U-2 데이터 범위).
+    # 상한 500 은 선이다 — 없애지 않는다(넘으면 컬럼이 무한히 길어진다).
+    size: int = Query(default=12, ge=1, le=500, alias="size"),
     account_id: int = Depends(require_account),
     session: AsyncSession = Depends(get_db),
 ) -> TaskListResponse:
