@@ -7,9 +7,9 @@
 
 from __future__ import annotations
 
-from datetime import date, time, timedelta
+from datetime import date, datetime, time, timedelta
 
-from sqlalchemy import Select, case, select
+from sqlalchemy import ColumnElement, Select, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -160,6 +160,63 @@ async def update_fields(
     await session.flush()
 
 
+def _candidate_filters(
+    *,
+    exclude_ids: set[int],
+    keyword: str | None,
+    scope_project_id: int | None,
+    updated_after: datetime | None,
+) -> list[ColumnElement[bool]]:
+    """후보를 **잘라내는** 조건들(SPEC-003 §4 `scope`).
+
+    총계와 목록이 **같은 조건**을 봐야 `total` 과 `items` 가 어긋나지 않는다 —
+    그래서 조건을 여기 한 번만 적고 두 쿼리가 나눠 쓴다.
+
+    `scope_project_id`·`updated_after` 는 service 가 `scope` 를 풀어 넘긴 값이다.
+    `None` 이면 그 축으로 자르지 않는다.
+    """
+    filters: list[ColumnElement[bool]] = []
+    if exclude_ids:
+        filters.append(Task.id.not_in(exclude_ids))
+    if keyword:
+        filters.append(Task.title.ilike(f"%{keyword}%"))
+    if scope_project_id is not None:
+        filters.append(Task.project_id == scope_project_id)
+    if updated_after is not None:
+        filters.append(Task.updated_at >= updated_after)
+    return filters
+
+
+async def count_relation_candidates(
+    session: AsyncSession,
+    *,
+    account_id: int,
+    exclude_ids: set[int],
+    keyword: str | None,
+    scope_project_id: int | None,
+    updated_after: datetime | None,
+) -> int:
+    """`scope` 를 적용한 뒤의 **총계**(U-8 「n건 중 m」의 `n`).
+
+    **`len(items)` 가 아니다** — 상위 20건만 내려주므로 21건부터 갈린다. 그래서 세어서 준다.
+    """
+    total = await session.scalar(
+        select(func.count())
+        .select_from(Task)
+        .where(
+            Task.account_id == account_id,
+            Task.deleted_at.is_(None),
+            *_candidate_filters(
+                exclude_ids=exclude_ids,
+                keyword=keyword,
+                scope_project_id=scope_project_id,
+                updated_after=updated_after,
+            ),
+        )
+    )
+    return total or 0
+
+
 async def find_relation_candidates(
     session: AsyncSession,
     *,
@@ -168,19 +225,27 @@ async def find_relation_candidates(
     due_date: date | None,
     exclude_ids: set[int],
     keyword: str | None,
+    scope_project_id: int | None,
+    updated_after: datetime | None,
     limit: int,
 ) -> list[TaskDTO]:
     """연관업무 후보(SPEC-003 U-8 · §4 2026-09-06 개정).
 
-    검색어가 없으면 **같은 프로젝트 → 기한 ±7일 → 최근 수정** 순이다.
+    **자르는 축과 줄 세우는 축이 다르다** —
+    `scope_project_id`·`updated_after` 는 필터이고,
+    `project_id`·`due_date` 는 **정렬 근거**다(같은 프로젝트 → 기한 ±7일 → 최근 수정).
+
     **어떤 업무에도 매달리지 않는다** — 뺄 id 는 service 가 정해서 `exclude_ids` 로 넘긴다
     (생성 드로어는 뺄 것이 없고, 상세 드로어는 자기 자신 + 이미 연결된 것을 뺀다).
     """
-    query = _with_refs(account_id)
-    if exclude_ids:
-        query = query.where(Task.id.not_in(exclude_ids))
-    if keyword:
-        query = query.where(Task.title.ilike(f"%{keyword}%"))
+    query = _with_refs(account_id).where(
+        *_candidate_filters(
+            exclude_ids=exclude_ids,
+            keyword=keyword,
+            scope_project_id=scope_project_id,
+            updated_after=updated_after,
+        )
+    )
 
     # 우선순위를 정수로 낮춰 정렬한다 — 같은 프로젝트 0 · 기한 ±7일 1 · 나머지 2
     branches = []

@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
@@ -692,3 +692,189 @@ async def test_the_old_per_task_candidates_route_is_gone(
 
     assert response.status_code == 405
     assert "items" not in response.text
+
+
+# --- 후보 `scope` 필터 · `total` (SPEC-003 §4 2026-09-06) -----------------
+#
+# `scope` 는 **자르는 필터**이고 `projectId`·`dueDate` 는 **정렬 근거**다 — 역할이 다르다.
+# U-8 의 필터 칩 3(「이 프로젝트」/「최근 30일」/「전체」)이 `scope` 세 값과 1:1 이다.
+
+
+async def test_scope_project_keeps_only_the_same_project(
+    client: AsyncClient, owner: TaskOwner
+) -> None:
+    """기본값 `project` — 기준 업무와 **같은 프로젝트만** 남는다."""
+    same = await _create(client, owner, title="같은 프로젝트", projectId=owner.project_id)
+    other = await _create(client, owner, title="무소속 후보")
+    base = await _create(client, owner, title="기준", projectId=owner.project_id)
+
+    scoped = await client.get(
+        CANDIDATES, params={"excludeId": base["id"], "scope": "project"}, headers=owner.headers
+    )
+
+    ids = [item["id"] for item in scoped.json()["items"]]
+    assert ids == [same["id"]]
+    assert other["id"] not in ids
+    assert scoped.json()["total"] == 1
+
+
+async def test_scope_all_returns_more_than_scope_project(
+    client: AsyncClient, owner: TaskOwner
+) -> None:
+    """같은 `excludeId` 라도 `all` 은 자르지 않는다 — 건수가 달라야 필터가 실제로 먹은 것이다."""
+    await _create(client, owner, title="같은 프로젝트", projectId=owner.project_id)
+    await _create(client, owner, title="무소속 후보")
+    base = await _create(client, owner, title="기준", projectId=owner.project_id)
+
+    scoped = await client.get(
+        CANDIDATES, params={"excludeId": base["id"], "scope": "project"}, headers=owner.headers
+    )
+    everything = await client.get(
+        CANDIDATES, params={"excludeId": base["id"], "scope": "all"}, headers=owner.headers
+    )
+
+    assert scoped.json()["total"] == 1
+    assert everything.json()["total"] == 2
+    assert len(everything.json()["items"]) > len(scoped.json()["items"])
+
+
+async def test_scope_project_without_a_reference_behaves_like_all(
+    client: AsyncClient, owner: TaskOwner
+) -> None:
+    """**빈 목록을 주지 않는다**(SPEC-003 §4).
+
+    무소속 업무이거나 생성 드로어에서 프로젝트를 아직 안 고른 **정상 경로**다 —
+    고를 게 없는 팝오버가 뜨는 것이 더 나쁘다. 이건 명시된 동작이지 조용한 폴백이 아니다.
+    """
+    await _create(client, owner, title="같은 프로젝트", projectId=owner.project_id)
+    await _create(client, owner, title="무소속 후보")
+    unassigned_base = await _create(client, owner, title="무소속 기준")
+
+    scoped = await client.get(
+        CANDIDATES,
+        params={"excludeId": unassigned_base["id"], "scope": "project"},
+        headers=owner.headers,
+    )
+    everything = await client.get(
+        CANDIDATES,
+        params={"excludeId": unassigned_base["id"], "scope": "all"},
+        headers=owner.headers,
+    )
+
+    assert scoped.json()["items"] != []
+    assert scoped.json() == everything.json()
+
+
+async def test_scope_project_without_any_hint_behaves_like_all(
+    client: AsyncClient, owner: TaskOwner
+) -> None:
+    """생성 드로어가 프로젝트를 안 골랐을 때 — `scope` 를 안 보내도(기본 `project`) 전부 나온다."""
+    await _create(client, owner, title="같은 프로젝트", projectId=owner.project_id)
+    await _create(client, owner, title="무소속 후보")
+
+    default = await client.get(CANDIDATES, headers=owner.headers)
+    everything = await client.get(
+        CANDIDATES, params={"scope": "all"}, headers=owner.headers
+    )
+
+    assert default.json() == everything.json()
+    assert default.json()["total"] == 2
+
+
+async def test_scope_recent30_drops_tasks_untouched_for_over_a_month(
+    client: AsyncClient, db_session: AsyncSession, owner: TaskOwner
+) -> None:
+    """`recent30` — **최근 수정 30일 이내**만 남긴다."""
+    fresh = await _create(client, owner, title="최근 수정")
+    stale = await _create(client, owner, title="오래된 것")
+    row = (await db_session.scalars(select(Task).where(Task.id == stale["id"]))).one()
+    row.updated_at = datetime.now(UTC) - timedelta(days=40)
+    await db_session.flush()
+
+    recent = await client.get(
+        CANDIDATES, params={"scope": "recent30"}, headers=owner.headers
+    )
+    everything = await client.get(
+        CANDIDATES, params={"scope": "all"}, headers=owner.headers
+    )
+
+    recent_ids = [item["id"] for item in recent.json()["items"]]
+    assert fresh["id"] in recent_ids
+    assert stale["id"] not in recent_ids
+    assert recent.json()["total"] == 1
+    assert stale["id"] in [item["id"] for item in everything.json()["items"]]
+
+
+@pytest.mark.parametrize("scope", ["bogus", "PROJECT", "recent_30", ""])
+async def test_an_unknown_scope_is_422(
+    client: AsyncClient, owner: TaskOwner, scope: str
+) -> None:
+    """세 값 밖은 **FastAPI 의 enum 검증**이 거른다 — 손으로 잡지 않는다."""
+    response = await client.get(
+        CANDIDATES, params={"scope": scope}, headers=owner.headers
+    )
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "validation_error"
+
+
+async def test_total_is_not_the_page_size_when_there_are_more_than_twenty(
+    client: AsyncClient, owner: TaskOwner
+) -> None:
+    """**`total` 은 `len(items)` 가 아니다** — 상위 20건만 내려주므로 21건부터 갈린다."""
+    for index in range(23):
+        await _create(client, owner, title=f"후보 {index:02d}")
+
+    response = await client.get(
+        CANDIDATES, params={"scope": "all"}, headers=owner.headers
+    )
+
+    body = response.json()
+    assert len(body["items"]) == 20
+    assert body["total"] == 23
+
+
+async def test_total_follows_the_scope_not_the_whole_table(
+    client: AsyncClient, owner: TaskOwner
+) -> None:
+    """`total` 은 **`scope` 를 적용한 뒤의** 총계다(U-8 「n건 중 m」의 `n`)."""
+    for index in range(3):
+        await _create(client, owner, title=f"프로젝트 {index}", projectId=owner.project_id)
+    for index in range(4):
+        await _create(client, owner, title=f"무소속 {index}")
+    base = await _create(client, owner, title="기준", projectId=owner.project_id)
+
+    scoped = await client.get(
+        CANDIDATES, params={"excludeId": base["id"], "scope": "project"}, headers=owner.headers
+    )
+    everything = await client.get(
+        CANDIDATES, params={"excludeId": base["id"], "scope": "all"}, headers=owner.headers
+    )
+
+    assert scoped.json()["total"] == 3
+    assert everything.json()["total"] == 7
+
+
+async def test_total_respects_keyword_and_exclusions(
+    client: AsyncClient, owner: TaskOwner
+) -> None:
+    """검색어·제외와도 어긋나지 않는다 — 총계와 목록이 **같은 조건**을 본다."""
+    linked = await _create(client, owner, title="소개서 리뷰")
+    await _create(client, owner, title="소개서 초안")
+    await _create(client, owner, title="관계 없는 것")
+    base = await _create(client, owner, title="기준")
+    await client.post(
+        f"{BASE}/{base['id']}/relations",
+        json={"taskIds": [linked["id"]]},
+        headers=owner.headers,
+    )
+
+    response = await client.get(
+        CANDIDATES,
+        params={"excludeId": base["id"], "scope": "all", "keyword": "소개서"},
+        headers=owner.headers,
+    )
+
+    body = response.json()
+    assert [item["title"] for item in body["items"]] == ["소개서 초안"]
+    assert body["total"] == 1

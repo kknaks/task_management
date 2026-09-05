@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_db, require_account
+from dto.enums import RelationCandidateScope
 from schemas.task import (
     AttachmentCreate,
     MemoCreate,
@@ -56,6 +57,10 @@ async def list_relation_candidates(
     exclude_id: int | None = Query(default=None, alias="excludeId"),
     project_id: int | None = Query(default=None, alias="projectId"),
     due_date: date | None = Query(default=None, alias="dueDate"),
+    # 세 값 밖은 **FastAPI 가 422 로 거른다** — 손으로 잡지 않는다(§8-1 설계한 실패만).
+    scope: RelationCandidateScope = Query(
+        default=RelationCandidateScope.PROJECT, alias="scope"
+    ),
     account_id: int = Depends(require_account),
     session: AsyncSession = Depends(get_db),
 ) -> RelationCandidateListResponse:
@@ -63,14 +68,18 @@ async def list_relation_candidates(
 
     생성 드로어는 자기 id 가 없어 `excludeId` 를 보내지 않고 **폼에 입력 중인** 정렬 근거를 준다.
     상세 드로어는 `excludeId` 만 보내면 되고, **서버가 그 업무의 값을 정렬 근거로 쓴다.**
+
+    `scope` 는 **필터**다(칩 3 과 1:1) — 정렬 근거인 `projectId`·`dueDate` 와 역할이 다르다.
+    `total` 은 그 필터를 적용한 뒤의 총계이고 `items` 는 상위 20건이다.
     """
-    candidates = await task_service.list_relation_candidates(
+    candidates, total = await task_service.list_relation_candidates(
         session,
         account_id=account_id,
         keyword=keyword,
         exclude_id=exclude_id,
         project_id=project_id,
         due_date=due_date,
+        scope=scope,
     )
     return RelationCandidateListResponse(
         items=[
@@ -82,7 +91,8 @@ async def list_relation_candidates(
                 due_date=candidate.due_date,
             )
             for candidate in candidates
-        ]
+        ],
+        total=total,
     )
 
 

@@ -388,4 +388,11 @@ class RelationCandidateItem(CamelModel):
 
 
 class RelationCandidateListResponse(CamelModel):
+    """`total` 은 U-8 우측 카운트 「n건 중 m」의 **`n`** 이다.
+
+    **`scope` 를 적용한 뒤의 총계**이고 `items` 는 거기서 상위 20건(`m = items.length`)이다 —
+    후보가 20건을 넘으면 둘이 갈린다.
+    """
+
     items: list[RelationCandidateItem]
+    total: int

@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
@@ -18,7 +18,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_settings
 from core.exceptions import NotFoundError, ValidationError
-from dto.enums import AttachmentKind, ScheduleSourceType, TaskStatus
+from dto.enums import (
+    AttachmentKind,
+    RelationCandidateScope,
+    ScheduleSourceType,
+    TaskStatus,
+)
 from dto.task import (
     AttachmentCreateDTO,
     TaskCreateDTO,
@@ -47,6 +52,8 @@ _INVALID_INPUT = "입력값을 확인해 주세요"
 _RELATION_PREVIEW = 5
 # SPEC-003 U-8 — 검색어가 없을 때 후보 최대 20건
 _RELATION_CANDIDATE_LIMIT = 20
+# `scope=recent30` 의 창 — 칩 문구 「최근 30일」이 그대로 값이다
+_RECENT_SCOPE_DAYS = 30
 
 _ALLOWED_URL_SCHEMES = frozenset({"http", "https"})
 
@@ -578,7 +585,8 @@ async def list_relation_candidates(
     exclude_id: int | None = None,
     project_id: int | None = None,
     due_date: date | None = None,
-) -> list[TaskDTO]:
+    scope: RelationCandidateScope = RelationCandidateScope.PROJECT,
+) -> tuple[list[TaskDTO], int]:
     """SPEC-003 U-8 · §4(2026-09-06 개정) — **업무에 매달리지 않는 컬렉션 표면**이다.
 
     U-1 이 **생성 드로어에도** 「업무 연결」을 두는데 그 시점에는 **자기 id 가 없다** —
@@ -587,6 +595,9 @@ async def list_relation_candidates(
     - `exclude_id` 없음(생성 드로어) — 뺄 것이 없고, **폼에 입력 중인** `project_id`·`due_date` 로 정렬한다
     - `exclude_id` 있음(상세 드로어) — 그 업무와 **이미 연결된 것도 함께 빠지고**,
       정렬 근거는 **그 업무의 값이 쿼리 값을 이긴다**(화면이 두 번 보내지 않아도 된다)
+
+    `scope` 는 **자르는 필터**다(칩 3 과 1:1) — 정렬 근거인 `project_id`·`due_date` 와 역할이 다르다.
+    돌려주는 것은 `(상위 20건, scope 적용 후 총계)` 다. **총계는 `len(items)` 가 아니다.**
 
     검색어가 없어도 기본 정렬로 최대 20건을 준다. 삭제된 업무는 처음부터 조회에서 빠진다.
     """
@@ -600,12 +611,42 @@ async def list_relation_candidates(
         exclude_ids = await task_child_repository.list_related_ids(session, exclude_id)
         exclude_ids.add(exclude_id)
 
-    return await task_repository.find_relation_candidates(
+    scope_project_id, updated_after = _resolve_scope(scope, project_id)
+
+    total = await task_repository.count_relation_candidates(
+        session,
+        account_id=account_id,
+        exclude_ids=exclude_ids,
+        keyword=keyword,
+        scope_project_id=scope_project_id,
+        updated_after=updated_after,
+    )
+    items = await task_repository.find_relation_candidates(
         session,
         account_id=account_id,
         project_id=project_id,
         due_date=due_date,
         exclude_ids=exclude_ids,
         keyword=keyword,
+        scope_project_id=scope_project_id,
+        updated_after=updated_after,
         limit=_RELATION_CANDIDATE_LIMIT,
     )
+    return items, total
+
+
+def _resolve_scope(
+    scope: RelationCandidateScope, project_id: int | None
+) -> tuple[int | None, datetime | None]:
+    """`scope` 를 repository 가 아는 두 축(프로젝트 · 최근 수정)으로 푼다.
+
+    **기준 프로젝트가 없는데 `scope=project` 면 `all` 과 같게 답한다** — 빈 목록을 주지 않는다.
+    무소속 업무이거나 생성 드로어에서 프로젝트를 아직 안 고른 **정상 경로**이고,
+    고를 게 없는 팝오버가 뜨는 것이 더 나쁘다. **SPEC-003 §4 가 명시한 동작이지
+    조용한 폴백이 아니다** — 그쪽 화면에서는 「이 프로젝트」 칩이 비활성이고 기본이 「전체」로 내려간다.
+    """
+    if scope is RelationCandidateScope.PROJECT:
+        return project_id, None
+    if scope is RelationCandidateScope.RECENT30:
+        return None, datetime.now(UTC) - timedelta(days=_RECENT_SCOPE_DAYS)
+    return None, None
