@@ -1,0 +1,101 @@
+/**
+ * 원시 디자인 토큰 — `00-design/09-design-tokens.md` 의 값을 그대로 옮긴 곳.
+ *
+ * **여기가 색·형태 값의 정본이다.** 값을 바꿀 자리는 이 파일 하나뿐이고,
+ * 컴포넌트는 `--tm-*` 를 직접 쓰지 않는다 — `globals.css` 가 shadcn 시맨틱 변수로
+ * 한 번 감싸고, 컴포넌트는 Tailwind 유틸만 쓴다(frontend/README.md §5-1).
+ *
+ * 이 파일과 `globals.css` 밖에서 hex 리터럴을 쓰면 리뷰 반려다(§11 금지 목록 4).
+ */
+
+:root {
+  /* ── 색 · 액션/완료 ────────────────────────────────────────────────── */
+  --tm-primary: #7181f8;
+  --tm-primary-hover: #5f71f5;
+  --tm-primary-fg: #ffffff;
+
+  /* ── 색 · 위치 ────────────────────────────────────────────────────────
+     「검정은 위치, 보라는 선택」. 이 변수를 쓰는 컴포넌트는 셋뿐이다 —
+     Sidebar 활성 pill · 뷰 토글 선택 · UnderlineTabs 선택 밑줄(§5-2).
+     토스트 배경은 오버레이 서피스라 예외. */
+  --tm-ink: #1e1e1e;
+
+  /* ── 색 · 본문 계열 ───────────────────────────────────────────────── */
+  --tm-fg: #1e1e1e;
+  --tm-fg-muted: #5f6470;
+  --tm-fg-meta: #757575;
+  --tm-fg-caption: #9ea2ae;
+
+  /* ── 색 · 선택 ────────────────────────────────────────────────────── */
+  --tm-select-bg: #f1f2fe;
+  --tm-select-fg: #4b52a8;
+
+  /* ── 색 · 면과 선 ─────────────────────────────────────────────────── */
+  --tm-surface: #ffffff;
+  --tm-hover: #f5f6f8;
+  --tm-row-hover: #fafbfc;
+  --tm-border: #d9d9d9;
+  --tm-divider: #ebebeb;
+  --tm-row-divider: #f1f2f5;
+  --tm-sidebar-border: #e5e7ea;
+  --tm-canvas: #f4f5f7;
+  --tm-column: #f9fafb;
+
+  /* ── 색 · 상태 dot 5색 ────────────────────────────────────────────── */
+  --tm-status-todo: #9ea2ae;
+  --tm-status-progress: #33aaff;
+  --tm-status-done: #7181f8;
+  --tm-status-cancelled: #b3b3b3;
+  --tm-status-overdue: #e2685b;
+
+  /* ── 형태 · radius ────────────────────────────────────────────────── */
+  --tm-radius-card: 12px;
+  --tm-radius-control: 8px;
+  --tm-radius-chip: 4px;
+
+  /* ── 형태 · 그림자 ────────────────────────────────────────────────── */
+  --tm-shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 8px 20px rgba(16, 24, 40, 0.06);
+  --tm-shadow-drawer: -24px 0 60px rgba(0, 0, 0, 0.18);
+  --tm-shadow-modal: 0 32px 80px rgba(0, 0, 0, 0.28);
+  --tm-shadow-popover: 0 16px 40px rgba(0, 0, 0, 0.16);
+
+  /* ── 오버레이 3종 규격 ─────────────────────────────────────────────
+     폭·스크림을 여기서 한 번만 정한다. 화면이 각자 정하지 않는다(§6). */
+  --tm-drawer-width: 840px;
+  --tm-modal-width: 600px;
+  --tm-popover-min-width: 200px;
+  --tm-popover-max-width: 400px;
+  --tm-scrim-drawer: rgba(30, 30, 30, 0.32);
+  --tm-scrim-modal: rgba(30, 30, 30, 0.36);
+
+  /* ── 타입 ─────────────────────────────────────────────────────────── */
+  --tm-font-sans: "Pretendard Variable", Pretendard, system-ui, -apple-system,
+    "Segoe UI", "Malgun Gothic", sans-serif;
+  --tm-tracking: -0.02em;
+
+  /* ── 레이아웃 상수(§7-1) ──────────────────────────────────────────── */
+  --tm-min-width: 1280px;
+  --tm-sidebar-width: 200px;
+}
+
+/**
+ * 동적 유형 색 — 팔레트 자리(§5-3).
+ *
+ * 유형·프로젝트 색은 사용자가 고른 값이라 빌드 타임 토큰이 아니지만,
+ * **자유 색상이 아니라 「허용 팔레트 중 선택」**이다. DB 가 드는 것은 hex 가 아니라
+ * 팔레트 토큰명(`work_type.color_token`)이고, 배지·칩은 `data-color-token="<name>"`
+ * 속성만 받는다 — 인라인 `style={{ background: hex }}` 를 쓰지 않는다.
+ *
+ * **팔레트 8종의 실제 값 등록은 WORK-003 이다**(SPEC-002 §4 Data Contract 가 정본).
+ * WORK-001 은 자리와 중립 폴백만 만든다 — 없는 토큰명이 와도 조용히 숨기지 않고
+ * 중립 색으로 떨어뜨린다(§5-3 규칙 4).
+ */
+:root {
+  --tm-palette-neutral-bg: #f4f5f7;
+  --tm-palette-neutral-fg: #5f6470;
+}
+
+[data-color-token] {
+  --tm-palette-bg: var(--tm-palette-neutral-bg);
+  --tm-palette-fg: var(--tm-palette-neutral-fg);
+}

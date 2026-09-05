@@ -1,0 +1,46 @@
+{
+  "extends": ["next/core-web-vitals", "next/typescript"],
+  "rules": {
+    "no-restricted-globals": [
+      "error",
+      {
+        "name": "fetch",
+        "message": "모든 호출은 lib/api/client.ts 를 지난다 (frontend/README.md §2 규칙 5)."
+      },
+      {
+        "name": "localStorage",
+        "message": "토큰 저장소는 lib/auth/tokenStore.ts 한 파일에서만 다룬다 (frontend/README.md §4-1)."
+      },
+      {
+        "name": "sessionStorage",
+        "message": "토큰 저장소는 lib/auth/tokenStore.ts 한 파일에서만 다룬다 (frontend/README.md §4-1)."
+      }
+    ],
+    "no-restricted-properties": [
+      "error",
+      {
+        "object": "window",
+        "property": "localStorage",
+        "message": "토큰 저장소는 lib/auth/tokenStore.ts 한 파일에서만 다룬다 (frontend/README.md §4-1)."
+      },
+      {
+        "object": "window",
+        "property": "sessionStorage",
+        "message": "토큰 저장소는 lib/auth/tokenStore.ts 한 파일에서만 다룬다 (frontend/README.md §4-1)."
+      }
+    ]
+  },
+  "overrides": [
+    {
+      "files": ["src/lib/auth/tokenStore.ts"],
+      "rules": {
+        "no-restricted-globals": "off",
+        "no-restricted-properties": "off"
+      }
+    },
+    {
+      "files": ["src/lib/api/client.ts"],
+      "rules": { "no-restricted-globals": "off" }
+    }
+  ]
+}

@@ -1,0 +1,126 @@
+import type { Config } from "tailwindcss";
+
+/**
+ * 색·형태 값은 여기에 적지 않는다 — 전부 `styles/tokens.css` 의 CSS 변수를 가리킨다.
+ * 그래야 디자인이 값을 바꿀 때 고칠 자리가 한 곳으로 남는다(frontend/README.md §5-1).
+ */
+const config: Config = {
+  content: ["./src/**/*.{ts,tsx}"],
+  theme: {
+    /**
+     * §7-1 세 구간에 맞춰 **기본 브레이크포인트(sm/md/lg)를 지운다.**
+     * `extend` 가 아니라 통째 재정의라 sm/md/lg 를 쓰면 빌드에서 클래스가 안 나온다.
+     * < 1280 은 브레이크포인트가 아니라 최소 폭 안내 화면(P-02)이 덮는 구간이다.
+     */
+    screens: {
+      desk: "1280px",
+      wide: "1440px",
+      ultra: "1920px",
+    },
+    extend: {
+      colors: {
+        background: "var(--background)",
+        foreground: "var(--foreground)",
+        card: { DEFAULT: "var(--card)", foreground: "var(--card-foreground)" },
+        popover: { DEFAULT: "var(--popover)", foreground: "var(--popover-foreground)" },
+        primary: {
+          DEFAULT: "var(--primary)",
+          foreground: "var(--primary-foreground)",
+          hover: "var(--primary-hover)",
+        },
+        secondary: { DEFAULT: "var(--secondary)", foreground: "var(--secondary-foreground)" },
+        muted: { DEFAULT: "var(--muted)", foreground: "var(--muted-foreground)" },
+        accent: { DEFAULT: "var(--accent)", foreground: "var(--accent-foreground)" },
+        destructive: { DEFAULT: "var(--destructive)", foreground: "var(--destructive-foreground)" },
+        border: "var(--border)",
+        input: "var(--input)",
+        ring: "var(--ring)",
+
+        /* 「검정은 위치」 — Sidebar 활성 pill · 뷰 토글 · UnderlineTabs 밑줄만(§5-2) */
+        ink: "var(--tm-ink)",
+
+        /* 본문 계열 · 면과 선 — shadcn 시맨틱으로 덮이지 않는 축만 노출한다 */
+        "fg-meta": "var(--tm-fg-meta)",
+        "fg-caption": "var(--tm-fg-caption)",
+        divider: "var(--tm-divider)",
+        "row-divider": "var(--tm-row-divider)",
+        "row-hover": "var(--tm-row-hover)",
+        "sidebar-border": "var(--tm-sidebar-border)",
+        column: "var(--tm-column)",
+        surface: "var(--tm-surface)",
+
+        status: {
+          todo: "var(--tm-status-todo)",
+          progress: "var(--tm-status-progress)",
+          done: "var(--tm-status-done)",
+          cancelled: "var(--tm-status-cancelled)",
+          overdue: "var(--tm-status-overdue)",
+        },
+
+        /* 동적 유형 색 — `data-color-token` 이 고른 팔레트 쌍(§5-3) */
+        palette: { bg: "var(--tm-palette-bg)", fg: "var(--tm-palette-fg)" },
+      },
+
+      borderRadius: {
+        card: "var(--tm-radius-card)",
+        control: "var(--tm-radius-control)",
+        chip: "var(--tm-radius-chip)",
+        lg: "var(--radius)",
+        md: "calc(var(--radius) - 2px)",
+        sm: "calc(var(--radius) - 4px)",
+      },
+
+      boxShadow: {
+        card: "var(--tm-shadow-card)",
+        drawer: "var(--tm-shadow-drawer)",
+        modal: "var(--tm-shadow-modal)",
+        popover: "var(--tm-shadow-popover)",
+      },
+
+      fontFamily: {
+        sans: ["var(--tm-font-sans)"],
+      },
+
+      /**
+       * 타이포 계단을 프리셋으로 고정한다 — 컴포넌트가 임의 크기를 쓰지 않는다(§5-1).
+       * 값은 `09-design-tokens.md` §타입 그대로다.
+       */
+      fontSize: {
+        "page-title": ["28px", { lineHeight: "1.3", letterSpacing: "-0.03em", fontWeight: "700" }],
+        "detail-title": ["26px", { lineHeight: "1.35", letterSpacing: "-0.03em", fontWeight: "700" }],
+        panel: ["16px", { lineHeight: "1.4", letterSpacing: "-0.02em", fontWeight: "700" }],
+        section: ["14px", { lineHeight: "1.45", letterSpacing: "-0.02em", fontWeight: "700" }],
+        body: ["14px", { lineHeight: "1.6", letterSpacing: "-0.02em" }],
+        meta: ["13px", { lineHeight: "1.5", letterSpacing: "-0.02em" }],
+        caption: ["12px", { lineHeight: "1.5", letterSpacing: "-0.02em" }],
+      },
+
+      /* 컨트롤 높이 — 09-design-tokens §형태 */
+      height: {
+        control: "34px",
+        input: "38px",
+        row: "52px",
+        todo: "44px",
+      },
+
+      width: {
+        drawer: "var(--tm-drawer-width)",
+        modal: "var(--tm-modal-width)",
+        sidebar: "var(--tm-sidebar-width)",
+      },
+
+      /* 본문 좌우 여백 — 1440 에서 80, 1920 에서 240 으로 연속 보간(§7-1) */
+      spacing: {
+        gutter: "clamp(48px, calc(48px + (100vw - 1280px) * 0.3), 240px)",
+      },
+
+      backgroundColor: {
+        "scrim-drawer": "var(--tm-scrim-drawer)",
+        "scrim-modal": "var(--tm-scrim-modal)",
+      },
+    },
+  },
+  plugins: [require("tailwindcss-animate")],
+};
+
+export default config;

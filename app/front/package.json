@@ -1,0 +1,40 @@
+{
+  "name": "task-management-front",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@radix-ui/react-slot": "^1.3.3",
+    "@tanstack/react-query": "5.102.8",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
+    "next": "15.5.25",
+    "pretendard": "1.3.9",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "sonner": "^2.0.8",
+    "tailwind-merge": "3.6.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.4",
+    "@types/node": "20.19.9",
+    "@types/react": "19.2.8",
+    "@types/react-dom": "19.2.4",
+    "autoprefixer": "10.4.21",
+    "eslint": "8.57.1",
+    "eslint-config-next": "15.5.25",
+    "postcss": "8.5.28",
+    "tailwindcss": "3.4.19",
+    "tailwindcss-animate": "1.0.7",
+    "typescript": "5.9.3"
+  }
+}

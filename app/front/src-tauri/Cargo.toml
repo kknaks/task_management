@@ -1,0 +1,28 @@
+[package]
+name = "app"
+version = "0.1.0"
+description = "task-management 데스크톱 셸"
+authors = ["kknaks"]
+license = ""
+repository = "https://github.com/kknaks/task_management"
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.11.3", features = [] }
+tauri-plugin-log = "2"
+
+# OS 키체인 — refresh 토큰 보관(SYS §흐름 ① · FE §4-1).
+# **WORK-001 은 의존성만 건다.** 실제 커맨드 노출과 프론트 `tokenStore.ts` 연결은 WORK-002 다.
+# 셸이 맡는 것은 마이크 권한·OS 키체인·파일 선택창뿐이고, 데이터·비즈니스 로직은 갖지 않는다(SYS §Components).
+keyring = { version = "3", features = ["apple-native", "windows-native"] }

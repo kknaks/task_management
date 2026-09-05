@@ -18,9 +18,9 @@ node_modules/
 out/
 *.tsbuildinfo
 
-# tauri
-src-tauri/target/
-src-tauri/gen/
+# tauri (셸은 `app/front` 의 형제 디렉토리다 — WORK-001 §Open Issues)
+app/front/src-tauri/target/
+app/front/src-tauri/gen/
 
 # os
 .DS_Store

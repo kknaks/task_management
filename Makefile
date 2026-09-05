@@ -2,9 +2,10 @@
 
 COMPOSE := docker compose -f docker-compose.local.yml
 BACK    := app/back
+FRONT   := app/front
 
 .DEFAULT_GOAL := help
-.PHONY: help up down logs ps migrate revision downgrade seed sync test test-db reset
+.PHONY: help up down logs ps migrate revision downgrade seed sync test test-db reset front-install app front-build
 
 help: ## 사용 가능한 명령
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -42,6 +43,15 @@ test-db: ## 테스트 DB 를 만든다 (이미 있으면 넘어간다)
 
 test: ## 백엔드 테스트 (실제 Postgres). 예) make test a="-k health"
 	set -a && . ./.env && set +a && cd $(BACK) && uv run pytest -q $(a)
+
+front-install: ## 프론트 의존성 설치 (최초 1회)
+	cd $(FRONT) && npm ci
+
+app: ## Tauri 앱 창을 띄운다 (프론트 개발 서버를 함께 문다)
+	cd $(FRONT) && npm run tauri dev
+
+front-build: ## 정적 산출물(`app/front/out`)만 굽는다
+	cd $(FRONT) && npm run build
 
 reset: ## 볼륨째 초기화 후 다시 세운다
 	$(COMPOSE) down -v
