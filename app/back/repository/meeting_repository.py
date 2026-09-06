@@ -16,6 +16,7 @@ from sqlalchemy.orm import aliased
 
 from dto.enums import MeetingSort, MeetingStatus, MeetingTrack
 from dto.meeting import (
+    MeetingAiContextDTO,
     MeetingDTO,
     MeetingListItemDTO,
     ProjectCountDTO,
@@ -159,6 +160,61 @@ async def start_recording(
             Meeting.id == meeting_id,
         )
         .values(status=MeetingStatus.RECORDING.value, recording_started_at=started_at)
+        .execution_options(synchronize_session="fetch")
+    )
+    await session.flush()
+
+
+async def find_ai_context(
+    session: AsyncSession, *, meeting_id: int
+) -> MeetingAiContextDTO | None:
+    """배치·웜스타트·스트림이 읽는 서버 내부값(`ai_session_id`). **응답 조립에 쓰지 않는다.**
+
+    `account_id` 로 좁히지 않는 유일한 조회다 — 부르는 쪽이 서버 내부(배치 태스크)라 요청 주체가 없다.
+    삭제된 회의는 None.
+    """
+    row = (
+        await session.execute(
+            select(Meeting, _ProjectRef.name.label("project_name"))
+            .outerjoin(_ProjectRef, _ProjectRef.id == Meeting.project_id)
+            .where(Meeting.id == meeting_id, Meeting.deleted_at.is_(None))
+        )
+    ).one_or_none()
+    if row is None:
+        return None
+    meeting: Meeting = row.Meeting
+    return MeetingAiContextDTO(
+        id=meeting.id,
+        account_id=meeting.account_id,
+        project_id=meeting.project_id,
+        project_name=row.project_name,
+        status=meeting.status,
+        recording_started_at=meeting.recording_started_at,
+        ai_session_id=meeting.ai_session_id,
+    )
+
+
+async def set_ai_session_id(
+    session: AsyncSession, *, meeting_id: int, ai_session_id: str
+) -> None:
+    """웜스타트가 만든 세션 — 회의 하나에 하나(M-12). `/start` 의 전이 커밋 **뒤** 새 트랜잭션에서 쓴다(BE §7)."""
+    await session.execute(
+        update(Meeting)
+        .where(Meeting.id == meeting_id)
+        .values(ai_session_id=ai_session_id)
+        .execution_options(synchronize_session="fetch")
+    )
+    await session.flush()
+
+
+async def set_recording_path(
+    session: AsyncSession, *, meeting_id: int, recording_path: str
+) -> None:
+    """첫 청크가 적재된 경로(M-13 영구 보관). 한 번 채우면 바꾸지 않는다."""
+    await session.execute(
+        update(Meeting)
+        .where(Meeting.id == meeting_id, Meeting.recording_path.is_(None))
+        .values(recording_path=recording_path)
         .execution_options(synchronize_session="fetch")
     )
     await session.flush()

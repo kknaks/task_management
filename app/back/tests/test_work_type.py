@@ -132,6 +132,7 @@ async def test_color_outside_the_palette_is_rejected(
     assert response.json() == {
         "detail": "허용된 색이 아닙니다",
         "code": "invalid_color_token",
+        "field": "colorToken",
     }
 
 
@@ -221,10 +222,10 @@ async def test_invalid_create_body_is_422_validation_error(
     response = await client.post(BASE, json=body, headers=owner.headers)
 
     assert response.status_code == 422
-    assert response.json() == {
-        "detail": "입력값을 확인해 주세요",
-        "code": "validation_error",
-    }
+    body_json = response.json()
+    # WORK-007 이 `field` 를 더했다(어느 칸이 틀렸는지). 두 키는 그대로다
+    assert (body_json["detail"], body_json["code"]) == ("입력값을 확인해 주세요", "validation_error")
+    assert "field" in body_json
 
 
 async def test_a_thirty_character_name_is_accepted(

@@ -18,6 +18,12 @@ from dto.unset import UNSET, Unset
 __all__ = [
     "AgendaCreateDTO",
     "AgendaUpdateDTO",
+    "LineCreateDTO",
+    "MeetingAiContextDTO",
+    "TaskContextDTO",
+    "TranscriptDTO",
+    "TranscriptItemDTO",
+    "BatchRunDTO",
     "LineTaskSummaryDTO",
     "MeetingAgendaDTO",
     "MeetingAgendaTracksDTO",
@@ -91,6 +97,8 @@ class MeetingLineDTO:
     source_human_line_id: int | None
     source_ai_line_id: int | None
     task: LineTaskSummaryDTO | None
+    # SPEC-007 §4 `createdAt` — 줄 우측 시각 · 안건 시각(`min(createdAt)`)의 원천
+    created_at: datetime
 
 
 @dataclass(frozen=True)
@@ -235,12 +243,80 @@ class AgendaCreateDTO:
 class AgendaUpdateDTO:
     """`PATCH …/agendas/{id}` — **보낸 필드만**.
 
-    `state` 는 **이 work 가 받지 않는다**(schema 에 없어 보내면 422) — 자리만 비워 둔다.
-    WORK-007 이 schema 에 열고 service 의 `agenda_state` 갈래를 채운다(상태별 허용 표에 행은 이미 있다).
+    `title` 은 WORK-006(시작 전) · `state` 는 WORK-007(회의 중 `active`·`done`·`next`)이 연다.
+    `active` 최대 하나 · `done` 시 다음 활성 전환의 의미는 `meeting_service.update_agenda()` 가 갖는다.
     """
 
     title: str | Unset = UNSET
-    state: str | None | Unset = UNSET
+    state: str | Unset = UNSET
+
+
+@dataclass(frozen=True)
+class LineCreateDTO:
+    """`POST …/lines` — 회의 중 사람 줄 하나(SPEC-007 §4). `detail`·`evidence`·`task_id` 는 항상 비어 저장된다(M-14)."""
+
+    agenda_id: int
+    kind: str
+    content: str
+
+
+# --- 회의 중 (SPEC-007) ----------------------------------------------------
+
+
+@dataclass(frozen=True)
+class TranscriptItemDTO:
+    """확정 발화 블록 한 건(M-9). `at_ms`·`end_ms` 는 `recording_started_at` 기준 오프셋(M-11)."""
+
+    id: int
+    speaker_label: str
+    at_ms: int
+    end_ms: int
+    content: str
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class TranscriptDTO:
+    """`GET …/transcript` — `at_ms` 순 전량 + 화자 수 + 기준점."""
+
+    recording_started_at: datetime | None
+    speaker_count: int
+    items: list[TranscriptItemDTO]
+
+
+@dataclass(frozen=True)
+class MeetingAiContextDTO:
+    """배치·웜스타트가 읽는 회의의 서버 내부값 — `ai_session_id` 는 **여기서만** 읽는다(응답에 싣지 않는다)."""
+
+    id: int
+    account_id: int
+    project_id: int | None
+    project_name: str | None
+    status: str
+    recording_started_at: datetime | None
+    ai_session_id: str | None
+
+
+@dataclass(frozen=True)
+class TaskContextDTO:
+    """웜스타트 업무 목록 한 줄(SPEC-007 §4 「웜스타트」 — id·제목·상태·기한·유형명). 화이트리스트도 이 목록이다(M-15)."""
+
+    id: int
+    title: str
+    status: str
+    due_date: date | None
+    work_type_name: str
+
+
+@dataclass(frozen=True)
+class BatchRunDTO:
+    id: int
+    seq: int
+    from_transcript_id: int | None
+    to_transcript_id: int | None
+    phase: str
+    status: str
+    reason: str | None
 
 
 @dataclass(frozen=True)

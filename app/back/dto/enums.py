@@ -182,3 +182,28 @@ class MeetingSort(StrEnum):
 
     LATEST = "latest"
     OLDEST = "oldest"
+
+
+# --- 회의 중 (WORK-007 · SPEC-007 §4) ------------------------------------------
+
+
+class BatchTriggerCause(StrEnum):
+    """배치 트리거 3종(DEC-003 §STT · SPEC-007 §5). `meeting_batch_service.evaluate(cause)` 의 요청 어휘 — 저장하지 않는다."""
+
+    TRANSCRIPT = "transcript"
+    AGENDA_SWITCH = "agenda_switch"
+    TIMER = "timer"
+
+
+class StreamPauseReason(StrEnum):
+    """클라이언트 `pause` 프레임의 사유(SPEC-007 §4). 컬럼이 아니다 — WS 세션이 살아 있는 동안만 뜻이 있다."""
+
+    USER = "user"
+    MIC = "mic"
+
+
+class StreamDisconnectReason(StrEnum):
+    """`error{meeting_stream_disconnected}` 프레임의 `reason`(BE §8-2 부기). **둘뿐이다** — 그 밖의 예외는 전파한다."""
+
+    UPSTREAM = "upstream"
+    WRITE_FAILED = "write_failed"

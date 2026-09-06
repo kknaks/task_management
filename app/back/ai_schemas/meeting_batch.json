@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MeetingBatchOutput",
+  "description": "SPEC-007 §4 「배치 출력」. codex --output-schema 로 강제하고, 백엔드가 같은 파일로 다시 검증한다(SYS §외부 연동). `agenda` 는 세 키 중 정확히 하나만 값이어야 한다 — 그 판정과 evidence 구간 범위·안건 소속은 코드가 한다(strict 스키마에 oneOf 를 두지 않는다).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["items"],
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["agenda", "kind", "content", "detail", "evidence", "taskId"],
+        "properties": {
+          "agenda": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["humanAgendaId", "aiAgendaId", "newTitle"],
+            "properties": {
+              "humanAgendaId": { "type": ["integer", "null"] },
+              "aiAgendaId": { "type": ["integer", "null"] },
+              "newTitle": { "type": ["string", "null"], "minLength": 1, "maxLength": 200 }
+            }
+          },
+          "kind": { "type": "string", "enum": ["discussion", "decision", "task", "action"] },
+          "content": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "detail": { "type": ["string", "null"], "maxLength": 4000 },
+          "evidence": {
+            "type": "array",
+            "maxItems": 3,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["fromMs", "toMs"],
+              "properties": {
+                "fromMs": { "type": "integer", "minimum": 0 },
+                "toMs": { "type": "integer", "minimum": 0 }
+              }
+            }
+          },
+          "taskId": { "type": ["integer", "null"] }
+        }
+      }
+    }
+  }
+}

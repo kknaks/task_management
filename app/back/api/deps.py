@@ -13,7 +13,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_settings
-from core.db import SessionLocal
+from core.db import SessionLocal, run_after_commit_hooks
 from core.exceptions import AppError, UnauthorizedError
 from core.security import decode_access_token
 
@@ -40,6 +40,8 @@ async def get_db() -> AsyncIterator[AsyncSession]:
                 await session.commit()
             raise
         await session.commit()
+        # 커밋된 뒤에만 뜻이 있는 일(배치 트리거 평가) — 등록된 순서대로. 커밋이 안 됐으면 여기 오지 않는다
+        await run_after_commit_hooks(session)
 
 
 async def require_account(

@@ -53,6 +53,7 @@ def validate_password_strength(password: str) -> None:
         raise ValidationError(
             "비밀번호 규칙을 만족하지 않습니다: " + " · ".join(problems),
             code="invalid_password",
+            field="password",
         )
 
 

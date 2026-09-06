@@ -23,8 +23,19 @@ class AppError(Exception):
 
 
 class ValidationError(AppError):
+    """422. **`field` 는 틀린 요청 필드 이름**(camelCase · 요청 스키마 기준 — `title` · `endAt` · `agendas[0].title` …).
+
+    화면이 어느 칸에 테두리를 그릴지 고른다(SPEC-006 §4 Case Matrix 「해당 컨트롤 실패 테두리 + 인라인 문구」).
+    여러 필드가 틀렸으면 **첫 번째 하나**만 싣는다. 모르면 `None` — 화면이 폼 전체에 붙인다.
+    업무·설정·회의 어디서 나든 응답 모양은 하나다(`{detail, code, field}`).
+    """
+
     status = 422
     code = "validation_error"
+
+    def __init__(self, detail: str, code: str | None = None, *, field: str | None = None) -> None:
+        super().__init__(detail, code)
+        self.field = field
 
 
 class UnauthorizedError(AppError):

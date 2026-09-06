@@ -72,8 +72,9 @@ def _not_found() -> NotFoundError:
     return NotFoundError(_NOT_FOUND)
 
 
-def _invalid_input() -> ValidationError:
-    return ValidationError(_INVALID_INPUT)
+def _invalid_input(field: str | None = None) -> ValidationError:
+    """`field` 는 요청 스키마의 이름(camelCase) — 화면이 어느 칸에 붙일지 고른다(회의·설정과 같은 규약)."""
+    return ValidationError(_INVALID_INPUT, field=field)
 
 
 def _today() -> date:
@@ -141,7 +142,7 @@ async def _require_usable_work_type(
         session, account_id=account_id, work_type_id=work_type_id
     )
     if found is None:
-        raise ValidationError(_INVALID_WORK_TYPE, code="invalid_work_type")
+        raise ValidationError(_INVALID_WORK_TYPE, code="invalid_work_type", field="workTypeId")
 
 
 async def _require_usable_project(
@@ -158,7 +159,7 @@ async def _require_usable_project(
         session, account_id=account_id, project_id=project_id
     )
     if found is None:
-        raise ValidationError(_INVALID_PROJECT, code="invalid_project")
+        raise ValidationError(_INVALID_PROJECT, code="invalid_project", field="projectId")
 
 
 def _validate_attachment(attachment: AttachmentCreateDTO) -> None:
@@ -169,18 +170,18 @@ def _validate_attachment(attachment: AttachmentCreateDTO) -> None:
     문서함 work 가 FK 리비전과 함께 이 갈래를 실체화한다.
     """
     if attachment.kind == AttachmentKind.DOC.value:
-        raise _invalid_input()
+        raise _invalid_input("kind")
 
     if attachment.url is None:
-        raise _invalid_input()
+        raise _invalid_input("url")
 
     # `http`/`https` 만(SPEC-003 §4 Validation). `ftp://…` 는 거부한다.
     parsed = urlparse(attachment.url)
     if parsed.scheme not in _ALLOWED_URL_SCHEMES or not parsed.netloc:
-        raise _invalid_input()
+        raise _invalid_input("url")
 
     if attachment.document_id is not None:
-        raise _invalid_input()
+        raise _invalid_input("documentId")
 
 
 async def _resolve_relation_targets(
@@ -195,13 +196,13 @@ async def _resolve_relation_targets(
         return []
 
     if task_id is not None and task_id in unique_ids:
-        raise _invalid_input()
+        raise _invalid_input("relatedTaskIds")
 
     usable = await task_repository.exists_active(
         session, account_id=account_id, task_ids=unique_ids
     )
     if len(usable) != len(unique_ids):
-        raise _invalid_input()
+        raise _invalid_input("relatedTaskIds")
 
     return unique_ids
 
@@ -231,7 +232,7 @@ def _validate_plan(plan: _Plan) -> None:
         and plan.due_date is not None
         and plan.start_date > plan.due_date
     ):
-        raise _invalid_input()
+        raise _invalid_input("dueDate")
 
 
 async def _apply_plan(
@@ -714,14 +715,14 @@ def _validate_cancel_reason(target: str, cancel_reason: str | None) -> str | Non
     """T-7 — `cancel_reason` 은 취소로 갈 때만 받는다. 다른 상태에 얹어 보내면 거부한다."""
     if target != TaskStatus.CANCELLED.value:
         if cancel_reason is not None:
-            raise _invalid_input()
+            raise _invalid_input("cancelReason")
         return None
 
     if cancel_reason is None or not cancel_reason.strip():
-        raise _invalid_input()
+        raise _invalid_input("cancelReason")
     reason = cancel_reason.strip()
     if len(reason) > _CANCEL_REASON_MAX:
-        raise _invalid_input()
+        raise _invalid_input("cancelReason")
     return reason
 
 

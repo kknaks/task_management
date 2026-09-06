@@ -99,13 +99,16 @@ async def test_patching_the_title_keeps_the_order(
 async def test_agenda_patch_rejects_null_title_and_state(
     client: AsyncClient, owner: MeetingOwner
 ) -> None:
-    """`title: null` 은 422. **`state` 는 이 work 가 받지 않는다**(WORK-007 이 연다) — 보내면 422."""
+    """`title: null` 은 422. `state` 는 WORK-007 이 열었다 — `scheduled` 에서는 409, `null` 은 422."""
     created = await create_meeting(client, owner, agendas=[{"title": "첫째"}])
     agenda_id = created["agendas"]["human"][0]["id"]
     path = f"{BASE}/{created['id']}/agendas/{agenda_id}"
 
     assert (await client.patch(path, json={"title": None}, headers=owner.headers)).status_code == 422
-    assert (await client.patch(path, json={"state": "active"}, headers=owner.headers)).status_code == 422
+    # `state` 는 WORK-007 이 열었다 — `scheduled` 에서는 허용 표 밖이라 **409** 다(SPEC-007 §4 Validation). `null` 은 422
+    response = await client.patch(path, json={"state": "active"}, headers=owner.headers)
+    assert response.status_code == 409 and response.json()["code"] == "invalid_meeting_status"
+    assert (await client.patch(path, json={"state": None}, headers=owner.headers)).status_code == 422
     # 빈 본문은 아무것도 바꾸지 않고 200 이다 — Case Matrix 에 그런 실패가 없다
     empty = await client.patch(path, json={}, headers=owner.headers)
     assert empty.status_code == 200

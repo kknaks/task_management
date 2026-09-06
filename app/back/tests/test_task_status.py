@@ -72,6 +72,8 @@ async def test_completing_without_any_result_is_blocked_and_the_status_stays(
     assert response.json() == {
         "detail": "완료하려면 결과자료 1건 또는 완료 결과가 필요합니다",
         "code": "task_completion_blocked",
+        # 422 는 전부 `field` 를 싣는다(WORK-007 4-b) — 칸이 없는 판정은 null
+        "field": None,
     }
     assert await _status_of(db_session, task["id"]) == "todo"
     # 거부는 로그를 남기지 않는다(SPEC-004 U-6)

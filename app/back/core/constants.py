@@ -24,5 +24,5 @@ def validate_color_token(color_token: str) -> str:
     「비슷한 색으로 떨어뜨리기」 같은 조용한 대체를 하지 않는다 — 거부한다.
     """
     if color_token not in ALLOWED_COLOR_TOKENS:
-        raise ValidationError("허용된 색이 아닙니다", code="invalid_color_token")
+        raise ValidationError("허용된 색이 아닙니다", code="invalid_color_token", field="colorToken")
     return color_token

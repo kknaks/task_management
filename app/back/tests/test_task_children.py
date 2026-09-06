@@ -956,10 +956,10 @@ async def test_the_removed_time_fields_are_422(
     )
 
     assert response.status_code == 422
-    assert response.json() == {
-        "detail": "입력값을 확인해 주세요",
-        "code": "validation_error",
-    }
+    body_json = response.json()
+    # WORK-007 이 `field` 를 더했다(어느 칸이 틀렸는지). 두 키는 그대로다
+    assert (body_json["detail"], body_json["code"]) == ("입력값을 확인해 주세요", "validation_error")
+    assert "field" in body_json
 
     row = (await db_session.scalars(select(Task).where(Task.id == task["id"]))).one()
     assert row.due_date == date(2026, 9, 10)
@@ -1040,6 +1040,7 @@ async def test_a_deleted_project_is_rejected_with_its_own_code(
     assert response.json() == {
         "detail": "사용할 수 없는 프로젝트입니다",
         "code": "invalid_project",
+        "field": "projectId",
     }
 
 

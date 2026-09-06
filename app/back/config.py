@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     jwt_secret: str = Field(min_length=1)
     cors_origins: str = Field(min_length=1)
     storage_root: str = Field(min_length=1)
+    # Soniox long-lived 키(SPEC-007 · BE §11). **서버에만 둔다** — 읽는 코드는 `integrations/soniox.py` 하나다.
+    # 기본값 없음 — 비어 있으면 기동 실패(WORK-007 Phase 1).
+    soniox_api_key: str = Field(min_length=1)
 
     # --- 선택 (기본값은 SPEC-000 §5 표의 값) ---
     access_token_ttl_min: int = 60
@@ -37,6 +40,31 @@ class Settings(BaseSettings):
     app_timezone: str = "Asia/Seoul"
     # 배포 단위 버전 문자열. 헬스 응답의 `version` 이 이 값 그대로 나간다.
     app_version: str = "0.1.0"
+
+    # --- open-kknaks 브로커 (BE §11 · SYS §외부 연동). worker 설정과 같은 값이어야 한다 ---
+    # 비밀값이 아니라 로컬 기본값을 둔다. compose 가 컨테이너 안에서 덮어쓴다.
+    redis_url: str = "redis://localhost:6379/0"
+    ai_namespace: str = "task-management"
+    ai_queue: str = "default"
+    # 미지정이면 codex 기본 모델(BE §11)
+    ai_model: str | None = None
+    # 웜스타트 한 번의 상한(초). 배치 상한은 아래 `MEETING_BATCH_TIMEOUT_SEC`(=120) 이 따로 갖는다.
+    ai_timeout_sec: int = 120
+
+    # --- 회의 배치 수치 5종 (DEC-003 §STT L164 확정값 · SPEC-007 §5). 실측 후 env 로 조정한다 — 계약은 불변 ---
+    # ① 미처리 확정 발화가 이 글자 수에 이르면 배치
+    meeting_batch_chars: int = 600
+    # ② 안건 전환 시 즉시 배치 — 단 미처리가 이 글자 수 미만이면 생략
+    meeting_batch_switch_min_chars: int = 80
+    # ③ 미처리 구간이 생긴 뒤 이 시간이 지나면 배치
+    meeting_batch_max_wait_sec: int = 180
+    # 배치 하나의 상한 — 넘으면 `failed`(다음 배치에 합친다)
+    meeting_batch_timeout_sec: int = 120
+    # 회의당 AI 세션 수 — **항상 1**(동시 실행 금지 · M-12). 다른 값은 지원하지 않는다
+    meeting_batch_sessions_per_meeting: int = 1
+
+    # --- 회의 스트림 (BE §5-1 백프레셔). 클라이언트 송신 큐 상한 — 넘으면 잠정 프레임만 버린다 ---
+    meeting_stream_queue_max: int = 200
 
     @property
     def cors_origin_list(self) -> list[str]:

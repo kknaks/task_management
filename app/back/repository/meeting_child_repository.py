@@ -13,7 +13,7 @@ from __future__ import annotations
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from dto.enums import AttachmentKind, BatchRunStatus
+from dto.enums import AttachmentKind, BatchRunStatus, MeetingTrack
 from dto.meeting import (
     LineTaskSummaryDTO,
     MeetingAgendaDTO,
@@ -125,6 +125,36 @@ async def delete_agenda(session: AsyncSession, *, meeting_id: int, agenda_id: in
     await session.flush()
 
 
+async def list_agendas_by_track(
+    session: AsyncSession, meeting_id: int, *, track: str
+) -> list[MeetingAgendaDTO]:
+    """한 트랙만 `order_index` 순으로 — 배치 입력(사람 안건 전량 · AI 안건 전량)과 상태 전환이 읽는다."""
+    rows = (
+        await session.scalars(
+            select(MeetingAgenda)
+            .where(MeetingAgenda.meeting_id == meeting_id, MeetingAgenda.track == track)
+            .order_by(MeetingAgenda.order_index, MeetingAgenda.id)
+        )
+    ).all()
+    return [_agenda_to_dto(row) for row in rows]
+
+
+async def find_ai_agenda_by_source(
+    session: AsyncSession, *, meeting_id: int, source_agenda_id: int
+) -> MeetingAgendaDTO | None:
+    """사람 안건을 미러하는 AI 안건(M-5-b). 배치가 **한 번만** 만들고 이후 재사용한다(SPEC-007 §4 검증 4단)."""
+    row = (
+        await session.scalars(
+            select(MeetingAgenda).where(
+                MeetingAgenda.meeting_id == meeting_id,
+                MeetingAgenda.track == MeetingTrack.AI.value,
+                MeetingAgenda.source_agenda_id == source_agenda_id,
+            )
+        )
+    ).one_or_none()
+    return None if row is None else _agenda_to_dto(row)
+
+
 async def count_lines_for_agenda(session: AsyncSession, *, agenda_id: int) -> int:
     total = await session.scalar(
         select(func.count()).select_from(MeetingLine).where(MeetingLine.agenda_id == agenda_id)
@@ -182,6 +212,7 @@ def _line_to_dto(line: MeetingLine, task: Task | None) -> MeetingLineDTO:
                 is_deleted=task.deleted_at is not None,
             )
         ),
+        created_at=line.created_at,
     )
 
 

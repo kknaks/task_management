@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from dto.enums import UNFINISHED_STATUSES, TaskSort, TaskStatus
+from dto.meeting import TaskContextDTO
 from dto.task import (
     ProjectRefDTO,
     TaskDTO,
@@ -717,3 +718,36 @@ async def find_list_item(
         )
     ).one_or_none()
     return None if row is None else _to_list_item(row, today=today)
+
+
+# --- 회의록 웜스타트 컨텍스트 (SPEC-007 §4 · M-15 · M-15-a) --------------------
+
+
+async def list_meeting_context(
+    session: AsyncSession, *, account_id: int, project_id: int | None
+) -> list[TaskContextDTO]:
+    """회의에 줄 업무 목록 = 화이트리스트. **프로젝트가 있으면 그 프로젝트, 없으면 무소속 업무**(DEC-003 §4 L98).
+
+    삭제된 업무는 뺀다. 상태로 거르지 않는다 — 완료된 업무도 「갱신」 대상이 될 수 있다.
+    """
+    query = (
+        select(Task.id, Task.title, Task.status, Task.due_date, _WorkTypeRef.name.label("work_type_name"))
+        .join(_WorkTypeRef, _WorkTypeRef.id == Task.work_type_id)
+        .where(Task.account_id == account_id, Task.deleted_at.is_(None))
+        .order_by(Task.id)
+    )
+    if project_id is None:
+        query = query.where(Task.project_id.is_(None))
+    else:
+        query = query.where(Task.project_id == project_id)
+    rows = (await session.execute(query)).all()
+    return [
+        TaskContextDTO(
+            id=row.id,
+            title=row.title,
+            status=row.status,
+            due_date=row.due_date,
+            work_type_name=row.work_type_name,
+        )
+        for row in rows
+    ]

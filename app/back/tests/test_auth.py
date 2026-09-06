@@ -155,10 +155,10 @@ async def test_invalid_login_body_is_422_validation_error(
     response = await client.post("/api/auth/login", json=body)
 
     assert response.status_code == 422
-    assert response.json() == {
-        "detail": "입력값을 확인해 주세요",
-        "code": "validation_error",
-    }
+    body_json = response.json()
+    # WORK-007 이 `field` 를 더했다(어느 칸이 틀렸는지). 두 키는 그대로다
+    assert (body_json["detail"], body_json["code"]) == ("입력값을 확인해 주세요", "validation_error")
+    assert "field" in body_json
 
 
 # --- 세션 조회 · 인증 게이트 ---------------------------------------------

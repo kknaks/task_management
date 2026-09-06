@@ -22,11 +22,20 @@ from urllib.parse import urlparse
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.db import register_after_commit
 from core.exceptions import InvalidMeetingStatusError, NotFoundError, ValidationError
-from dto.enums import AttachmentKind, MeetingStatus, MeetingTrack, WorkTypeKind
+from dto.enums import (
+    AgendaState,
+    AttachmentKind,
+    BatchTriggerCause,
+    MeetingStatus,
+    MeetingTrack,
+    WorkTypeKind,
+)
 from dto.meeting import (
     AgendaCreateDTO,
     AgendaUpdateDTO,
+    LineCreateDTO,
     MeetingAgendaDTO,
     MeetingAgendaTracksDTO,
     MeetingAttachmentCreateDTO,
@@ -35,17 +44,21 @@ from dto.meeting import (
     MeetingDTO,
     MeetingLineDTO,
     MeetingListFilterDTO,
+    MeetingLineDTO,
     MeetingListResultDTO,
     MeetingUpdateDTO,
+    TranscriptDTO,
 )
 from dto.unset import UNSET
 from repository import (
     meeting_child_repository,
+    meeting_line_repository,
     meeting_repository,
+    meeting_transcript_repository,
     project_repository,
     work_type_repository,
 )
-from service import schedule_service
+from service import meeting_batch_service, schedule_service
 
 # SPEC-006 §4 Case Matrix — 문구까지 계약이다.
 _NOT_FOUND = "회의록을 찾을 수 없습니다"
@@ -73,8 +86,9 @@ _ALLOWED_URL_SCHEMES = frozenset({"http", "https"})
 # | agenda_delete   | ✔         | ✗         | ✗          | ✗     |
 # | attachment      | ✔         | ✔         | ✗          | ✔     |
 # | delete          | ✔         | ✗         | ✗          | ✔     |
+# | line_write      | ✗         | ✔         | ✗          | ✗     |  ← WORK-007 (`POST …/lines`). `ended` 편집은 SPEC-008
 #
-# WORK-007·008 은 `line_write` · `end` · `integrate` … 를 **이 표에 행으로** 더한다.
+# WORK-008 은 `end` · `integrate` … 를 **이 표에 행으로** 더한다.
 _S, _R, _G, _E = (
     MeetingStatus.SCHEDULED.value,
     MeetingStatus.RECORDING.value,
@@ -91,6 +105,7 @@ _ALLOWED: dict[str, frozenset[str]] = {
     "agenda_delete": frozenset({_S}),
     "attachment": frozenset({_S, _R, _E}),
     "delete": frozenset({_S, _E}),
+    "line_write": frozenset({_R}),
 }
 
 
@@ -108,8 +123,9 @@ def _not_found() -> NotFoundError:
     return NotFoundError(_NOT_FOUND)
 
 
-def _invalid_input() -> ValidationError:
-    return ValidationError(_INVALID_INPUT)
+def _invalid_input(field: str | None = None) -> ValidationError:
+    """`field` 는 요청 스키마의 이름(camelCase) — 화면이 어느 칸에 붙일지 고른다(SPEC-006 §4 Case Matrix)."""
+    return ValidationError(_INVALID_INPUT, field=field)
 
 
 # --- 조회 · 빌더 ----------------------------------------------------------
@@ -205,7 +221,7 @@ async def _require_usable_meeting_work_type(
         session, account_id=account_id, work_type_id=work_type_id
     )
     if found is None or found.kind != WorkTypeKind.MEETING.value:
-        raise ValidationError(_INVALID_WORK_TYPE, code="invalid_work_type")
+        raise ValidationError(_INVALID_WORK_TYPE, code="invalid_work_type", field="workTypeId")
 
 
 async def _require_usable_project(
@@ -218,16 +234,17 @@ async def _require_usable_project(
         session, account_id=account_id, project_id=project_id
     )
     if found is None:
-        raise ValidationError(_INVALID_PROJECT, code="invalid_project")
+        raise ValidationError(_INVALID_PROJECT, code="invalid_project", field="projectId")
 
 
 def _validate_time(start_at: datetime, end_at: datetime) -> None:
     """M-1 · M-18 — `endAt > startAt`, 길이 5~300분. DB CHECK(`end_at > start_at`)가 최종 방어선이지만 여기서 먼저 422 다."""
+    # 둘 다 「일시 칸」이다 — 화면은 `endAt` 을 보고 그 칸에 붙인다
     if end_at <= start_at:
-        raise _invalid_input()
+        raise _invalid_input("endAt")
     minutes = (end_at - start_at).total_seconds() / 60
     if minutes < _MIN_MINUTES or minutes > _MAX_MINUTES:
-        raise _invalid_input()
+        raise _invalid_input("endAt")
 
 
 def _validate_attachment(attachment: MeetingAttachmentCreateDTO) -> None:
@@ -237,15 +254,15 @@ def _validate_attachment(attachment: MeetingAttachmentCreateDTO) -> None:
     (WORK-006 §Open Issues 의 임시 계약 · WORK-004 와 같다). 문서함 work 가 FK 리비전과 함께 실체화한다.
     """
     if attachment.kind == AttachmentKind.DOC.value:
-        raise _invalid_input()
+        raise _invalid_input("kind")
 
     if attachment.url is None or attachment.document_id is not None:
-        raise _invalid_input()
+        raise _invalid_input("url")
 
     # `http`/`https` 만(SPEC-006 §4 Validation). `ftp://…` 는 거부한다.
     parsed = urlparse(attachment.url)
     if parsed.scheme not in _ALLOWED_URL_SCHEMES or not parsed.netloc:
-        raise _invalid_input()
+        raise _invalid_input("url")
 
 
 # --- 목록 ---------------------------------------------------------------
@@ -363,7 +380,7 @@ async def update_meeting(
     )
     time_sent = command.start_at is not UNSET or command.end_at is not UNSET
     if time_sent and (command.start_at is UNSET or command.end_at is UNSET):
-        raise _invalid_input()
+        raise _invalid_input("endAt" if command.end_at is UNSET else "startAt")
 
     if meta_sent:
         _assert_allowed(current, "patch_meta")
@@ -424,9 +441,14 @@ async def update_meeting(
 async def start(
     session: AsyncSession, *, account_id: int, meeting_id: int
 ) -> MeetingDetailDTO:
-    """`scheduled → recording` — **이 work 의 유일한 전이.** 상태 + `recording_started_at` 을 한 UPDATE 로.
+    """`scheduled → recording` + **웜스타트**(SPEC-007 §4 · WP Internal Interface Contract `/start` 훅).
 
-    **외부 호출이 없다.** WS·마이크·웜스타트·`ai_session_id` 는 이 응답 뒤 SPEC-007 이 정한다.
+    순서 — 전이(`status` + `recording_started_at` 한 UPDATE) → **커밋** → 웜스타트 제출(새 세션 · 결과 무시) →
+    `ai_session_id` 저장(새 트랜잭션) → 상세. **codex 대기 중에는 트랜잭션을 열어 두지 않는다**(BE §7) —
+    그래서 이 파일에서 `commit()` 을 부르는 자리는 **여기 하나**다(WP L169 「전이 커밋 → 제출 → 새 세션에서 UPDATE」).
+    커밋 뒤 같은 `session` 은 새 트랜잭션으로 이어지고, 요청 끝의 `get_db` 커밋이 `ai_session_id` 를 남긴다.
+
+    웜스타트 실패는 DEC-003 §7 목록에 없다 — 전파한다. 전이는 이미 커밋돼 있다(회의는 `recording`).
     `start_at`(예정)을 덮어쓰지 않는다 — 전이 시각은 `recording_started_at`(M-1-a).
     """
     current = await _require_meeting(session, account_id=account_id, meeting_id=meeting_id)
@@ -437,6 +459,14 @@ async def start(
         account_id=account_id,
         meeting_id=meeting_id,
         started_at=datetime.now(UTC),
+    )
+    context = await meeting_batch_service.load_warm_start_context(session, meeting_id=meeting_id)
+    await session.commit()
+
+    ai_session_id = await meeting_batch_service.warm_start(context)
+
+    await meeting_repository.set_ai_session_id(
+        session, meeting_id=meeting_id, ai_session_id=ai_session_id
     )
     return await build_detail(session, account_id=account_id, meeting_id=meeting_id)
 
@@ -489,11 +519,15 @@ async def update_agenda(
     agenda_id: int,
     command: AgendaUpdateDTO,
 ) -> MeetingDetailDTO:
-    """`PATCH …/agendas/{id}` — **보낸 필드만.** `orderIndex` 는 그대로다.
+    """`PATCH …/agendas/{id}` — **보낸 필드만.** `orderIndex` 는 그대로다. `title`·`state` **한 표면**(SPEC-007 §7-A).
 
-    `title` 은 `scheduled`(이 spec) · `ended`(SPEC-008 편집 모드)에서, `state` 는 `recording` 에서만(SPEC-007).
-    `state` 는 이 work 의 schema 가 받지 않는다 — dto 자리와 허용 표 행만 두고 **의미(`active` 최대 하나 ·
-    `/end` 의 `done` 전환)는 WORK-007 이 정한다.**
+    `title` 은 `scheduled`(SPEC-006) · `ended`(SPEC-008 편집)에서, `state` 는 `recording` 에서만(SPEC-007 U-2·U-3).
+    `state` 의 뜻(SPEC-007 §4) —
+    - `active`: 기존 `active` 를 `next` 로, 대상을 `active` 로(사람 트랙에 **최대 하나** — DB 부분 UNIQUE 가 최종 방어선).
+      **커밋 뒤** 안건 전환 배치 트리거를 평가한다(`evaluate('agenda_switch')` — 미처리 80자 미만이면 생략).
+    - `done`: 대상이 `active` 였으면 **다음 순서의 `next`** 를 `active` 로. 마지막이면 활성 없음.
+    - `next`: 완료 해제 · 활성 해제.
+    대상은 **사람 트랙** 안건이어야 한다 — AI 안건이면 404 가 아니라 `validation_error`(SPEC-007 §4).
     """
     meeting = await _require_meeting(session, account_id=account_id, meeting_id=meeting_id)
 
@@ -503,21 +537,78 @@ async def update_agenda(
         values["title"] = command.title
     if command.state is not UNSET:
         _assert_allowed(meeting, "agenda_state")
-        values["state"] = command.state
 
-    if (
-        await meeting_child_repository.find_agenda(
-            session, meeting_id=meeting_id, agenda_id=agenda_id
-        )
-        is None
-    ):
+    agenda = await meeting_child_repository.find_agenda(
+        session, meeting_id=meeting_id, agenda_id=agenda_id
+    )
+    if agenda is None:
         raise _not_found()
 
     if values:
         await meeting_child_repository.update_agenda(
             session, meeting_id=meeting_id, agenda_id=agenda_id, values=values
         )
+    if command.state is not UNSET:
+        await _set_agenda_state(session, meeting_id=meeting_id, agenda=agenda, state=command.state)
     return await build_detail(session, account_id=account_id, meeting_id=meeting_id)
+
+
+async def _set_agenda_state(
+    session: AsyncSession, *, meeting_id: int, agenda: MeetingAgendaDTO, state: str
+) -> None:
+    """`active` 최대 하나 · `done` 시 다음 `next` 활성 · 전환 시 배치 트리거(커밋 뒤). **상태 대입은 여기뿐이다.**"""
+    if agenda.track != MeetingTrack.HUMAN.value:
+        raise _invalid_input("state")
+
+    human = await meeting_child_repository.list_agendas_by_track(
+        session, meeting_id, track=MeetingTrack.HUMAN.value
+    )
+    active = next((item for item in human if item.state == AgendaState.ACTIVE.value), None)
+
+    if state == AgendaState.ACTIVE.value:
+        if active is not None and active.id != agenda.id:
+            # 기존 활성을 먼저 내려야 부분 UNIQUE 에 걸리지 않는다
+            await meeting_child_repository.update_agenda(
+                session,
+                meeting_id=meeting_id,
+                agenda_id=active.id,
+                values={"state": AgendaState.NEXT.value},
+            )
+        await meeting_child_repository.update_agenda(
+            session, meeting_id=meeting_id, agenda_id=agenda.id, values={"state": state}
+        )
+        if active is None or active.id != agenda.id:
+            register_after_commit(
+                session,
+                lambda: _evaluate_switch(meeting_id),
+            )
+        return
+
+    await meeting_child_repository.update_agenda(
+        session, meeting_id=meeting_id, agenda_id=agenda.id, values={"state": state}
+    )
+    if state == AgendaState.DONE.value and active is not None and active.id == agenda.id:
+        following = next(
+            (
+                item
+                for item in human
+                if item.order_index > agenda.order_index and item.state == AgendaState.NEXT.value
+            ),
+            None,
+        )
+        if following is not None:
+            await meeting_child_repository.update_agenda(
+                session,
+                meeting_id=meeting_id,
+                agenda_id=following.id,
+                values={"state": AgendaState.ACTIVE.value},
+            )
+            register_after_commit(session, lambda: _evaluate_switch(meeting_id))
+
+
+async def _evaluate_switch(meeting_id: int) -> None:
+    """커밋 뒤 훅 — 안건 전환 배치 트리거. 판정·실행은 `meeting_batch_service` 가 한다."""
+    meeting_batch_service.schedule(meeting_id, BatchTriggerCause.AGENDA_SWITCH.value)
 
 
 async def remove_agenda(
@@ -543,6 +634,52 @@ async def remove_agenda(
 
     await meeting_child_repository.delete_agenda(
         session, meeting_id=meeting_id, agenda_id=agenda_id
+    )
+
+
+# --- 줄 · 트랜스크립트 (SPEC-007 §4) ------------------------------------------
+
+
+async def add_line(
+    session: AsyncSession, *, account_id: int, meeting_id: int, command: LineCreateDTO
+) -> MeetingLineDTO:
+    """`POST …/lines` — `status='recording'` 에서 사람 줄 하나(SPEC-007 U-3).
+
+    `agendaId` 는 **이 회의의 사람 트랙** 안건이어야 한다 — AI 안건·없는 안건은 `validation_error`(본문 필드 참조).
+    `detail`·`evidence`·`task_id`·`pending_change` 는 **항상 비어** 저장된다(M-14 — 값이 차는 것은 종료 후 편집·통합).
+    `order_index` 는 그 안건 안의 마지막 + 1.
+    """
+    meeting = await _require_meeting(session, account_id=account_id, meeting_id=meeting_id)
+    _assert_allowed(meeting, "line_write")
+
+    agenda = await meeting_child_repository.find_agenda(
+        session, meeting_id=meeting_id, agenda_id=command.agenda_id
+    )
+    if agenda is None or agenda.track != MeetingTrack.HUMAN.value:
+        raise _invalid_input("agendaId")
+
+    line_id = await meeting_line_repository.create_line(
+        session,
+        meeting_id=meeting_id,
+        agenda_id=agenda.id,
+        track=MeetingTrack.HUMAN.value,
+        kind=command.kind,
+        content=command.content,
+        order_index=await meeting_line_repository.next_order_index(session, agenda_id=agenda.id),
+    )
+    (line,) = await meeting_line_repository.find_by_ids(session, line_ids=[line_id])
+    return line
+
+
+async def get_transcript(
+    session: AsyncSession, *, account_id: int, meeting_id: int
+) -> TranscriptDTO:
+    """`GET …/transcript` — 확정 블록 전량(`at_ms` 순) + 화자 수 + 기준점. 상태 제한 없음(SPEC-008 근거 칩도 읽는다)."""
+    meeting = await _require_meeting(session, account_id=account_id, meeting_id=meeting_id)
+    return TranscriptDTO(
+        recording_started_at=meeting.recording_started_at,
+        speaker_count=await meeting_transcript_repository.count_speakers(session, meeting_id),
+        items=await meeting_transcript_repository.list_blocks(session, meeting_id),
     )
 
 

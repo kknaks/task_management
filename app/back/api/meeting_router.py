@@ -2,8 +2,9 @@
 
 **라우터 단위**로 `require_account` 를 건다 — 개별 함수에서 빠뜨릴 여지를 없앤다(§9).
 
-**여기 없는 회의 표면** — `POST …/end`(202 + jobId) · `POST …/lines` · `DELETE …/lines/{id}` ·
-`WS …/stream` · 트랜스크립트 조회 — 는 **SPEC-007·008 이 같은 라우터에 더한다.** 새 라우터를 만들지 않는다.
+**SPEC-007(WORK-007) 이 더한 표면** — `POST …/lines`(201 `LineItem`) · `PATCH …/agendas/{id}` 의 `state` ·
+`GET …/transcript`. `WS …/stream` 만 WS 전용 `meeting_stream_router` 다.
+**여기 없는 회의 표면** — `POST …/end`(202 + jobId) · `DELETE …/lines/{id}` — 는 SPEC-008 이 더한다.
 
 **`PATCH /api/schedules` 는 없다** — 파생은 단방향이라 원본(`PATCH /api/meetings/{id}`)을 고친다(BE-10).
 쓰기 응답은 **전부 `MeetingDetail`**(같은 빌더) · 삭제만 204.
@@ -21,11 +22,14 @@ from dto.meeting import MeetingListFilterDTO
 from schemas.meeting import (
     AgendaCreate,
     AgendaUpdate,
+    LineCreate,
+    LineItem,
     MeetingAttachmentCreate,
     MeetingCreate,
     MeetingDetail,
     MeetingListResponse,
     MeetingUpdate,
+    TranscriptResponse,
 )
 from service import meeting_service
 
@@ -196,7 +200,7 @@ async def update_agenda(
     account_id: int = Depends(require_account),
     session: AsyncSession = Depends(get_db),
 ) -> MeetingDetail:
-    """**보낸 필드만**(이 work 는 `title`). WORK-007 이 같은 모델에 `state` 를 연다."""
+    """**보낸 필드만** — `title`(시작 전·종료 후) · `state`(회의 중 `active`·`done`·`next`). 응답은 `MeetingDetail` 전체."""
     return MeetingDetail.from_dto(
         await meeting_service.update_agenda(
             session,
@@ -222,6 +226,47 @@ async def remove_agenda(
         session, account_id=account_id, meeting_id=meeting_id, agenda_id=agenda_id
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# --- 줄 · 트랜스크립트 (SPEC-007 §4) ------------------------------------------
+
+
+@router.post(
+    "/{meeting_id}/lines",
+    response_model=LineItem,
+    response_model_by_alias=True,
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_line(
+    meeting_id: int,
+    body: LineCreate,
+    account_id: int = Depends(require_account),
+    session: AsyncSession = Depends(get_db),
+) -> LineItem:
+    """회의 중 사람 줄 하나 — `status='recording'` 에서만(표 밖은 409). 응답은 **`LineItem`**(SPEC-007 §4 Request/Response)."""
+    return LineItem.from_dto(
+        await meeting_service.add_line(
+            session, account_id=account_id, meeting_id=meeting_id, command=body.to_dto()
+        )
+    )
+
+
+@router.get(
+    "/{meeting_id}/transcript",
+    response_model=TranscriptResponse,
+    response_model_by_alias=True,
+)
+async def get_transcript(
+    meeting_id: int,
+    account_id: int = Depends(require_account),
+    session: AsyncSession = Depends(get_db),
+) -> TranscriptResponse:
+    """확정 발화 블록 전량(`atMs` 순) + `speakerCount` + `recordingStartedAt`. 상태 제한 없음 — SPEC-008 근거 칩도 읽는다."""
+    return TranscriptResponse.from_dto(
+        await meeting_service.get_transcript(
+            session, account_id=account_id, meeting_id=meeting_id
+        )
+    )
 
 
 # --- 첨부 ---------------------------------------------------------------

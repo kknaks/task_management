@@ -86,10 +86,10 @@ async def test_missing_work_type_is_422_validation_error(
     response = await client.post(BASE, json={"title": "유형 없음"}, headers=owner.headers)
 
     assert response.status_code == 422
-    assert response.json() == {
-        "detail": "입력값을 확인해 주세요",
-        "code": "validation_error",
-    }
+    body_json = response.json()
+    # WORK-007 이 `field` 를 더했다(어느 칸이 틀렸는지). 두 키는 그대로다
+    assert (body_json["detail"], body_json["code"]) == ("입력값을 확인해 주세요", "validation_error")
+    assert "field" in body_json
 
 
 async def test_a_deleted_work_type_is_422_invalid_work_type(
@@ -114,6 +114,7 @@ async def test_a_deleted_work_type_is_422_invalid_work_type(
     assert response.json() == {
         "detail": "사용할 수 없는 유형입니다",
         "code": "invalid_work_type",
+        "field": "workTypeId",
     }
 
 

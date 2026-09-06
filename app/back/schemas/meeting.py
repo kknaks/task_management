@@ -18,6 +18,7 @@ from pydantic import AwareDatetime, ConfigDict, StringConstraints, field_validat
 from dto.meeting import (
     AgendaCreateDTO,
     AgendaUpdateDTO,
+    LineCreateDTO,
     LineTaskSummaryDTO,
     MeetingAgendaDTO,
     MeetingAttachmentCreateDTO,
@@ -30,6 +31,8 @@ from dto.meeting import (
     MeetingUpdateDTO,
     MergedSummaryDTO,
     ProjectCountDTO,
+    TranscriptDTO,
+    TranscriptItemDTO,
 )
 from dto.unset import UNSET, Unset
 from schemas.base import CamelModel
@@ -46,6 +49,10 @@ IntegrationStateValue = Literal["not_started", "running", "succeeded", "failed"]
 TrackValue = Literal["human", "ai", "merged"]
 AgendaStateValue = Literal["next", "active", "done"]
 AttachmentKindValue = Literal["doc", "link"]
+# SPEC-007 §4 Validation — 줄 종류 **4종**(DEC-003 §1 표)
+LineKindValue = Literal["discussion", "decision", "task", "action"]
+# 줄 본문 — 공백 제거 후 1~2000자 · 줄바꿈 불가(줄은 한 줄이다)
+LineContent = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
 
 _NEWLINES = ("\n", "\r")
 
@@ -81,24 +88,41 @@ class AgendaCreate(_MeetingRequest):
 
 
 class AgendaUpdate(_MeetingRequest):
-    """`PATCH …/agendas/{id}` — 이 work 는 **`title` 만** 받는다.
+    """`PATCH …/agendas/{id}` — **`title`·`state` 부분 수정 한 표면**(SPEC-007 §7-A).
 
-    `state` 는 **WORK-007 이 이 모델에 연다**(회의 중 `{ state }`). 지금 보내면 `extra="forbid"` 로 422 다.
+    `title` 은 시작 전(SPEC-006)·종료 후 편집(SPEC-008), `state` 는 회의 중(SPEC-007 U-2·U-3) 이 보낸다.
+    둘 다 `null` 로 비울 수 없다. 상태별 허용은 service 의 표 하나가 판정한다.
     """
 
     title: AgendaTitle | None = None
+    state: AgendaStateValue | None = None
 
     @model_validator(mode="after")
-    def _reject_null_title(self) -> "AgendaUpdate":
-        if "title" in self.model_fields_set and self.title is None:
-            raise ValueError("title 은 비울 수 없습니다")
+    def _reject_null(self) -> "AgendaUpdate":
+        for name in ("title", "state"):
+            if name in self.model_fields_set and getattr(self, name) is None:
+                raise ValueError(f"{name} 은 비울 수 없습니다")
         return self
 
     def to_dto(self) -> AgendaUpdateDTO:
         sent = self.model_fields_set
         return AgendaUpdateDTO(
             title=self.title if "title" in sent else UNSET,  # type: ignore[arg-type]
+            state=self.state if "state" in sent else UNSET,  # type: ignore[arg-type]
         )
+
+
+class LineCreate(_MeetingRequest):
+    """`POST …/lines` — 회의 중 사람 줄 하나(SPEC-007 §4). `agendaId` 는 **이 회의의 사람 트랙** 안건(service 가 판정)."""
+
+    agenda_id: int
+    kind: LineKindValue
+    content: LineContent
+
+    _no_newline = field_validator("content")(_reject_newlines)
+
+    def to_dto(self) -> LineCreateDTO:
+        return LineCreateDTO(agenda_id=self.agenda_id, kind=self.kind, content=self.content)
 
 
 class MeetingAttachmentCreate(_MeetingRequest):
@@ -219,6 +243,8 @@ class LineItem(CamelModel):
     source_human_line_id: int | None
     source_ai_line_id: int | None
     task: LineTaskSummary | None
+    # SPEC-007 §4 — 줄 우측 시각. 안건 우측 시각은 화면이 `min(createdAt)` 으로 파생한다
+    created_at: datetime
 
     @classmethod
     def from_dto(cls, dto: MeetingLineDTO) -> "LineItem":
@@ -236,6 +262,7 @@ class LineItem(CamelModel):
             source_human_line_id=dto.source_human_line_id,
             source_ai_line_id=dto.source_ai_line_id,
             task=None if dto.task is None else LineTaskSummary.from_dto(dto.task),
+            created_at=dto.created_at,
         )
 
 
@@ -389,6 +416,45 @@ class MeetingDetail(CamelModel):
             active_job_id=detail.active_job_id,
             created_at=meeting.created_at,
             updated_at=meeting.updated_at,
+        )
+
+
+# --- 트랜스크립트 (SPEC-007 §4) -------------------------------------------
+
+
+class TranscriptItem(CamelModel):
+    """확정 발화 블록. `speakerLabel` 은 `"1"`·`"2"` 번호 문자열 — 「화자 1」 접두는 화면 매핑(G-4)."""
+
+    id: int
+    speaker_label: str
+    at_ms: int
+    end_ms: int
+    content: str
+
+    @classmethod
+    def from_dto(cls, dto: TranscriptItemDTO) -> "TranscriptItem":
+        return cls(
+            id=dto.id,
+            speaker_label=dto.speaker_label,
+            at_ms=dto.at_ms,
+            end_ms=dto.end_ms,
+            content=dto.content,
+        )
+
+
+class TranscriptResponse(CamelModel):
+    """`GET …/transcript` — `atMs` 순 전량. 페이지를 나누지 않는다(v1 규모)."""
+
+    recording_started_at: datetime | None
+    speaker_count: int
+    items: list[TranscriptItem]
+
+    @classmethod
+    def from_dto(cls, dto: TranscriptDTO) -> "TranscriptResponse":
+        return cls(
+            recording_started_at=dto.recording_started_at,
+            speaker_count=dto.speaker_count,
+            items=[TranscriptItem.from_dto(item) for item in dto.items],
         )
 
 

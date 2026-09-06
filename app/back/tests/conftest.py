@@ -23,6 +23,14 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool
 
+from core.db import run_after_commit_hooks
+from integrations import agent as agent_integration
+from integrations import soniox as soniox_integration
+from integrations import storage as storage_integration
+from tests.fakes.agent import FakeAgentGateway
+from tests.fakes.soniox import FakeSttConnector
+from tests.fakes.storage import FakeRecordingStore
+
 BACK_DIR = Path(__file__).resolve().parents[1]
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "")
@@ -43,6 +51,34 @@ def migrated_database() -> Iterator[None]:
     config.set_main_option("script_location", str(BACK_DIR / "alembic"))
     command.upgrade(config, "head")
     yield
+
+
+@pytest.fixture(autouse=True)
+def fake_agent() -> Iterator[FakeAgentGateway]:
+    """**Soniox·codex 를 테스트에서 실제로 부르지 않는다**(BE §12). 대역은 `integrations/` 경계에서만 끼운다.
+
+    autouse 인 이유 — `/start` 가 웜스타트를 제출하므로 회의 테스트 전부가 대역을 필요로 한다.
+    """
+    gateway = FakeAgentGateway()
+    agent_integration.install_gateway(gateway)
+    yield gateway
+    agent_integration.install_gateway(None)
+
+
+@pytest.fixture(autouse=True)
+def fake_stt() -> Iterator[FakeSttConnector]:
+    connector = FakeSttConnector()
+    soniox_integration.install_connector(connector)
+    yield connector
+    soniox_integration.install_connector(None)
+
+
+@pytest.fixture(autouse=True)
+def fake_store() -> Iterator[FakeRecordingStore]:
+    store = FakeRecordingStore()
+    storage_integration.install_store(store)
+    yield store
+    storage_integration.install_store(None)
 
 
 @pytest.fixture
@@ -91,6 +127,9 @@ async def client(db_session: AsyncSession) -> AsyncIterator[AsyncClient]:
 
     async def _override_get_db() -> AsyncIterator[AsyncSession]:
         yield db_session
+        # 실제 `get_db` 처럼 「커밋 뒤 훅」을 돈다 — 테스트에서는 flush 가 그 자리다
+        await db_session.flush()
+        await run_after_commit_hooks(db_session)
 
     app.dependency_overrides[get_db] = _override_get_db
     transport = ASGITransport(app=app)
