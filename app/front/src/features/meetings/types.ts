@@ -54,7 +54,7 @@ export interface LineEvidence {
 
 /**
  * 업무 줄이 들고 있는 **반영 대기 변경** — 키는 `dueDate` · `status` · `note` **셋뿐**(DEC-003 §4 · M-14-a).
- * `cancelled` 는 담을 수 없다(사유 필수). 적용은 Phase 5 의 「업무 갱신」 버튼이 한다 — 이 work 는 읽기만.
+ * `cancelled` 는 담을 수 없다(사유 필수). 적용은 「업무 갱신」 버튼(U-6) — `PATCH …/lines/{id}/task` 본문 없이 이것이 요청이다.
  */
 export interface PendingChange {
   dueDate?: string;
@@ -223,16 +223,29 @@ export interface AddMeetingAttachmentInput {
 // --- 회의 중(SPEC-007 §4) ----------------------------------------------------
 
 /**
+ * `POST /api/meetings/{id}/lines/{lineId}/task` · `newTask` 본문 — **SPEC-003 `POST /api/tasks` 규칙 그대로**(제목 1~200 · 유형 필수 ·
+ * 프로젝트 · 기한 · 설명 4000 이하). 할일 · 첨부 · 연관은 받지 않는다(SPEC-008 §4 Validation). 「시작 상태」는 **없다** — 항상 「시작전」이다.
+ */
+export interface NewTaskInput {
+  title: string;
+  workTypeId: number;
+  projectId?: number | null;
+  dueDate?: string | null;
+  /** U-10 「메모」 — 업무의 `description` 으로 간다(§7 판단). */
+  description?: string | null;
+}
+
+/**
  * `POST /api/meetings/{id}/lines` — 사람 줄 하나. 응답은 `MeetingLine`(201 — 코디 판정, 상세 전체가 아니다).
  * `detail` 은 **종료 후 편집(SPEC-008 U-8)만** 보낸다 — 회의 중에 실으면 서버가 `validation_error` 다.
- * `taskId` · `pendingChange` · `newTask` 갈래(U-9 · U-10)는 Phase 5 가 더한다.
+ *
+ * 세 갈래(§4) — 본문 줄(`content` — 회의 중은 네 종류 전부 · 종료 후 논의/결정/액션) · 연관 업무(`taskId` + 선택 `pendingChange`,
+ * `content` 는 서버가 업무 제목으로 — U-9) · 액션 아이템 = 업무 생성(`newTask`, 업무 + 줄 한 트랜잭션 — U-10 칩 진입).
  */
-export interface AddLineInput {
-  agendaId: number;
-  kind: LineKind;
-  content: string;
-  detail?: string | null;
-}
+export type AddLineInput =
+  | { agendaId: number; kind: LineKind; content: string; detail?: string | null }
+  | { agendaId: number; kind: "task"; taskId: number; pendingChange?: PendingChange | null }
+  | { agendaId: number; kind: "task"; newTask: NewTaskInput };
 
 /** `PATCH /api/meetings/{id}/lines/{lineId}` — 보낸 필드만(SPEC-008 §4). 응답은 `MeetingDetail` 전체. */
 export type UpdateLineInput = { content: string } | { kind: LineKind };

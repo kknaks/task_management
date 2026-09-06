@@ -267,11 +267,11 @@ async def test_adding_lines_after_the_meeting_ended(
     assert (linked.json()["content"], linked.json()["taskId"], linked.json()["task"]["title"]) == ("연관 업무 제목", task_id, "연관 업무 제목")
     assert linked.json()["pendingChange"] == {"dueDate": "2026-09-02", "note": "검수 일정 변경"}
 
-    # U-10 — newTask 는 Phase 5 · 지금은 501 스텁(줄이 생기지 않는다)
-    count_before = await _count(db_session, MeetingLine, MeetingLine.meeting_id == body["id"])
-    stub = await client.post(path, json={"agendaId": merged_agenda["id"], "kind": "task", "newTask": {"title": "새 업무", "workTypeId": owner.task_type_id}}, headers=owner.headers)
-    assert (stub.status_code, stub.json()["code"]) == (501, "not_implemented")
-    assert await _count(db_session, MeetingLine, MeetingLine.meeting_id == body["id"]) == count_before
+    # U-10 — newTask 는 업무 생성 + 줄 한 트랜잭션(Phase 5 · `meeting_task_link_service`). 상세는 `test_meeting_task_link.py`
+    created = await client.post(path, json={"agendaId": merged_agenda["id"], "kind": "task", "newTask": {"title": "새 업무", "workTypeId": owner.task_type_id}}, headers=owner.headers)
+    assert created.status_code == 201, created.text
+    assert (created.json()["kind"], created.json()["content"], created.json()["task"]["status"], created.json()["pendingChange"]) == ("task", "새 업무", "todo", None)
+    assert created.json()["taskId"] is not None
 
     # 검증 — 편집 대상 트랙 밖 안건 · task 인데 둘 다/둘 다 없음 · 비업무 줄의 업무 필드 · content 없음 · cancelled · 넷째 키 · 삭제된/남의 업무
     cases = [

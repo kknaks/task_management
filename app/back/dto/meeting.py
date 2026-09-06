@@ -267,7 +267,7 @@ class PendingChangeDTO:
     """`pendingChange` — 담는 것은 **기한 · 상태 · note 셋뿐**(M-14-a · DEC-003 §4 L102). 보낸 키만 값이 있다.
 
     저장 형태는 JSONB `{dueDate, status, note}` 이고 `to_json()` 이 **보낸 키만** 싣는다 — 「보내지 않음」이 곧 「변경 없음」이다.
-    `cancelled` 는 담지 않는다(사유가 필수라 세 키로 표현할 수 없다 — SPEC-008 §4 Validation). 적용은 Phase 5.
+    `cancelled` 는 담지 않는다(사유가 필수라 세 키로 표현할 수 없다 — SPEC-008 §4 Validation). 적용은 `meeting_task_link_service.apply_pending_change`.
     """
 
     due_date: date | None = None
@@ -287,7 +287,7 @@ class PendingChangeDTO:
 
 @dataclass(frozen=True)
 class LineNewTaskDTO:
-    """`POST …/lines { newTask }` — 업무 생성 + 줄 한 트랜잭션(SPEC-008 U-10 칩 진입). **Phase 5 가 채운다** — Phase 2 는 501 스텁."""
+    """`POST …/lines { newTask }` — 업무 생성 + 줄 한 트랜잭션(SPEC-008 U-10). `POST …/lines/{id}/task` 본문도 이 모양이다 — `meeting_task_link_service`."""
 
     title: str
     work_type_id: int

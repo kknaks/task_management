@@ -244,6 +244,12 @@ const WORK_008_FILES = [
   "components/AgendaTitleInline.tsx",
   "components/InlineFieldInput.tsx",
   "openMeetingDrawers.tsx",
+  // Phase 5 — 업무 연동
+  "hooks/useMeetingTaskLink.tsx",
+  "components/LineTaskButton.tsx",
+  "components/LinkTaskDrawer.tsx",
+  "components/CreateTaskFromLineDrawer.tsx",
+  "components/TaskDateField.tsx",
 ];
 
 const stripComments = (code: string) =>
@@ -348,5 +354,51 @@ describe("⑲ 편집 저장 경계 — 삭제는 낙관적이지 않다 · 폴�
       return /useState<[^>]*(Fail|fail)/.test(code) || /set(Save)?Failed\(/.test(code);
     });
     expect(offenders).toEqual([]);
+  });
+});
+
+/* ── WORK-008 Phase 5 — 업무 연동의 정적 검사(완료 게이트 우회 0건 · WORK-005 L294 · WP Phase 5 검증 ③) ──────────── */
+
+describe("⑳ 업무 연동 — 업무 API 직접 호출 0건 · 판정 코드 0건 · 「업무 갱신」 요청 하나", () => {
+  const ALL_SOURCES = walk(SRC).filter((file) => /\.tsx?$/.test(file) && !/\.test\.tsx?$/.test(file) && !file.includes("/test/"));
+
+  it("`features/meetings` 에 `/api/tasks` 리터럴이 0건이다(주석 제외) — 생성 · 갱신은 전부 `/api/meetings/…/task`", () => {
+    const offenders = meetingSources.filter((file) => /\/api\/tasks/.test(stripComments(read(file)))).map(rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it("`features/meetings` 가 `features/tasks` 에서 가져가는 것은 배럴(`@/features/tasks`)의 넷뿐 — 상세 드로어 · 완료 토스트 · 후보 검색 · 전이 표. 업무 생성 · 갱신 · 상태 전이 호출은 0건", () => {
+    const allowed = new Set(["openTaskDetailDrawer", "useTaskDoneToast", "fetchRelationCandidates", "canTransition", "TaskRelation"]);
+    for (const file of meetingSources) {
+      const code = read(file);
+      for (const match of code.matchAll(/import\s+(?:type\s+)?\{([^}]*)\}\s+from\s+["']@\/features\/tasks["']/g)) {
+        const names = match[1].split(",").map((name) => name.trim().replace(/^type\s+/, "")).filter(Boolean);
+        for (const name of names) {
+          expect(allowed.has(name), `${rel(file)} imports ${name}`).toBe(true);
+        }
+      }
+      expect(code, rel(file)).not.toMatch(/changeTaskStatus|undoTaskStatus|createTask\b|updateTask\b|addMemo|useTaskStatus|useTaskMutations/);
+    }
+  });
+
+  it("`changeTaskStatus(` 를 부르는 곳이 `useTaskStatus.ts` 하나다(WORK-005 검사 재실행) · `applyLineTaskChange(` 를 부르는 곳이 `useMeetingTaskLink.tsx` 하나다", () => {
+    const status = ALL_SOURCES.filter((file) => !file.endsWith("features/tasks/api.ts") && /changeTaskStatus\(/.test(read(file))).map(rel);
+    expect(status).toEqual(["features/tasks/hooks/useTaskStatus.ts"]);
+    const apply = ALL_SOURCES.filter((file) => !file.endsWith("features/meetings/api.ts") && /applyLineTaskChange\(/.test(read(file))).map(rel);
+    expect(apply).toEqual(["features/meetings/hooks/useMeetingTaskLink.tsx"]);
+  });
+
+  it("회의록 쪽에 완료 조건 판정이 없다 — `deliverable` · `completionResult` · `attachments.length` · `canTransition` 을 「업무 갱신」 경로(훅 · 버튼)가 보지 않는다", () => {
+    for (const name of ["hooks/useMeetingTaskLink.tsx", "components/LineTaskButton.tsx"]) {
+      const code = stripComments(read(path.join(MEETINGS, name)));
+      expect(code, name).not.toMatch(/deliverable|completionResult|attachments\.length|canTransition|transitionBlockedReason/);
+    }
+  });
+
+  it("「시작 상태」 · 「연관 업무로 바꾸기」 가 Phase 5 화면 파일(주석 제외)에 0건이다(⑱ 재실행)", () => {
+    for (const name of ["components/LinkTaskDrawer.tsx", "components/CreateTaskFromLineDrawer.tsx", "components/LineTaskButton.tsx"]) {
+      const code = stripComments(read(path.join(MEETINGS, name)));
+      expect(code, name).not.toMatch(/시작 상태|연관 업무로 바꾸기|["'>]대기["'<]/);
+    }
   });
 });

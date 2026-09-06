@@ -7,7 +7,7 @@
 **SPEC-008(WORK-008) 이 더한 표면** — `POST …/end`·`POST …/integrate`(202 + jobId) · `PATCH`·`DELETE …/lines/{id}` ·
 `POST …/lines` 의 `ended` 확장 갈래 · `PATCH …/agendas/{id} {title}` 의 `ended` 갈래. 줄·안건 쓰기는 **`meeting_edit_service`** 가 앞문이고
 (트랙 규칙 · 상태 잠금 한 곳) 회의 중·시작 전 갈래는 거기서 `meeting_service` 로 넘긴다 — 라우터는 상태를 보지 않는다.
-`.../lines/{id}/task` 둘은 Phase 5.
+`.../lines/{id}/task` 둘(업무 생성 · 업무 갱신)은 **`meeting_task_link_service`** — 줄과 업무를 한 트랜잭션으로 묶는 입구이고 판정은 `task_service` 다.
 
 **`PATCH /api/schedules` 는 없다** — 파생은 단방향이라 원본(`PATCH /api/meetings/{id}`)을 고친다(BE-10).
 쓰기 응답은 **전부 `MeetingDetail`**(같은 빌더) · 삭제만 204.
@@ -28,6 +28,7 @@ from schemas.meeting import (
     AgendaUpdate,
     LineCreate,
     LineItem,
+    LineNewTask,
     LineUpdate,
     MeetingAttachmentCreate,
     MeetingCreate,
@@ -36,7 +37,7 @@ from schemas.meeting import (
     MeetingUpdate,
     TranscriptResponse,
 )
-from service import meeting_edit_service, meeting_finalize_service, meeting_service
+from service import meeting_edit_service, meeting_finalize_service, meeting_service, meeting_task_link_service
 
 router = APIRouter(
     prefix="/api/meetings",
@@ -333,6 +334,49 @@ async def delete_line(
         session, account_id=account_id, meeting_id=meeting_id, line_id=line_id
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# --- 업무 연동 (SPEC-008 §4 · U-6 · U-10 — 완료 게이트의 네 번째 진입점, WORK-005 L294) ------------------------
+
+
+@router.post(
+    "/{meeting_id}/lines/{line_id}/task",
+    response_model=MeetingDetail,
+    response_model_by_alias=True,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_task_from_line(
+    meeting_id: int,
+    line_id: int,
+    body: LineNewTask,
+    account_id: int = Depends(require_account),
+    session: AsyncSession = Depends(get_db),
+) -> MeetingDetail:
+    """액션 줄 → 업무 생성(U-10 액션 줄 진입). 업무는 `POST /api/tasks` 규칙 그대로 만들어지고 같은 트랜잭션에서 줄이 업무 줄이 된다."""
+    return MeetingDetail.from_dto(
+        await meeting_task_link_service.create_task_from_line(
+            session, account_id=account_id, meeting_id=meeting_id, line_id=line_id, command=body.to_dto()
+        )
+    )
+
+
+@router.patch(
+    "/{meeting_id}/lines/{line_id}/task",
+    response_model=MeetingDetail,
+    response_model_by_alias=True,
+)
+async def apply_line_task_change(
+    meeting_id: int,
+    line_id: int,
+    account_id: int = Depends(require_account),
+    session: AsyncSession = Depends(get_db),
+) -> MeetingDetail:
+    """업무 줄 → 「업무 갱신」(U-6). **본문 없음** — 줄의 `pendingChange` 가 요청이다. 거부되면 전부 롤백 · `pendingChange` 유지."""
+    return MeetingDetail.from_dto(
+        await meeting_task_link_service.apply_pending_change(
+            session, account_id=account_id, meeting_id=meeting_id, line_id=line_id
+        )
+    )
 
 
 @router.get(

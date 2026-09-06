@@ -156,7 +156,7 @@ class PendingChange(_MeetingRequest):
 
 
 class LineNewTask(_MeetingRequest):
-    """`newTask` — 업무 생성 + 줄 한 트랜잭션(U-10 칩 진입). 규칙은 SPEC-003 `POST /api/tasks` 그대로. **Phase 5 가 채운다**(지금은 501)."""
+    """`newTask` — 업무 생성 + 줄 한 트랜잭션(U-10 칩 진입). 규칙은 SPEC-003 `POST /api/tasks` 그대로. `POST …/lines/{id}/task` 본문도 같은 모양이다."""
 
     title: TaskTitle
     work_type_id: int

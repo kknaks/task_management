@@ -19,9 +19,10 @@
  *
  * ## `mode`
  *
- * `page` — 「편집」 · 편집 모드(U-7) · 줄 「제거」 · 우 패널(스크립트 | 첨부 n 쓰기) · 근거 칩 → 스크립트 스크롤.
- * `drawer` — 캡션 「편집과 업무 연동은 전체 페이지에서 합니다」 · 칩은 표시만 · 첨부 n 읽기 전용 · `scheduled`/`recording` 스냅숏.
- * 줄 버튼(업무 생성 · 업무 갱신)과 드로어 U-9 · U-10 은 **Phase 5** 다 — 여기 자리(`renderLineActions`)만 비어 있다.
+ * `page` — 「편집」 · 편집 모드(U-7) · 줄 「제거」 · **줄 버튼(업무 생성 · 업무 갱신 — U-6, 회의록 탭만)** · 드로어 U-9 · U-10 ·
+ * 우 패널(스크립트 | 첨부 n 쓰기) · 근거 칩 → 스크립트 스크롤.
+ * `drawer` — 캡션 「편집과 업무 연동은 전체 페이지에서 합니다」 · 칩은 표시만 · 첨부 n 읽기 전용 · `scheduled`/`recording` 스냅숏 · 줄 버튼 없음.
+ * 업무 연동의 요청은 `useMeetingTaskLink` 하나(생성 · 갱신 각 뮤테이션 하나) — 판정은 서버 `task_service` 다.
  * 부모를 모른다 — 라우터를 import 하지 않는다.
  */
 
@@ -47,6 +48,10 @@ import { speakerCountOf, useTranscriptQuery } from "@/features/meetings/hooks/us
 import { useMeetingMutations } from "@/features/meetings/hooks/useMeetingMutations";
 import { openAddLineDrawer } from "@/features/meetings/components/AddLineDrawer";
 import { openAttachmentFileDrawer } from "@/features/meetings/components/AttachmentFileDrawer";
+import { openCreateTaskFromLineDrawer } from "@/features/meetings/components/CreateTaskFromLineDrawer";
+import { openLinkTaskDrawer } from "@/features/meetings/components/LinkTaskDrawer";
+import { LineTaskButton } from "@/features/meetings/components/LineTaskButton";
+import { useMeetingTaskLink } from "@/features/meetings/hooks/useMeetingTaskLink";
 import type { MeetingAgenda, MeetingAttachment, MeetingDetail, MeetingLine } from "@/features/meetings/types";
 import { formatClock } from "@/lib/datetime";
 import { useOverlay } from "@/lib/overlay/OverlayProvider";
@@ -88,6 +93,7 @@ export function MeetingDetailBody({ meeting, mode }: { meeting: MeetingDetail; m
   const mutations = useMeetingMutations(meeting.id);
   const finalize = useMeetingFinalizeJob(meeting);
   const edit = useMeetingEdit(meeting);
+  const taskLink = useMeetingTaskLink(meeting);
   const isPage = mode === "page";
   const transcript = useTranscriptQuery(meeting.id, isPage && meeting.status !== "scheduled");
   const transcriptRef = useRef<TranscriptPanelHandle>(null);
@@ -223,6 +229,41 @@ export function MeetingDetailBody({ meeting, mode }: { meeting: MeetingDetail; m
       제거
     </button>
   );
+  /* ── 업무 연동(U-6 · U-9 · U-10 — 페이지 · 회의록 탭만) ───────────────────────────────────── */
+  const openCreate = (agenda: MeetingAgenda, line: MeetingLine | null) =>
+    openCreateTaskFromLineDrawer(overlay, {
+      agendas: editAgendas,
+      agendaId: agenda.id,
+      line,
+      meetingProject: meeting.project,
+      onCreateFromLine: taskLink.createTaskFromLine,
+      onAddNewTask: edit.addLineFromDrawer,
+    });
+  const openLink = (agenda: MeetingAgenda) =>
+    openLinkTaskDrawer(overlay, {
+      meetingProject: meeting.project,
+      agendaId: agenda.id,
+      onAdd: edit.addLineFromDrawer,
+      // ② — 변경이 있을 때만. `applyPendingChange` 는 던지지 않는다(실패는 토스트 · 줄은 「업무 갱신」 활성으로 남는다)
+      onLinked: (line, hasChange) => {
+        if (hasChange) {
+          void taskLink.applyPendingChange(line);
+        }
+      },
+    });
+  // 줄 버튼 슬롯 — 보기 · 편집 모드 같은 자리. `generating` 이면 전부 잠금(U-1). 드로어 · AI 탭에는 없다
+  const renderLineActions = isPage
+    ? (line: MeetingLine, agenda: MeetingAgenda) => (
+        <LineTaskButton
+          line={line}
+          locked={!canEdit}
+          busy={taskLink.applyingLineId === line.id}
+          onCreate={(target) => openCreate(agenda, target)}
+          onApply={(target) => void taskLink.applyPendingChange(target)}
+        />
+      )
+    : undefined;
+
   const renderAgendaFooter = (agenda: MeetingAgenda) => {
     const chip = "flex h-7 items-center gap-[5px] rounded-md border border-chip-border px-2.5 text-caption text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50";
     const openAdd = (kind: "discussion" | "decision") =>
@@ -237,12 +278,13 @@ export function MeetingDetailBody({ meeting, mode }: { meeting: MeetingDetail; m
           <Plus className="h-2.5 w-2.5" aria-hidden />
           결정
         </button>
-        {/* 「+ 연관 업무」(U-9) · 「+ 액션 아이템」(U-10) — 드로어 두 벌은 Phase 5 발주다. 자리만 두고 비활성 */}
-        <button type="button" disabled title="업무 연동은 별도 작업에서 붙습니다" className={chip}>
+        {/* 「+ 연관 업무」(U-9) — 줄 추가 → 변경이 있으면 곧바로 U-6 「업무 갱신」과 같은 요청(다른 요청 · ②가 실패해도 줄은 있다) */}
+        <button type="button" onClick={() => openLink(agenda)} className={chip}>
           <Plus className="h-2.5 w-2.5" aria-hidden />
           연관 업무
         </button>
-        <button type="button" disabled title="업무 연동은 별도 작업에서 붙습니다" className={chip}>
+        {/* 「+ 액션 아이템」(U-10 칩 진입) — 업무 생성 + 줄 한 요청 */}
+        <button type="button" onClick={() => openCreate(agenda, null)} className={chip}>
           <Plus className="h-2.5 w-2.5" aria-hidden />
           액션 아이템
         </button>
@@ -258,6 +300,7 @@ export function MeetingDetailBody({ meeting, mode }: { meeting: MeetingDetail; m
       chipCaption={isPage ? undefined : DRAWER_CHIP_CAPTION}
       badgeFor={endedNotesBadge}
       recordingStartedAt={recordingStartedAt}
+      renderLineActions={renderLineActions}
       empty={<p className="text-meta text-fg-caption">기록된 안건이 없습니다</p>}
       editable={editing}
       onSaveLineContent={edit.saveLineContent}

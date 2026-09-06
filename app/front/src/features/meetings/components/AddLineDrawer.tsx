@@ -259,31 +259,36 @@ export function AddLineDrawer({
   );
 }
 
-/** 안건 셀렉터 44px — 「안건 n · 제목」. 색 dot 이 없어 공용 `Selector` 대신 목록만 둔다(고르기는 팝오버 — [10]). */
-function AgendaSelect({
+/** 안건 셀렉터 44px — 「안건 n · 제목」. 색 dot 이 없어 공용 `Selector` 대신 목록만 둔다(고르기는 팝오버 — [10]). U-10 드로어도 같은 것을 쓴다. */
+export function AgendaSelect({
   listboxId,
   agendas,
   value,
   onSelect,
   invalid,
+  disabled = false,
 }: {
   listboxId: string;
   agendas: readonly MeetingAgenda[];
   value: MeetingAgenda | null;
   onSelect: (agenda: MeetingAgenda) => void;
   invalid: boolean;
+  /** 액션 줄에서 연 U-10 드로어 — 그 줄의 안건으로 **고정**(고를 수 없다). */
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open && !disabled} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
           type="button"
           aria-label="안건"
           aria-invalid={invalid}
+          disabled={disabled}
           className={cn(
             "flex h-11 w-full items-center justify-between gap-2 rounded-control border bg-card px-3.5 text-control-label text-foreground",
-            invalid ? "border-destructive" : open ? "border-primary shadow-focus" : "border-border hover:bg-muted",
+            invalid ? "border-destructive" : open && !disabled ? "border-primary shadow-focus" : "border-border hover:bg-muted",
+            disabled && "cursor-not-allowed opacity-60",
           )}
         >
           <span className="min-w-0 truncate">{value ? `안건 ${value.orderIndex + 1} · ${value.title}` : "안건을 고르세요"}</span>

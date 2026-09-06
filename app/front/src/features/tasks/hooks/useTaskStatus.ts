@@ -8,7 +8,8 @@
  * > 화면에서만 깨진다.
  *
  * 그래서 **`changeTaskStatus` 를 부르는 곳이 이 파일 하나**여야 한다 — grep 결과가 그 증거다.
- * (넷째 진입점인 회의록은 WORK-008 이 같은 엔드포인트에 붙는다.)
+ * (넷째 진입점인 회의록은 WORK-008 이 서버의 같은 판정 함수에 붙는다 — `PATCH /api/meetings/…/lines/{id}/task`.
+ * 완료 토스트 · 실행취소는 `useTaskDoneToast` 로 뽑아 그쪽과 **같은 것**을 쓴다.)
  *
  * ## 낙관적 갱신을 하지 않는다
  *
@@ -26,13 +27,13 @@ import { useCallback } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
-import { changeTaskStatus, deleteTask, undoTaskStatus } from "@/features/tasks/api";
+import { changeTaskStatus, deleteTask } from "@/features/tasks/api";
+import { useTaskDoneToast } from "@/features/tasks/hooks/useTaskDoneToast";
 import type { TaskListItem, TaskStatus, TaskStatusInput } from "@/features/tasks/types";
 import { API_ERROR_CODE, isApiError } from "@/lib/api/errors";
 import { queryKeys } from "@/lib/api/queryKeys";
 
-/** 완료 토스트 4초 · 거부 토스트 6초(U-6 — 할 일이 있는 토스트라 더 길다). */
-const DONE_TOAST_MS = 4000;
+/** 거부 토스트 6초(U-6 — 할 일이 있는 토스트라 더 길다). 완료 토스트(4초)는 `useTaskDoneToast` 가 갖는다. */
 const BLOCKED_TOAST_MS = 6000;
 
 export interface TaskStatusHandlers {
@@ -59,42 +60,13 @@ export function useTaskStatus(handlers: TaskStatusHandlers = {}) {
     onSuccess: () => invalidate(),
   });
 
-  const undo = useMutation({
-    mutationFn: (id: number) => undoTaskStatus(id),
-    onSuccess: () => invalidate(),
-  });
-
   const remove = useMutation({
     mutationFn: (id: number) => deleteTask(id),
     onSuccess: () => invalidate(),
   });
 
-  /**
-   * 완료 뒤 4초 동안만 뜨는 토스트. **실행취소는 서버가 조건을 판정한다**(4초·마지막 로그) —
-   * 화면 타이머는 표시용이고, 늦게 눌리면 `undo_not_available` 이 같은 문구로 돌아온다.
-   */
-  const doneToast = useCallback(
-    (id: number) => {
-      toast.success("완료 처리했습니다", {
-        duration: DONE_TOAST_MS,
-        action: {
-          label: "실행취소",
-          onClick: () => {
-            undo.mutateAsync(id).catch((error: unknown) => {
-              if (isApiError(error) && error.code === API_ERROR_CODE.UNDO_NOT_AVAILABLE) {
-                toast.error(error.detail, {
-                  description: "상태에서 직접 되돌릴 수 있습니다",
-                });
-                return;
-              }
-              toast.error("되돌리지 못했습니다");
-            });
-          },
-        },
-      });
-    },
-    [undo],
-  );
+  /** 완료 토스트 「완료 처리했습니다 · 실행취소」 — 회의록의 「업무 갱신」과 **같은 것**을 쓴다(WORK-008). */
+  const doneToast = useTaskDoneToast();
 
   /**
    * **세 진입점이 지나는 문 하나.** 성공하면 `true` 를 돌려준다 —

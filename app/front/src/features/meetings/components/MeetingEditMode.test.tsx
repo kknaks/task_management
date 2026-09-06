@@ -96,12 +96,12 @@ describe("진입 · 어포던스", () => {
     expect(screen.queryByRole("button", { name: /안건 \d 완료/ })).not.toBeInTheDocument();
     expect(screen.queryByText("새 안건")).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "줄 입력" })).not.toBeInTheDocument();
-    // 「+」 칩 4 — 논의 · 결정은 산다. 연관 업무 · 액션 아이템은 Phase 5 자리(비활성)
+    // 「+」 칩 4 — 논의 · 결정 · 연관 업무(U-9) · 액션 아이템(U-10) 전부 산다(드로어 둘은 `MeetingTaskLink.test`)
     const footer = within(agendaEl(71));
     expect(footer.getByRole("button", { name: "논의" })).toBeEnabled();
     expect(footer.getByRole("button", { name: "결정" })).toBeEnabled();
-    expect(footer.getByRole("button", { name: "연관 업무" })).toBeDisabled();
-    expect(footer.getByRole("button", { name: "액션 아이템" })).toBeDisabled();
+    expect(footer.getByRole("button", { name: "연관 업무" })).toBeEnabled();
+    expect(footer.getByRole("button", { name: "액션 아이템" })).toBeEnabled();
 
     const reads = state.reads;
     await userEvent.click(screen.getByRole("button", { name: "편집 완료" }));

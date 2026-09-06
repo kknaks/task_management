@@ -15,14 +15,15 @@
 안건 표면 — `update_agenda`(`ended` 갈래 — 이름만 · `state` 동봉 거부 · `merged`/`human` 안건만).
 
 이 파일은 `task_service` · `meeting_transcript_repository` · `integrations/` 를 import 하지 않는다(정적 검사 대상).
-`newTask` 갈래는 **Phase 5** 가 `meeting_task_link_service` 로 채운다 — 여기서는 `501` 스텁이다.
+`newTask` 갈래(업무 생성 + 줄)와 `.../lines/{id}/task` 둘은 **`meeting_task_link_service`** 다 — 그쪽이 이 파일의
+`require_editable_line` · `editable_track` 을 쓰므로 여기서는 그 갈래 하나만 **함수 안에서** 가져온다(순환 import 회피).
 """
 
 from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.exceptions import NotFoundError, SurfaceNotImplementedError, ValidationError
+from core.exceptions import NotFoundError, ValidationError
 from dto.enums import IntegrationState, LineKind, MeetingStatus, MeetingTrack
 from dto.meeting import (
     AgendaUpdateDTO,
@@ -39,7 +40,6 @@ from service import meeting_service
 _INVALID_INPUT = "입력값을 확인해 주세요"
 _NOT_FOUND_LINE = "줄을 찾을 수 없습니다"
 _NOT_FOUND_TASK = "업무를 찾을 수 없습니다"
-_NEW_TASK_NOT_READY = "업무 생성 갈래는 Phase 5 에서 열린다"
 
 # `ended` 에서만 받는 확장 필드(SPEC-008 §4 `POST …/lines`) — `recording` 에 오면 거부(SPEC-007 규칙 유지)
 _ENDED_ONLY_FIELDS = ("detail", "task_id", "pending_change", "new_task")
@@ -66,10 +66,10 @@ def editable_track(meeting: MeetingDTO) -> str:
     return MeetingTrack.HUMAN.value
 
 
-async def _require_editable_line(
+async def require_editable_line(
     session: AsyncSession, *, meeting: MeetingDTO, line_id: int
 ) -> MeetingLineDTO:
-    """이 회의의 줄이어야 하고(404) 편집 대상 트랙이어야 한다(422 — `ai` 줄 · 다른 트랙 줄)."""
+    """이 회의의 줄이어야 하고(404) 편집 대상 트랙이어야 한다(422 — `ai` 줄 · 다른 트랙 줄). `meeting_task_link_service` 도 이것을 쓴다."""
     line = await meeting_line_repository.find_line(session, meeting_id=meeting.id, line_id=line_id)
     if line is None:
         raise NotFoundError(_NOT_FOUND_LINE)
@@ -87,7 +87,7 @@ async def add_line(
     """`recording` 이면 확장 필드를 거부하고 `meeting_service.add_line`(SPEC-007) 으로 · `ended` 면 편집 갈래(SPEC-008 U-8~U-10).
 
     `ended` 갈래 — `agendaId` 는 **편집 대상 트랙** 안건 · `task` 는 `taskId`/`newTask` 중 정확히 하나(`content` 는 서버가 업무 제목으로) ·
-    그 밖의 종류는 `content` 필수 + 업무 필드 없음. `newTask` 는 Phase 5 — 지금은 501.
+    그 밖의 종류는 `content` 필수 + 업무 필드 없음. `newTask` 는 업무 생성 + 줄 한 트랜잭션(`meeting_task_link_service`).
     """
     meeting = await meeting_service.require_meeting(session, account_id=account_id, meeting_id=meeting_id)
     meeting_service.assert_allowed(meeting, "line_write")
@@ -114,8 +114,15 @@ async def add_line(
         if (command.task_id is None) == (command.new_task is None):
             raise _invalid_input("taskId")
         if command.new_task is not None:
-            # Phase 5 — `meeting_task_link_service.create_task_from_line()` 이 채운다. 줄도 업무도 만들지 않는다
-            raise SurfaceNotImplementedError(_NEW_TASK_NOT_READY)
+            if command.pending_change is not None:
+                # 새로 만든 업무에 반영할 「변경」은 없다 — 값은 생성 본문에 이미 들어 있다(U-10)
+                raise _invalid_input("pendingChange")
+            # 순환 회피 — link service 가 이 파일의 트랙 규칙을 쓴다. 업무 생성 + 줄은 그쪽이 한 트랜잭션으로 만든다
+            from service import meeting_task_link_service
+
+            return await meeting_task_link_service.add_task_line(
+                session, account_id=account_id, meeting_id=meeting_id, agenda_id=agenda.id, track=track, command=command.new_task
+            )
         assert command.task_id is not None
         task = await task_repository.find_active(session, account_id=account_id, task_id=command.task_id)
         if task is None:
@@ -159,7 +166,7 @@ async def update_line(
     """
     meeting = await meeting_service.require_meeting(session, account_id=account_id, meeting_id=meeting_id)
     meeting_service.assert_allowed(meeting, "line_edit")
-    line = await _require_editable_line(session, meeting=meeting, line_id=line_id)
+    line = await require_editable_line(session, meeting=meeting, line_id=line_id)
 
     values: dict[str, object] = {}
     if command.content is not UNSET:
@@ -188,7 +195,7 @@ async def delete_line(
     """
     meeting = await meeting_service.require_meeting(session, account_id=account_id, meeting_id=meeting_id)
     meeting_service.assert_allowed(meeting, "line_edit")
-    line = await _require_editable_line(session, meeting=meeting, line_id=line_id)
+    line = await require_editable_line(session, meeting=meeting, line_id=line_id)
 
     await meeting_line_repository.delete_line(
         session,
