@@ -8,11 +8,15 @@
 
 import { apiFetch } from "@/lib/api/client";
 import type {
+  AddLineInput,
   AddMeetingAttachmentInput,
   CreateMeetingInput,
   MeetingDetail,
+  MeetingLine,
   MeetingListResponse,
   MeetingsListQuery,
+  TranscriptResponse,
+  UpdateAgendaInput,
   UpdateMeetingInput,
 } from "@/features/meetings/types";
 
@@ -62,11 +66,14 @@ export function addAgenda(meetingId: number, title: string): Promise<MeetingDeta
   });
 }
 
-/** **보낸 필드만** — 이 work 는 `title`. WORK-007 이 `state` 를 더한다. */
+/**
+ * **보낸 필드만** — 시작 전 `title`(SPEC-006) · 회의 중 `state`(SPEC-007). 표면·응답은 하나다(SPEC-007 §7-A).
+ * `state:"active"` 가 성공하면 서버가 안건 전환 배치 트리거를 평가한다 — 화면은 모른다.
+ */
 export function updateAgenda(
   meetingId: number,
   agendaId: number,
-  input: { title: string },
+  input: UpdateAgendaInput,
 ): Promise<MeetingDetail> {
   return apiFetch<MeetingDetail>(`/api/meetings/${meetingId}/agendas/${agendaId}`, {
     method: "PATCH",
@@ -77,6 +84,21 @@ export function updateAgenda(
 /** 없는 안건은 **404** — 멱등 삭제가 아니다. */
 export function deleteAgenda(meetingId: number, agendaId: number): Promise<void> {
   return apiFetch<void>(`/api/meetings/${meetingId}/agendas/${agendaId}`, { method: "DELETE" });
+}
+
+// --- 회의 중(SPEC-007) — 줄 · 트랜스크립트 ------------------------------------
+
+/**
+ * 사람 줄 하나 — `status='recording'` 에서만. 응답은 **`LineItem`(201)** 이지 상세 전체가 아니다(SPEC-007 §4).
+ * 회의 중 사람 줄은 항상 `detail:null · evidence:[] · taskId:null` 이다(M-14).
+ */
+export function addLine(meetingId: number, input: AddLineInput): Promise<MeetingLine> {
+  return apiFetch<MeetingLine>(`/api/meetings/${meetingId}/lines`, { method: "POST", body: input });
+}
+
+/** 확정 발화 블록 전량 — 진입 시 1회. 이후는 WS `transcript.final` 로 append 한다(WP 캐시 키 행). */
+export function fetchTranscript(meetingId: number): Promise<TranscriptResponse> {
+  return apiFetch<TranscriptResponse>(`/api/meetings/${meetingId}/transcript`, { cache: "no-store" });
 }
 
 // --- 첨부 ------------------------------------------------------------------

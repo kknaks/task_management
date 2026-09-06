@@ -4,7 +4,7 @@
  * **`/meetings/detail?id=` — `status` 로 화면을 고르는 스위치**(FE §1 L47 · WP §Internal Interface Contract).
  *
  * | `scheduled` | `MeetingScheduledPage`(이 work) |
- * | `recording` | 플레이스홀더 — **WORK-007** 이 이 분기만 교체 |
+ * | `recording` | `MeetingLiveView`(WORK-007) |
  * | `generating` · `ended` | 플레이스홀더 — **WORK-008** 이 이 분기만 교체 |
  *
  * `/start` 성공 후 **페이지 이동 없이** 캐시의 `status` 가 바뀌어 스위치가 바뀐다.
@@ -16,6 +16,7 @@ import { useSearchParams } from "next/navigation";
 
 import { EmptyState } from "@/components/shared/EmptyState";
 import { Button } from "@/components/ui/button";
+import { MeetingLiveView } from "@/features/meetings/components/MeetingLiveView";
 import { MeetingScheduledPage } from "@/features/meetings/components/MeetingScheduledPage";
 import { MeetingDetailSkeleton } from "@/features/meetings/components/MeetingSkeleton";
 import { MeetingStatusPlaceholder } from "@/features/meetings/components/MeetingStatusPlaceholder";
@@ -54,6 +55,10 @@ export function MeetingDetailPage() {
 
   if (meeting.status === "scheduled") {
     return <MeetingScheduledPage meeting={meeting} />;
+  }
+  if (meeting.status === "recording") {
+    // 「회의 종료」의 동작(`/end`)은 WORK-008 이 `onEnd` 로 붙인다 — 여기서는 자리만.
+    return <MeetingLiveView meeting={meeting} />;
   }
   return <MeetingStatusPlaceholder meeting={{ ...meeting, status: meeting.status }} />;
 }

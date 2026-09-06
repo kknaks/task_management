@@ -6,7 +6,7 @@
  * - `scheduled` 는 안건 목록(읽기 전용) + 첨부 행, `recording` 「기록 중입니다」, `generating` 「회의록 생성중」,
  *   `ended+failed` 는 요약 바 없이 「통합 정리 실패」
  * - 안건 `next` 배지 문구는 **「다음 논의로」**(DEC-003 §1 표 — 목록·미리보기·시작 전·종료 후 어휘)
- * - `MeetingTopBar` 두 변형이 **한 파일**이다
+ * - 상단 바(`MeetingStatusBar`) 변형이 **한 파일**이다 — WORK-007 이 `MeetingTopBar` 를 흡수했다
  */
 
 import { readdirSync } from "node:fs";
@@ -18,7 +18,7 @@ import { render, screen, within } from "@testing-library/react";
 
 import { MeetingAgendaList } from "@/features/meetings/components/MeetingAgendaList";
 import { MeetingPreviewPanel } from "@/features/meetings/components/MeetingPreviewPanel";
-import { MeetingTopBar } from "@/features/meetings/components/MeetingTopBar";
+import { MeetingStatusBar } from "@/features/meetings/components/MeetingStatusBar";
 import { meetingDetail, renderWithProviders } from "@/features/meetings/testUtils";
 import type { MeetingDetail } from "@/features/meetings/types";
 import { tokenStore } from "@/lib/auth/tokenStore";
@@ -126,19 +126,19 @@ describe("안건 `next` 배지 · 상단 바", () => {
   });
 
   it("`waiting` 변형은 「기록 대기 00:00:00」 + 캡션, `headline` 변형은 배지 + 문장", () => {
-    const { rerender } = render(<MeetingTopBar variant="waiting" />);
+    const { rerender } = render(<MeetingStatusBar variant="waiting" />);
     expect(screen.getByRole("status", { name: "기록 대기" })).toHaveTextContent("기록 대기");
     expect(screen.getByText("00:00:00")).toBeInTheDocument();
     expect(screen.getByText("회의 시작을 누르면 녹음과 스크립트가 함께 켜집니다")).toBeInTheDocument();
 
-    rerender(<MeetingTopBar variant="headline" headline="한 문장" summary={null} />);
+    rerender(<MeetingStatusBar variant="headline" headline="한 문장" summary={null} />);
     expect(screen.getByText("AI 한 줄 요약")).toBeInTheDocument();
     expect(screen.getByText("한 문장")).toBeInTheDocument();
   });
 
-  it("상단 바 컴포넌트는 **파일 하나**다 — WORK-007·008 이 같은 파일에 변형을 더한다", () => {
+  it("상단 바 컴포넌트는 **파일 하나**다 — WORK-007 이 `MeetingTopBar` 를 `MeetingStatusBar` 로 흡수했고 WORK-008 이 같은 파일에 변형을 더한다", () => {
     const dir = path.resolve(__dirname);
-    const files = readdirSync(dir).filter((file) => /TopBar/i.test(file) && !file.endsWith(".test.tsx"));
-    expect(files).toEqual(["MeetingTopBar.tsx"]);
+    const files = readdirSync(dir).filter((file) => /(TopBar|StatusBar)/i.test(file) && !file.endsWith(".test.tsx"));
+    expect(files).toEqual(["MeetingStatusBar.tsx"]);
   });
 });

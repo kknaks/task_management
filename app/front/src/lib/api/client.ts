@@ -249,3 +249,34 @@ export async function apiFetch<T>(path: string, init: ApiRequestInit = {}): Prom
     }
   }
 }
+
+/* ── WS 인증 파이프라인이 쓰는 문 둘(FE §4-2 「WS 는 헤더를 못 붙인다」) ───────────────
+ *
+ * `lib/api/ws.ts` 가 첫 프레임에 실을 access 를 여기서 받는다. 갱신·세션 종료 규칙은 REST 와
+ * **같은 함수**를 지난다 — 두 번째 갱신 루프를 만들지 않는다. 둘 다 실패하면 세션을 끝내고
+ * `null` 을 돌려준다(로그인 이동은 `sessionEvents` 핸들러가 한다).
+ */
+
+/** 지금 access 를 주되 없으면 **갱신 1회**. 실패면 세션 종료 후 `null`. */
+export async function acquireAccessToken(): Promise<string | null> {
+  const current = tokenStore.getAccess();
+  if (current) {
+    return current;
+  }
+  return renewAccessToken();
+}
+
+/** WS `4401` 뒤의 **강제 갱신 1회**. 실패면 세션 종료 후 `null` — 호출자는 다시 시도하지 않는다. */
+export async function renewAccessToken(): Promise<string | null> {
+  const outcome = await refreshOnce();
+  if (outcome.kind !== "ok") {
+    await endSession(outcome.kind === "absent" ? "absent" : "expired");
+    return null;
+  }
+  return outcome.accessToken;
+}
+
+/** WS 가 갱신 뒤에도 `4401` 을 받았다 — 로그인으로 보낸다(FE §4-2 3). REST 의 「재시도도 401」과 같은 문이다. */
+export async function expireSession(): Promise<void> {
+  await endSession("expired");
+}

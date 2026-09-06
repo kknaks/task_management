@@ -48,6 +48,8 @@ const twMerge = extendTailwindMerge({
             "subhead",
             "drawer-title",
             "tile-mark",
+            /* WORK-007 — 발화 시각 */
+            "time-mark",
           ],
         },
       ],

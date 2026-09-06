@@ -4,7 +4,7 @@
  * **회의 시작 전 화면**(SPEC-006 U-4 · 회의록.dc.html L565~646 · 첨부 탭 L739~757).
  *
  * breadcrumb 「홈 › 회의록 › 시작 전」 → 헤더(제목 28/700 · 서브 「… 예정 · <유형> · <프로젝트>」 · `⋯`(삭제) ·
- * 「회의 시작」 34) → **`MeetingTopBar variant="waiting"`** → 좌 1160(회의록 | AI 요약) / 우 464(실시간 스크립트 | 첨부 파일 n).
+ * 「회의 시작」 34) → **`MeetingStatusBar variant="waiting"`**(WORK-007 이 `MeetingTopBar` 를 흡수한 한 파일) → 좌 1160(회의록 | AI 요약) / 우 464(실시간 스크립트 | 첨부 파일 n).
  * 1280~1439 에서는 우 400(U-6).
  *
  * **없는 것**(§3·§7): 「회의 정보 수정」 버튼(L579) · 「새 안건 ▾」 칩 · 추천 칩 · 전송 버튼 · 「안건 초안을 만들어 줍니다」 ·
@@ -31,7 +31,7 @@ import { AgendaInputBar } from "@/features/meetings/components/AgendaInputBar";
 import { AgendaEmptyState, MeetingAgendaList } from "@/features/meetings/components/MeetingAgendaList";
 import { AttachmentAddTrigger, MeetingAttachmentsTab } from "@/features/meetings/components/MeetingAttachmentsTab";
 import { openMeetingDeleteModal } from "@/features/meetings/components/MeetingDeleteModal";
-import { MeetingTopBar } from "@/features/meetings/components/MeetingTopBar";
+import { MeetingStatusBar } from "@/features/meetings/components/MeetingStatusBar";
 import { INVALID_STATUS_MESSAGE, isInvalidMeetingStatus, meetingInlineError } from "@/features/meetings/errors";
 import { useAgendaAutoSave } from "@/features/meetings/hooks/useAgendaAutoSave";
 import { useMeetingMutations } from "@/features/meetings/hooks/useMeetingMutations";
@@ -131,7 +131,7 @@ export function MeetingScheduledPage({ meeting }: { meeting: MeetingDetail }) {
 
       {/* 상단 바 슬롯 — top 150 · 본문 폭 전체 · 56 */}
       <div className="mt-6">
-        <MeetingTopBar variant="waiting" />
+        <MeetingStatusBar variant="waiting" />
       </div>
 
       {/* 좌 1160 / 우 464(1280~1439 는 400) — 둘 다 top 224 */}

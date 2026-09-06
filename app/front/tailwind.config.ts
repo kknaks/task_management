@@ -111,6 +111,12 @@ const config: Config = {
           badge: "var(--tm-ai-bar-badge-fg)",
         },
         "agenda-badge": "var(--tm-agenda-badge-bg)",
+        /* 회의 중 화면(SPEC-007) — 값은 `tokens.css` 「회의 중 화면」 묶음 */
+        "fg-faint": "var(--tm-fg-faint)",
+        "line-decision": "var(--tm-line-decision-fg)",
+        "decision-chip": "var(--tm-line-decision-chip-bg)",
+        "dot-ai": "var(--tm-dot-ai)",
+        "evidence-hover": "var(--tm-evidence-chip-hover)",
 
         /* 동적 유형 색 — `data-color-token` 이 고른 팔레트 쌍(§5-3) */
         palette: { bg: "var(--tm-palette-bg)", fg: "var(--tm-palette-fg)" },
@@ -225,6 +231,8 @@ const config: Config = {
         "drawer-title": ["18px", { lineHeight: "1.4", letterSpacing: "-0.03em", fontWeight: "700" }],
         /* MD 타일 글자([09] L1170 · 시안 L1170) · 10 / 800 */
         "tile-mark": ["10px", { lineHeight: "1", letterSpacing: "0", fontWeight: "800" }],
+        /* 발화 블록 시각(회의록 L989 · 11 / 400 `#B3B3B3`) — `row-label`·`badge` 는 굵어서 못 쓴다(WORK-007) */
+        "time-mark": ["11px", { lineHeight: "1.4", letterSpacing: "-0.02em", fontWeight: "400" }],
       },
 
       letterSpacing: {

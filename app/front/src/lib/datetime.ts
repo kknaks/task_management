@@ -415,3 +415,50 @@ export function monthKeyOf(period: Period): MonthKey {
 export function currentMonthKey(now: Date = new Date()): MonthKey {
   return currentDate(now).slice(0, 7);
 }
+
+/* ── 회의 중 시각(SPEC-007) ────────────────────────────────────────────────
+ *
+ * 경과 시간·발화 시각·근거 칩은 **전부 `recordingStartedAt` 기준**이다(ERD M-1-a · M-11).
+ * `start_at`(예정 시각)이 아니다 — 늦게 시작하면 어긋난다(SPEC-007 §7-C).
+ * 컴포넌트는 `Date.now()` 값만 넘기고 `new Date()` 를 만들지 않는다(§3-6).
+ */
+
+function clockOf(ms: number): string {
+  const shifted = new Date(ms + KST_OFFSET_MS);
+  return `${String(shifted.getUTCHours()).padStart(2, "0")}:${String(shifted.getUTCMinutes()).padStart(2, "0")}`;
+}
+
+/** UTC ISO → KST 「HH:MM」 — 줄 `createdAt` · 안건 첫 줄 시각 · 「자동 저장 · HH:MM」. */
+export function formatClock(isoString: string): string {
+  return clockOf(new Date(isoString).getTime());
+}
+
+/** `Date.now()` 값 → KST 「HH:MM」 — 프롬프트 바 우측 현재 시각 · 「배치 n회 반영 · HH:MM」. */
+export function formatClockMs(ms: number): string {
+  return clockOf(ms);
+}
+
+/**
+ * **`recordingStartedAt + offsetMs` 를 벽시계 「HH:MM」 으로** — 발화 블록 시각 · 근거 칩(U-5 · U-6).
+ * 한 곳이다(WP Code Surface `lib/datetime.ts`).
+ */
+export function msToWallClock(recordingStartedAt: string, offsetMs: number): string {
+  return clockOf(new Date(recordingStartedAt).getTime() + offsetMs);
+}
+
+/** 근거 칩 라벨 「HH:MM – HH:MM」(시안 L1693). */
+export function formatWallClockRange(recordingStartedAt: string, fromMs: number, toMs: number): string {
+  return `${msToWallClock(recordingStartedAt, fromMs)} – ${msToWallClock(recordingStartedAt, toMs)}`;
+}
+
+/**
+ * 상태 바 경과 시간 「HH:MM:SS」 = `now − recordingStartedAt`(U-1). 일시정지 중에도 **멈추지 않는다** —
+ * 발화 오프셋 `atMs` 와 같은 축이다. 시계가 어긋나 음수면 0 으로 보인다.
+ */
+export function formatElapsed(recordingStartedAt: string, nowMs: number): string {
+  const total = Math.max(0, Math.floor((nowMs - new Date(recordingStartedAt).getTime()) / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}

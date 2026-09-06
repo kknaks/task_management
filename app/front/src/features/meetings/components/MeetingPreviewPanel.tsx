@@ -10,7 +10,7 @@
  * | `scheduled` | 사람 트랙 안건 목록(`MeetingAgendaList` 읽기 전용) + 하단 첨부 행 |
  * | `recording` | 「기록 중입니다」 + 「상세보기」 안내 — **미리보기는 스트림을 열지 않는다** |
  * | `generating` | 「회의록 생성중」 + 진행 표시 |
- * | `ended` + succeeded | **AI 한 줄 요약 바**(`headline` 있을 때만 · `MeetingTopBar variant="headline"`) + 통합본 트리(**WORK-008 플레이스홀더**) + 첨부 행 |
+ * | `ended` + succeeded | **AI 한 줄 요약 바**(`headline` 있을 때만 · `MeetingStatusBar variant="headline"`) + 통합본 트리(**WORK-008 플레이스홀더**) + 첨부 행 |
  * | `ended` + failed | 요약 바 없이 사람 원본 트리 + 「통합 정리 실패」 캡션 |
  *
  * **그리지 않는 것**(§7): 「· 회의실 A」 · 「요약 · AI 생성」 문단 · 취소 행 · PNG 첨부 행.
@@ -27,7 +27,7 @@ import { PanelTabs } from "@/components/shared/PanelTabs";
 import { MeetingAgendaList } from "@/features/meetings/components/MeetingAgendaList";
 import { formatBytes } from "@/features/meetings/components/MeetingAttachmentsTab";
 import { MeetingDetailSkeleton } from "@/features/meetings/components/MeetingSkeleton";
-import { MeetingTopBar } from "@/features/meetings/components/MeetingTopBar";
+import { MeetingStatusBar } from "@/features/meetings/components/MeetingStatusBar";
 import { domainOf } from "@/components/shared/AttachmentList";
 import { isMeetingNotFound } from "@/features/meetings/errors";
 import { useMeetingDetail } from "@/features/meetings/hooks/useMeetingDetail";
@@ -147,7 +147,7 @@ function NotesBody({ meeting }: { meeting: MeetingDetail }) {
         <>
           {/* **한 개만**, 본문 첫 요소. `headline` 이 `null` 이면 바가 **없다** — 빈 바를 두지 않는다 */}
           {meeting.headline ? (
-            <MeetingTopBar variant="headline" headline={meeting.headline} summary={meeting.mergedSummary} />
+            <MeetingStatusBar variant="headline" headline={meeting.headline} summary={meeting.mergedSummary} />
           ) : null}
           {/* 통합본(`merged`) 트리 렌더 규격은 SPEC-008 이 정본 — WORK-008 이 이 자리를 채운다 */}
           <EmptyState message="통합본 트리는 WORK-008 에서 만든다" />

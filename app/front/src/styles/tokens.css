@@ -107,6 +107,19 @@
   /* 안건 상태 배지 배경(회의록 L164 — `#F1F2F5`, 행 구분선과 값이 같지만 축이 다르다) */
   --tm-agenda-badge-bg: #f1f2f5;
 
+  /* ── 색 · 회의 중 화면(SPEC-007 · 회의록.dc.html L761~1402 · [09] L649~755) ──────────
+     WORK-007 이 더한 값. 컴포넌트에 hex 를 두지 않기 위해 여기서만 정의한다(§11 금지 목록 4). */
+  /* 줄·안건 우측 시각 · 「아직 기록 없음」 · 프롬프트 바 시각(L866 · L912 · L968) — placeholder(#B3B3B3)보다 한 단계 옅다 */
+  --tm-fg-faint: #c9cbd1;
+  /* 「결정」 라벨 · 짝수 화자 텍스트(L862 · L1005) */
+  --tm-line-decision-fg: #1663b5;
+  /* `/` 팝오버 「결」 칩 바탕(L929) */
+  --tm-line-decision-chip-bg: #eaf4ff;
+  /* AI 요약 탭 dot · 미확인 증분 점 · 짝수 화자 dot([09] L710 · L1003) */
+  --tm-dot-ai: #338bf6;
+  /* 근거 칩 hover(L1693) */
+  --tm-evidence-chip-hover: #e4e9fd;
+
   /* ── 색 · 상태 dot 5색 ────────────────────────────────────────────── */
   --tm-status-todo: #9ea2ae;
   --tm-status-progress: #33aaff;

@@ -49,6 +49,17 @@ export const queryKeys = {
   meetingsList: (query: Record<string, string | number | null>) =>
     ["meetings", "list", query] as const,
   meetingDetail: (id: number) => ["meetings", "detail", id] as const,
+  /**
+   * 확정 발화 블록(SPEC-007) — 진입 시 `GET …/transcript` 1회 + WS `transcript.final` 로 append.
+   * `['meetings', …]` 아래라 회의 무효화에 함께 걸린다.
+   */
+  meetingTranscript: (id: number) => ["meetings", "transcript", id] as const,
+  /**
+   * **「회의 시작」을 이 세션에서 눌렀다** 는 표지(SPEC-007 S-1). `/start` 성공이 세우고 회의 중 화면이
+   * 한 번 읽고 지운다 — 그때만 WS 를 바로 연다. 새로고침·재실행에는 없으므로 `paused/stream` 으로
+   * 시작한다(State/Lifecycle). 서버 상태가 아니라 세션 의도라 쿼리 함수가 없다.
+   */
+  meetingStartIntent: (id: number) => ["meetings", "startIntent", id] as const,
   /** 캘린더 work 가 읽는다. 여기서는 **무효화로만** 건드린다(§3-3 「직접 쓰지 않는다」). */
   schedules: () => ["schedules"] as const,
 } as const;

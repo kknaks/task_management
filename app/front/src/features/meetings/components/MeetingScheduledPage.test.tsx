@@ -275,7 +275,7 @@ describe("삭제 · 시작 · 스위치", () => {
     await waitFor(() => expect(push).toHaveBeenCalledWith("/meetings/"));
   });
 
-  it("「회의 시작」 → `POST /start` → **같은 화면이 `recording` 분기(플레이스홀더)로 바뀐다**", async () => {
+  it("「회의 시작」 → `POST /start` → **같은 화면이 `recording` 분기(회의 중 화면 — WORK-007)로 바뀐다**", async () => {
     let started = false;
     server.use(
       http.get(`${API_BASE}/api/meetings/21`, () =>
@@ -285,14 +285,19 @@ describe("삭제 · 시작 · 스위치", () => {
         started = true;
         return HttpResponse.json(meetingDetail({ status: "recording", recordingStartedAt: "2026-08-27T00:31:00Z" }));
       }),
+      http.get(`${API_BASE}/api/meetings/21/transcript`, () =>
+        HttpResponse.json({ recordingStartedAt: "2026-08-27T00:31:00Z", speakerCount: 0, items: [] }),
+      ),
       http.get(`${API_BASE}/api/meetings`, () => HttpResponse.json({ items: [], total: 0, projectCounts: [] })),
     );
     renderWithProviders(<MeetingDetailPage />);
 
     await userEvent.click(await screen.findByRole("button", { name: "회의 시작" }));
 
-    expect(await screen.findByText("이 화면은 WORK-007 에서 만든다")).toBeInTheDocument();
+    // 회의 중 화면 — 「회의 종료」 자리가 있고 「회의 시작」은 사라진다. 페이지 이동 없음.
+    expect(await screen.findByRole("button", { name: "회의 종료" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "회의 시작" })).not.toBeInTheDocument();
+    expect(screen.queryByText("이 화면은 WORK-007 에서 만든다")).not.toBeInTheDocument();
     expect(push).not.toHaveBeenCalled();
   });
 

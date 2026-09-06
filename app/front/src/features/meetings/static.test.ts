@@ -8,7 +8,7 @@
  * 5. `tokenStore` 밖 저장소 호출 0건 (§4-1)
  * 6. 상단 바 컴포넌트 **1개 파일**
  * 7. `MeetingCreateDrawer` 가 라우터·부모 상태를 import 하지 않는다 · 드로어 폭 리터럴이 `DrawerFrame` 밖에 0건
- * 8. 공용 부품(`MeetingAttachmentsTab` · `AttachmentFileDrawer` · `MeetingAgendaList` · `MeetingTopBar`)이
+ * 8. 공용 부품(`MeetingAttachmentsTab` · `AttachmentFileDrawer` · `MeetingAgendaList` · `MeetingStatusBar`)이
  *    회의 상태·라우트를 import 하지 않는다 · 자동 저장 실패를 `useState` 로 드는 컴포넌트 0건
  * 9. 영역 사이 import 0건 — **모든 `features/*`** 가 다른 영역을 부르지 않는다 (§2 규칙 4).
  *    WORK-006 검수 W-1 — meetings→settings 만 보던 검사가 tasks→settings 를 놓쳤다. 이제 전 영역을 본다
@@ -86,11 +86,11 @@ describe("⑤ 토큰 저장소 — tokenStore 밖 저장소 호출 0건", () => 
 });
 
 describe("⑥ 상단 바 — 파일 하나", () => {
-  it("`TopBar` 이름을 가진 컴포넌트 파일이 `MeetingTopBar.tsx` 하나다", () => {
+  it("`TopBar`·`StatusBar` 이름을 가진 컴포넌트 파일이 `MeetingStatusBar.tsx` 하나다 — WORK-007 이 WORK-006 의 `MeetingTopBar` 를 흡수했다", () => {
     const files = walk(SRC)
       .filter((file) => /\.tsx$/.test(file) && !/\.test\.tsx$/.test(file))
-      .filter((file) => /TopBar/i.test(path.basename(file)));
-    expect(files.map(rel)).toEqual(["features/meetings/components/MeetingTopBar.tsx"]);
+      .filter((file) => /(TopBar|StatusBar)/i.test(path.basename(file)));
+    expect(files.map(rel)).toEqual(["features/meetings/components/MeetingStatusBar.tsx"]);
   });
 });
 
@@ -111,7 +111,7 @@ describe("⑦ 드로어 — 부모를 모른다 · 폭 리터럴 없음", () => 
 });
 
 describe("⑧ 공용 부품 — 상태·라우트 무의존 · 실패 state 0건", () => {
-  const shared = ["MeetingAttachmentsTab", "AttachmentFileDrawer", "MeetingAgendaList", "MeetingTopBar", "AgendaInputBar"];
+  const shared = ["MeetingAttachmentsTab", "AttachmentFileDrawer", "MeetingAgendaList", "MeetingStatusBar", "AgendaInputBar"];
 
   it("공용 부품이 next/navigation · useMeetingDetail · useMeetingMutations · useSearchParams 를 import 하지 않는다", () => {
     for (const name of shared) {
@@ -155,5 +155,73 @@ describe("⑩ 타이포 — 임의 글꼴 크기 0건", () => {
   it("features/meetings 에 `text-[NNpx]` 가 없다 — 계단은 tailwind.config.ts 프리셋으로만(§5-1)", () => {
     const offenders = meetingSources.filter((file) => /text-\[\d+px\]/.test(read(file)));
     expect(offenders.map(rel)).toEqual([]);
+  });
+});
+
+/* ── WORK-007 — 회의 중 화면의 정적 검사(WP Phase 5·6 · 발주 §7) ──────────────────────────── */
+
+describe("⑪ WS — `new WebSocket(` 은 `lib/api/ws.ts` 하나 · 재연결 타이머 0", () => {
+  it("`new WebSocket(` 이 `lib/api/ws.ts` 밖에 0건이다(테스트 파일 제외)", () => {
+    const offenders = walk(SRC)
+      .filter((file) => /\.tsx?$/.test(file) && !/\.test\.tsx?$/.test(file) && !file.includes("/test/"))
+      .filter((file) => /new WebSocket\(/.test(read(file)))
+      .map(rel);
+    expect(offenders).toEqual(["lib/api/ws.ts"]);
+  });
+
+  it("`lib/api/ws.ts` · `useMeetingStream.ts` · `audioCapture.ts` 에 `setInterval`·`setTimeout`·`reconnect`·`retry` 가 없다 — 자동 재연결 없음(BE-12)", () => {
+    for (const file of ["lib/api/ws.ts", "features/meetings/hooks/useMeetingStream.ts", "features/meetings/hooks/audioCapture.ts"]) {
+      const code = read(path.join(SRC, file))
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/^\s*\/\/.*$/gm, "");
+      expect(code, file).not.toMatch(/setInterval|setTimeout|reconnect|backoff|\bretry\b/i);
+    }
+  });
+
+  it("`useMeetingStream` 이 마운트 effect 에서 소켓을 열지 않는다 — `openAuthenticatedSocket` 호출은 `openSocket` 한 함수 안 1건", () => {
+    const code = read(path.join(MEETINGS, "hooks/useMeetingStream.ts"));
+    expect(code.match(/openAuthenticatedSocket</g) ?? []).toHaveLength(1);
+    // 마운트 effect 는 정리(닫기)만 한다.
+    expect(code).not.toMatch(/useEffect\([\s\S]{0,400}openSocket\(\)/);
+  });
+});
+
+describe("⑫ 트리 — `AgendaLineTree` 안에 `track` 비교 0건", () => {
+  it("`AgendaLineTree` · `AgendaHeader` · `LineRow` · `EvidenceChip` · `TranscriptPanel` 에 `track ===`·`track !==`·`.track` 이 없다 — 차이는 props 뿐", () => {
+    for (const name of ["AgendaLineTree", "AgendaHeader", "LineRow", "EvidenceChip", "TranscriptPanel"]) {
+      const code = read(path.join(MEETINGS, `components/${name}.tsx`))
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/^\s*\/\/.*$/gm, "");
+      expect(code, name).not.toMatch(/track\s*[!=]==?|\.track\b|["']human["']|["']ai["']|["']merged["']/);
+    }
+  });
+});
+
+describe("⑬ 회의 중 공용 부품 — 상태·라우트 무의존", () => {
+  it("`AgendaLineTree` · `TranscriptPanel` · `PromptBar` · `LineKindPopover` · `MeetingStatusBar` · `EvidenceChip` 이 next/navigation · 상세·뮤테이션 훅 · 회의 상태를 import 하지 않는다", () => {
+    for (const name of ["AgendaLineTree", "AgendaHeader", "LineRow", "EvidenceChip", "TranscriptPanel", "PromptBar", "LineKindPopover", "MeetingStatusBar"]) {
+      const code = read(path.join(MEETINGS, `components/${name}.tsx`));
+      expect(code, name).not.toMatch(/from ["']next\/navigation["']/);
+      expect(code, name).not.toMatch(/useMeetingDetail|useMeetingMutations|useMeetingStream|useSearchParams|useRouter|useQueryClient/);
+      expect(code, name).not.toMatch(/status\s*===\s*["'](scheduled|recording|generating|ended)["']/);
+    }
+  });
+});
+
+describe("⑭ 시안에 있으나 그리지 않는 것(SPEC-007 §7-B) — 문구 0건", () => {
+  it("회의 중 화면 파일에 「회의실」·「회의 중 작성」·「PNG」·「PDF」·「다시 연결」 이 없고, 상태 바에 「자동 저장」·파형이 없다", () => {
+    const live = ["MeetingLiveView", "MeetingStatusBar", "PromptBar", "TranscriptPanel", "AgendaLineTree", "LineRow", "AgendaHeader"];
+    for (const name of live) {
+      const code = read(path.join(MEETINGS, `components/${name}.tsx`))
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/^\s*\/\/.*$/gm, "")
+        .replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+      expect(code, name).not.toMatch(/회의실|회의 중 작성|PNG|PDF|다시 연결/);
+    }
+    const bar = read(path.join(MEETINGS, "components/MeetingStatusBar.tsx"))
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "")
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+    expect(bar).not.toMatch(/자동 저장|wave|파형/);
   });
 });

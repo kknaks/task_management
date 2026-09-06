@@ -42,21 +42,32 @@ export interface LineTaskSummary {
   isDeleted: boolean;
 }
 
+/** 줄 종류 **4종**(DEC-003 §1 표 · SPEC-007 §4 Validation). 「논의」·「업무」는 표시 매핑이다(G-4). */
+export type LineKind = "discussion" | "decision" | "task" | "action";
+
+/** AI 줄의 근거 구간 — `recordingStartedAt` 기준 오프셋(ms). 사람 줄은 회의 중 항상 `[]`. */
+export interface LineEvidence {
+  fromMs: number;
+  toMs: number;
+}
+
 /** 줄 — 형태만 고정한다. **의미·표시·쓰기 표면은 SPEC-007·008**(§4). */
 export interface MeetingLine {
   id: number;
   track: MeetingTrack;
   agendaId: number;
-  kind: string;
+  kind: LineKind | string;
   content: string;
   detail: string | null;
-  evidence: unknown[];
+  evidence: LineEvidence[];
   orderIndex: number;
   taskId: number | null;
   pendingChange: Record<string, unknown> | null;
   sourceHumanLineId: number | null;
   sourceAiLineId: number | null;
   task: LineTaskSummary | null;
+  /** 줄 우측 시각(SPEC-007 U-2). 안건 우측 시각은 화면이 `min(createdAt)` 으로 파생한다. */
+  createdAt: string;
 }
 
 export interface MeetingAgenda {
@@ -197,3 +208,73 @@ export interface AddMeetingAttachmentInput {
   url: string;
   label: string | null;
 }
+
+// --- 회의 중(SPEC-007 §4) ----------------------------------------------------
+
+/** `POST /api/meetings/{id}/lines` — 사람 줄 하나. 응답은 `MeetingLine`(201). */
+export interface AddLineInput {
+  agendaId: number;
+  kind: LineKind;
+  content: string;
+}
+
+/**
+ * `PATCH …/agendas/{agendaId}` 는 **한 표면**이다 — 시작 전 `title`(SPEC-006) · 회의 중 `state`(SPEC-007).
+ * 보낸 필드만 바뀌고 응답은 `MeetingDetail` 전체다.
+ */
+export type UpdateAgendaInput = { title: string } | { state: AgendaState };
+
+/** 확정 발화 블록 — `speakerLabel` 은 `"1"`·`"2"` 번호 문자열(익명 — M-10). 「화자 1」 접두는 화면 매핑이다. */
+export interface TranscriptItem {
+  id: number;
+  speakerLabel: string;
+  atMs: number;
+  endMs: number;
+  content: string;
+}
+
+/** `GET /api/meetings/{id}/transcript` — `atMs` 순 전량. 페이지 없음(v1 규모). */
+export interface TranscriptResponse {
+  recordingStartedAt: string | null;
+  speakerCount: number;
+  items: TranscriptItem[];
+}
+
+/** WS `transcript.partial` 의 조각 — **교체 렌더**용. 저장·복원되지 않는다(M-9). */
+export interface PartialSegment {
+  speakerLabel: string;
+  atMs: number;
+  text: string;
+}
+
+/** 서버 → 클라이언트 프레임 5종(SPEC-007 §4 WS 계약). 백엔드 `schemas/meeting_stream.py` 의 미러. */
+export type StreamServerFrame =
+  | { type: "ready"; recordingStartedAt: string; latestBatchSeq: number; speakerCount: number }
+  | { type: "transcript.partial"; segments: PartialSegment[] }
+  | { type: "transcript.final"; item: TranscriptItem }
+  | { type: "ai.batch"; seq: number; agendas: MeetingAgenda[]; lines: MeetingLine[] }
+  | { type: "error"; code: "meeting_stream_disconnected"; reason: "upstream" | "write_failed" };
+
+/** 클라이언트 → 서버 텍스트 프레임 3종. 오디오는 바이너리다. */
+export type StreamClientFrame =
+  | {
+      type: "auth";
+      accessToken: string;
+      audio: { format: string; sampleRate: number; channels: number };
+    }
+  | { type: "pause"; reason: "user" | "mic" }
+  | { type: "resume" };
+
+// --- 클라이언트 세션 상태(SPEC-007 §4 stateDiagram) — DB 상태가 아니다 ---------------
+
+/**
+ * 일시정지 사유. 상태 바 문구가 여기서 갈린다(U-1).
+ * `stream:elsewhere` 는 WS `4409 meeting_stream_active` — 「다른 창에서 기록 중입니다」 + 재개 비활성(Case Matrix).
+ */
+export type PauseReason = "user" | "mic" | "stream:upstream" | "stream:write_failed" | "stream:elsewhere";
+
+/** `connecting`(ready 전) · `live` · `paused`(사유 5종). 새로고침·재실행은 **`paused/stream`** 으로 시작한다. */
+export type StreamStatus =
+  | { kind: "connecting" }
+  | { kind: "live" }
+  | { kind: "paused"; reason: PauseReason };

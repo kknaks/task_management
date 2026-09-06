@@ -22,6 +22,7 @@ import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-q
 
 import {
   addAgenda,
+  addLine,
   addMeetingAttachment,
   createMeeting,
   deleteAgenda,
@@ -32,9 +33,12 @@ import {
   updateMeeting,
 } from "@/features/meetings/api";
 import type {
+  AddLineInput,
   AddMeetingAttachmentInput,
+  AgendaState,
   CreateMeetingInput,
   MeetingDetail,
+  MeetingLine,
   UpdateMeetingInput,
 } from "@/features/meetings/types";
 import { queryKeys } from "@/lib/api/queryKeys";
@@ -97,10 +101,17 @@ export function useMeetingMutations(meetingId?: number) {
       onSuccess: () => invalidateMeetings(client, true),
     }),
 
-    /** 상태 전이 — 낙관적이지 않다. 성공하면 캐시가 `recording` 이 되고 **스위치가 바뀐다**. */
+    /**
+     * 상태 전이 — 낙관적이지 않다. 성공하면 캐시가 `recording` 이 되고 **스위치가 바뀐다**.
+     * 함께 「이 세션에서 시작했다」 표지를 세운다 — 회의 중 화면이 그때만 WS 를 바로 연다(SPEC-007 S-1 ·
+     * 새로고침에는 표지가 없어 `paused/stream` 으로 시작한다).
+     */
     start: useMutation({
       mutationFn: (id: number) => startMeeting(id),
-      onSuccess: (detail) => afterDetail(detail),
+      onSuccess: (detail) => {
+        client.setQueryData(queryKeys.meetingStartIntent(detail.id), true);
+        return afterDetail(detail);
+      },
     }),
 
     addAgenda: useMutation({
@@ -137,6 +148,43 @@ export function useMeetingMutations(meetingId?: number) {
     removeAgenda: useMutation({
       mutationFn: (agendaId: number) => deleteAgenda(meetingId as number, agendaId),
       onSuccess: () => Promise.all([client.invalidateQueries({ queryKey: detailKey }), invalidateMeetings(client)]),
+    }),
+
+    // --- 회의 중(SPEC-007) — 무효화는 `['meetings','detail',id]` 만(WP 캐시 키 행) ------------
+
+    /**
+     * 사람 줄 추가. 응답이 **`LineItem`** 이라 상세 캐시의 그 안건 `lines` 끝에 붙인다 — 서버 응답 뒤에만(낙관적 없음).
+     * 목록 무효화는 없다(`agendaTitles`·`attachmentCount` 가 안 바뀐다).
+     */
+    addLine: useMutation({
+      mutationFn: (input: AddLineInput) => addLine(meetingId as number, input),
+      onSuccess: (line: MeetingLine) => {
+        client.setQueryData<MeetingDetail>(detailKey, (snapshot) => {
+          if (!snapshot) {
+            return snapshot;
+          }
+          return {
+            ...snapshot,
+            agendas: {
+              ...snapshot.agendas,
+              human: snapshot.agendas.human.map((agenda) =>
+                agenda.id === line.agendaId && !agenda.lines.some((existing) => existing.id === line.id)
+                  ? { ...agenda, lines: [...agenda.lines, line] }
+                  : agenda,
+              ),
+            },
+          };
+        });
+      },
+    }),
+    /**
+     * 안건 상태 — `active`(전환) · `done`(완료 → 다음 `next` 가 활성) · `next`(되돌림). 응답이 `MeetingDetail` 전체다
+     * (이전 활성이 `next` 로 함께 바뀐다). **낙관적이지 않다** — 실패는 토스트 + 배지 원복(Case Matrix).
+     */
+    setAgendaState: useMutation({
+      mutationFn: ({ agendaId, state }: { agendaId: number; state: AgendaState }) =>
+        updateAgenda(meetingId as number, agendaId, { state }),
+      onSuccess: (detail) => putDetail(client, detail.id, detail),
     }),
 
     addAttachment: useMutation({
