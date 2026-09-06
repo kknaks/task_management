@@ -23,7 +23,7 @@
 
 import { useCallback, useRef, useState } from "react";
 
-import { transitionBlockedReason } from "@/features/tasks/statusTransitions";
+import { transitionBlockedReason } from "@/lib/taskStatus";
 import type { TaskListItem, TaskStatus } from "@/features/tasks/types";
 
 export interface KanbanDnd {

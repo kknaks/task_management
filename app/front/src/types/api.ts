@@ -49,6 +49,7 @@ export interface SessionResponse {
  * 하나이고 이 타입은 거기서 파생한다(검수 W-1). 손으로 두 번 적으면 유니온에만 더했을 때
  * 팝오버에서 조용히 빠진다.
  */
+import type { TaskStatus } from "@/components/shared/StatusDot";
 import type { ColorToken } from "@/lib/palette";
 
 export type { ColorToken };
@@ -76,4 +77,20 @@ export interface Project {
 /** 목록 응답 봉투. **`items` 를 꺼내는 것은 영역별 `api.ts` 까지**이고 훅 위로는 배열이 올라간다(§3-6). */
 export interface ListResponse<T> {
   items: T[];
+}
+
+// --- 업무(공유분) ---------------------------------------------------------
+
+/**
+ * 연관 업무 한 건 — `GET /api/tasks/relations/candidates` 의 항목이자 `TaskDetail.relations` 의 항목(SPEC-003 §4).
+ *
+ * `features/tasks/types.ts` 에 있던 것을 **여기로 올렸다**(WORK-008 검수 F-1) — 후보 검색(`lib/api/tasks.ts`)을
+ * 업무 드로어와 회의록 U-9 드로어가 함께 부르므로 응답 타입도 영역 밖에 산다. `features/tasks/types.ts` 는 다시 내보낸다.
+ */
+export interface TaskRelation {
+  id: number;
+  title: string;
+  status: TaskStatus;
+  projectName: string | null;
+  dueDate: string | null;
 }

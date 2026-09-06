@@ -2,6 +2,8 @@
  * **미리보기 패널 · 상단 바 · 안건 목록 — 앱 창 확인 항목의 테스트 판**(WORK-006 Phase 4).
  *
  * - `ai_headline` 을 채운 종료 회의를 고르면 본문 맨 위에 **「AI 한 줄 요약」 바 한 개**, 비어 있으면 **없다**
+ * - `ended + succeeded` 는 요약 바 아래 **통합본(`merged`) 트리** — 상세 본문과 같은 `AgendaLineTree` 를 읽기 전용으로(SPEC-006 §7 L728 ·
+ *   WORK-008 검수 W-1). 편집 입력 · 「제거」 · 줄 버튼이 없고, 사람 원본·AI 트랙의 줄은 그리지 않는다
  * - 문단 요약 · 「AI 생성」 배지 · 「· 회의실 A」 가 **없다**
  * - `scheduled` 는 안건 목록(읽기 전용) + 첨부 행, `recording` 「기록 중입니다」, `generating` 「회의록 생성중」,
  *   `ended+failed` 는 요약 바 없이 「통합 정리 실패」
@@ -19,6 +21,7 @@ import { render, screen, within } from "@testing-library/react";
 import { MeetingAgendaList } from "@/features/meetings/components/MeetingAgendaList";
 import { MeetingPreviewPanel } from "@/features/meetings/components/MeetingPreviewPanel";
 import { MeetingStatusBar } from "@/features/meetings/components/MeetingStatusBar";
+import { AI, HUMAN, MERGED, endedSucceeded } from "@/features/meetings/closeFixtures";
 import { meetingDetail, renderWithProviders } from "@/features/meetings/testUtils";
 import type { MeetingDetail } from "@/features/meetings/types";
 import { tokenStore } from "@/lib/auth/tokenStore";
@@ -58,11 +61,42 @@ describe("AI 한 줄 요약 바(U-8)", () => {
   });
 
   it("`headline` 이 `null` 이면 바가 **없다** — 빈 바를 두지 않는다", async () => {
-    serve(meetingDetail({ status: "ended", integrationState: "succeeded", headline: null }));
+    serve(endedSucceeded({ headline: null }));
     renderWithProviders(<MeetingPreviewPanel meetingId={21} />);
 
-    expect(await screen.findByText("통합본 트리는 WORK-008 에서 만든다")).toBeInTheDocument();
+    // 바가 없어도 통합본 트리는 그대로 — 첫 안건 제목으로 렌더를 기다린다
+    expect(await screen.findByText(MERGED[0].title)).toBeInTheDocument();
     expect(screen.queryByRole("note", { name: "AI 한 줄 요약" })).not.toBeInTheDocument();
+  });
+
+  it("`ended + succeeded` — 요약 바 아래 **통합본 트리**를 읽기 전용으로 그린다(상세 본문과 같은 `AgendaLineTree` · 플레이스홀더 0)", async () => {
+    serve(endedSucceeded());
+    renderWithProviders(<MeetingPreviewPanel meetingId={21} />);
+
+    // 통합본 안건 넷 · 배지 어휘는 종료 후 것(「완료」 · 「다음 논의로」 · AI 신설 안건 「AI 안건」)
+    for (const agenda of MERGED) {
+      // 「경쟁사 요금제 비교」는 첨부 링크 이름과도 같다 — 하나 이상이면 된다
+      expect((await screen.findAllByText(agenda.title)).length).toBeGreaterThan(0);
+    }
+    expect(screen.getByText("다음 논의로")).toBeInTheDocument();
+    expect(screen.getByText("AI 안건")).toBeInTheDocument();
+    expect(screen.queryByText("대기")).not.toBeInTheDocument();
+    // 통합본 줄 본문 — 사람 문장 글자 그대로 + AI 에만 있던 줄
+    expect(screen.getByText("도입 사례는 3건만 유지하고 나머지는 별도 페이지로 분리한다.")).toBeInTheDocument();
+    expect(screen.getByText("AI: 경쟁사 요금제를 비교했다")).toBeInTheDocument();
+    // 사람 원본 · AI 트랙에만 있는 줄은 그리지 않는다(통합본 한 트랙만)
+    const onlyInOtherTracks = [...HUMAN, ...AI]
+      .flatMap((agenda) => agenda.lines)
+      .filter((line) => !MERGED.some((agenda) => agenda.lines.some((merged) => merged.content === line.content)));
+    expect(onlyInOtherTracks.length).toBeGreaterThan(0);
+    for (const line of onlyInOtherTracks) {
+      expect(screen.queryByText(line.content)).not.toBeInTheDocument();
+    }
+    // 읽기 전용 — 편집 입력 · 「제거」 · 업무 생성/갱신 버튼 · 플레이스홀더 문구가 없다
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /제거/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /업무 (생성|갱신)/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/WORK-008 에서 만든다/)).not.toBeInTheDocument();
   });
 
   it("`ended + failed` 는 요약 바 없이 사람 원본 + 「통합 정리 실패」", async () => {

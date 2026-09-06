@@ -10,7 +10,7 @@
  * | `scheduled` | 사람 트랙 안건 목록(`MeetingAgendaList` 읽기 전용) + 하단 첨부 행 |
  * | `recording` | 「기록 중입니다」 + 「상세보기」 안내 — **미리보기는 스트림을 열지 않는다** |
  * | `generating` | 「회의록 생성중」 + 진행 표시 |
- * | `ended` + succeeded | **AI 한 줄 요약 바**(`headline` 있을 때만 · `MeetingStatusBar variant="headline"`) + 통합본 트리(**WORK-008 플레이스홀더**) + 첨부 행 |
+ * | `ended` + succeeded | **AI 한 줄 요약 바**(`headline` 있을 때만 · `MeetingStatusBar variant="headline"`) + **통합본 트리**(`AgendaLineTree` 를 `agendas={merged}` · 읽기 전용으로 — SPEC-006 §7 「SPEC-008 규격을 읽기 전용으로 그대로」 · WORK-008 검수 W-1) + 첨부 행 |
  * | `ended` + failed | 요약 바 없이 사람 원본 트리 + 「통합 정리 실패」 캡션 |
  *
  * **그리지 않는 것**(§7): 「· 회의실 A」 · 「요약 · AI 생성」 문단 · 취소 행 · PNG 첨부 행.
@@ -24,6 +24,8 @@ import { Loader2 } from "lucide-react";
 import { AttachmentList } from "@/components/shared/AttachmentList";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { PanelTabs } from "@/components/shared/PanelTabs";
+import { endedNotesBadge, notesAgendasOf, notesExpandable } from "@/features/meetings/closeState";
+import { AgendaLineTree } from "@/features/meetings/components/AgendaLineTree";
 import { MeetingAgendaList } from "@/features/meetings/components/MeetingAgendaList";
 import { formatBytes } from "@/features/meetings/components/MeetingAttachmentsTab";
 import { MeetingDetailSkeleton } from "@/features/meetings/components/MeetingSkeleton";
@@ -40,6 +42,9 @@ const TABS = [
   { key: "notes", label: "회의록" },
   { key: "transcript", label: "원문" },
 ] as const;
+
+/** 근거 칩이 표시만일 때 펼친 영역 캡션 — 드로어(U-4)와 같은 뜻이다. 미리보기는 스크립트 패널을 열지 않는다. */
+const PREVIEW_CHIP_CAPTION = "스크립트는 상세 페이지에서 볼 수 있습니다";
 
 export function meetingDetailHref(id: number): string {
   return `/meetings/detail/?id=${id}`;
@@ -149,8 +154,16 @@ function NotesBody({ meeting }: { meeting: MeetingDetail }) {
           {meeting.headline ? (
             <MeetingStatusBar variant="headline" headline={meeting.headline} summary={meeting.mergedSummary} />
           ) : null}
-          {/* 통합본(`merged`) 트리 렌더 규격은 SPEC-008 이 정본 — WORK-008 이 이 자리를 채운다 */}
-          <EmptyState message="통합본 트리는 WORK-008 에서 만든다" />
+          {/* 통합본(`merged`) 트리 — 상세 본문(`MeetingDetailBody`)과 **같은 컴포넌트 · 같은 판정**(트랙은 `closeState` 가 고른다 · 펼침은 U-5).
+              읽기 전용: 편집 prop · 줄 버튼 · 근거 칩 클릭이 없다(칩은 표시만 — 스크립트는 상세 페이지가 그린다). */}
+          <AgendaLineTree
+            agendas={notesAgendasOf(meeting)}
+            expandable={notesExpandable}
+            chipCaption={PREVIEW_CHIP_CAPTION}
+            badgeFor={endedNotesBadge}
+            recordingStartedAt={meeting.recordingStartedAt}
+            empty={<EmptyState message="기록된 안건이 없습니다" />}
+          />
           <AttachmentRows attachments={meeting.attachments} />
         </>
       );

@@ -40,7 +40,7 @@ import { MeetingStatusBar } from "@/features/meetings/components/MeetingStatusBa
 import { openLineDeleteModal } from "@/features/meetings/components/LineDeleteModal";
 import { TranscriptPanel, type TranscriptPanelHandle } from "@/features/meetings/components/TranscriptPanel";
 import { LIVE_AGENDA_BADGE } from "@/features/meetings/agendaBadges";
-import { editTrackOf, endedAiBadge, endedNotesBadge, notesAgendasOf } from "@/features/meetings/closeState";
+import { editTrackOf, endedAiBadge, endedNotesBadge, notesAgendasOf, notesExpandable } from "@/features/meetings/closeState";
 import { INTEGRATE_FAILED_MESSAGE, INVALID_STATUS_MESSAGE, isInvalidMeetingStatus, meetingInlineError } from "@/features/meetings/errors";
 import { useMeetingEdit } from "@/features/meetings/hooks/useMeetingEdit";
 import { useMeetingFinalizeJob } from "@/features/meetings/hooks/useMeetingFinalizeJob";
@@ -69,11 +69,6 @@ export const EDITING_CAPTION = "변경은 자동 저장됩니다";
 export const DRAWER_SCHEDULED_CAPTION = "회의 시작은 전체 페이지에서 합니다";
 export const DRAWER_RECORDING_CAPTION = "진행 중인 회의입니다 · 전체 페이지에서 보기";
 
-/** 통합본 줄의 화살표 — `detail`·`evidence` 둘 다 없으면 없다(U-5). */
-function notesExpandable(line: MeetingLine): boolean {
-  return Boolean(line.detail) || line.evidence.length > 0;
-}
-
 /** AI 탭 안내 바 우측(U-1 · U-2 · U-3) — `finalBatchState` · `latestBatchSeq` 파생. */
 function aiCaption(meeting: MeetingDetail): string {
   const batches = meeting.latestBatchSeq > 0 ? `배치 ${meeting.latestBatchSeq}회 반영 · ` : "";
@@ -81,7 +76,11 @@ function aiCaption(meeting: MeetingDetail): string {
     return `${batches}종결 정리 중`;
   }
   if (meeting.finalBatchState === "succeeded") {
-    // 마지막 배치 성공 시각은 `MeetingDetail` 에 없다 — 통합 시각(`mergedSummary.integratedAt`)으로 대신 적는다(보고 「실물 확인 필요」).
+    // **계약 공백 — DG-2**(WORK-008 검수 W-3). SPEC-008 U-3 L152 는 「종결 · HH:MM」을 **마지막 배치 성공 시각**으로 적는데
+    // `MeetingDetail` 에 그 필드가 없다. `mergedSummary.integratedAt` 은 **통합 시각**이지 마지막 배치 시각이 아니고, 계약(§4 Data Contract
+    // L642 `mergedSummary = {agendaCount, decisionCount, actionCount}`) 밖 필드다. 실패 상태(`mergedSummary` null)에서는 `updatedAt`
+    // (= 통합 종결 시각)으로 떨어져 성공·실패 시각이 한 자리에 섞인다. **필드를 더할지(`finalBatchAt`) · `integratedAt` 을 채택하고
+    // 문구를 「통합 시각」으로 고칠지는 문서가 정한다** — 그때까지 지금 동작을 유지하고 코드를 새로 만들지 않는다.
     const at = meeting.mergedSummary?.integratedAt ?? meeting.updatedAt;
     return `종결 · ${formatClock(at)}`;
   }

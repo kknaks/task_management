@@ -4,6 +4,7 @@
  */
 
 import type { TaskStatus } from "@/components/shared/StatusDot";
+import type { TaskRelation } from "@/types/api";
 import type { ColorToken } from "@/lib/palette";
 
 export type { TaskStatus };
@@ -48,13 +49,8 @@ export interface TaskAttachment {
   url: string | null;
 }
 
-export interface TaskRelation {
-  id: number;
-  title: string;
-  status: TaskStatus;
-  projectName: string | null;
-  dueDate: string | null;
-}
+/** 연관 업무 한 건 — 정의는 `types/api.ts`(회의록 U-9 드로어와 공유 · WORK-008 검수 F-1). 여기서는 다시 내보낸다. */
+export type { TaskRelation } from "@/types/api";
 
 export interface TaskLog {
   id: number;

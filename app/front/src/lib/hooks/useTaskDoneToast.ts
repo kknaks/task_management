@@ -4,8 +4,11 @@
  * **완료 토스트 「완료 처리했습니다 · 실행취소」 하나**(SPEC-004 U-6 · WORK-005).
  *
  * `useTaskStatus`(리스트 셀 · 상세 드롭다운 · 칸반)와 **회의록의 「업무 갱신」**(SPEC-008 U-6 · WORK-008 Phase 5)이
- * 같은 전이를 지나므로 같은 토스트를 띄운다 — 「같은 전이이기 때문이다」(U-6 문구). 그래서 토스트를 여기 한 파일로 뽑아
- * `features/tasks` 가 내보낸다. 회의록이 자기 토스트를 만들면 문구 · 수명 · 실행취소 실패 안내가 둘이 된다.
+ * 같은 전이를 지나므로 같은 토스트를 띄운다 — 「같은 전이이기 때문이다」(U-6 문구). 그래서 토스트를 여기 한 파일로 뽑았다.
+ * 회의록이 자기 토스트를 만들면 문구 · 수명 · 실행취소 실패 안내가 둘이 된다.
+ *
+ * `features/tasks/hooks/` 에 있던 것을 **`lib/hooks/` 로 올렸다**(WORK-008 검수 F-1 · WORK-006 검수 W-1 → G-5 와 같은 방식) —
+ * 두 영역이 쓰는 훅은 배럴로 내주지 않고 `lib/` 에 둔다(frontend/README.md §2 규칙 4).
  *
  * **실행취소는 서버가 조건을 판정한다**(4초 · 마지막 로그) — 화면 타이머는 표시용이고, 늦게 눌리면
  * `undo_not_available` 이 같은 문구로 돌아온다. 실행취소 자체는 SPEC-004 `POST /api/tasks/{id}/status/undo` 그대로다.
@@ -15,7 +18,7 @@ import { useCallback } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
-import { undoTaskStatus } from "@/features/tasks/api";
+import { undoTaskStatus } from "@/lib/api/tasks";
 import { API_ERROR_CODE, isApiError } from "@/lib/api/errors";
 import { queryKeys } from "@/lib/api/queryKeys";
 

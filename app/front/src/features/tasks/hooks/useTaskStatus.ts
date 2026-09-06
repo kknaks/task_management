@@ -28,10 +28,10 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { changeTaskStatus, deleteTask } from "@/features/tasks/api";
-import { useTaskDoneToast } from "@/features/tasks/hooks/useTaskDoneToast";
 import type { TaskListItem, TaskStatus, TaskStatusInput } from "@/features/tasks/types";
 import { API_ERROR_CODE, isApiError } from "@/lib/api/errors";
 import { queryKeys } from "@/lib/api/queryKeys";
+import { useTaskDoneToast } from "@/lib/hooks/useTaskDoneToast";
 
 /** 거부 토스트 6초(U-6 — 할 일이 있는 토스트라 더 길다). 완료 토스트(4초)는 `useTaskDoneToast` 가 갖는다. */
 const BLOCKED_TOAST_MS = 6000;

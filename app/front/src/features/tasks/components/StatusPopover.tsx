@@ -18,7 +18,7 @@ import { useState, type ReactNode } from "react";
 
 import { StatusDot, STATUS_LABEL } from "@/components/shared/StatusDot";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { transitionBlockedReason } from "@/features/tasks/statusTransitions";
+import { transitionBlockedReason } from "@/lib/taskStatus";
 import type { TaskStatus } from "@/features/tasks/types";
 import { cn } from "@/lib/utils";
 

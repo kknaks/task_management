@@ -11,7 +11,7 @@
  *
  * | 응답 | 화면(SPEC-008 §4 Case Matrix · SPEC-004 U-6) |
  * |---|---|
- * | 200 | `pendingChange` 비워짐 → 「갱신 완료」. **완료 전이가 포함됐고 성공했으면** 완료 토스트 「완료 처리했습니다 · 실행취소」(4초 — `features/tasks` 의 것 그대로) |
+ * | 200 | `pendingChange` 비워짐 → 「갱신 완료」. **완료 전이가 포함됐고 성공했으면** 완료 토스트 「완료 처리했습니다 · 실행취소」(4초 — `lib/hooks/useTaskDoneToast` · 업무 화면과 같은 것) |
  * | 422 `task_completion_blocked` | 거부 토스트(6초) + **「결과 입력」** → 그 업무 상세 드로어의 「결과자료 · 완료 결과」 카드로(WORK-004 `useCompletionCardFocus` 유도 훅). 줄은 「업무 갱신」 그대로 |
  * | 409 `invalid_status_transition` | 토스트 「이 상태로는 바꿀 수 없습니다」. 줄 그대로 |
  * | 404 | 업무가 지워졌다 — 상세 재조회(서버가 `isDeleted:true` 로 실어 오면 줄이 「삭제된 업무」 비활성) |
@@ -30,12 +30,14 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { STATUS_LABEL } from "@/components/shared/StatusDot";
-import { openTaskDetailDrawer, useTaskDoneToast } from "@/features/tasks";
+// `features/tasks` 에서 가져오는 것은 업무 상세 드로어 **하나** — §2 규칙 4 의 유일한 예외(드로어 재사용). 토스트는 `lib/hooks` 의 것이다.
+import { openTaskDetailDrawer } from "@/features/tasks";
 import { applyLineTaskChange, createTaskFromLine as postCreateTaskFromLine } from "@/features/meetings/api";
 import { INVALID_STATUS_MESSAGE, isMeetingNotFound } from "@/features/meetings/errors";
 import type { MeetingDetail, MeetingLine, NewTaskInput } from "@/features/meetings/types";
 import { API_ERROR_CODE, isApiError } from "@/lib/api/errors";
 import { queryKeys } from "@/lib/api/queryKeys";
+import { useTaskDoneToast } from "@/lib/hooks/useTaskDoneToast";
 import { useOverlay } from "@/lib/overlay/OverlayProvider";
 
 /** 거부 토스트 6초 — 할 일(「결과 입력」)이 있는 토스트라 더 길다(SPEC-004 U-6). */

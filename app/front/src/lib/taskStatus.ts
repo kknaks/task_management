@@ -10,9 +10,12 @@
  *
  * **완료 게이트는 여기 없다.** 결과자료 유무를 화면이 미리 판단해 막으면 서버와 어긋난다
  * (§5 · WP §Internal Interface Contract) — 완료 항목은 **언제나 열려 있고** 서버가 판정한다.
+ *
+ * `features/tasks/statusTransitions.ts` 에 있던 것을 **`lib/` 로 올렸다**(WORK-008 검수 F-1 · G-5 와 같은 방식) —
+ * 업무의 세 진입점에 더해 **회의록 U-9 드로어의 상태 셀렉터**가 같은 표를 읽는다. 영역 사이 import 는 금지(§2 규칙 4).
  */
 
-import type { TaskStatus } from "@/features/tasks/types";
+import type { TaskStatus } from "@/components/shared/StatusDot";
 
 /** `todo→in_progress|done|cancelled` · `in_progress→done|todo|cancelled` · `done→in_progress` · `cancelled→todo` */
 const TRANSITIONS: Record<TaskStatus, readonly TaskStatus[]> = {

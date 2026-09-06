@@ -4,7 +4,7 @@
  * **추가 드로어 — 연관 업무**(SPEC-008 U-9 · 시안 L2306~2599 · [09] L744~745 · DEC-003 §4 L102). `DrawerFrame` 위 — 폭 · 스크림은 프레임이 정한다.
  *
  * 「내 업무에서 고른 업무에 이 회의의 변경을 반영합니다」. 업무 검색은 **내 업무가 제공**한다(기획 L84 → `GET /api/tasks/relations/candidates`,
- * `features/tasks` 가 내보낸 `fetchRelationCandidates`) — 이 드로어가 업무 API 를 직접 쓰는 곳은 **그 후보 검색 하나**뿐이다.
+ * `lib/api/tasks` 의 `fetchRelationCandidates` — 업무 드로어와 함께 쓰는 공유분이라 `lib/` 에 산다) — 이 드로어가 업무 API 를 직접 쓰는 곳은 **그 후보 검색 하나**뿐이다.
  *
  * - 업무 선택: **프로젝트 셀렉터** 「<프로젝트명> · n건」(기본값 = 회의의 프로젝트 · 무소속이면 「전체」) + 검색 입력(h34 「업무 검색」) +
  *   목록 행(라디오 · 제목 14/600 · 기한 `MM.DD`/「미정」 · 상태 「시작전/진행중/완료/취소」). **단일 선택.** 결과 없음 두 줄 · `total > 20` 이면 「n건 중 20건 · 검색어로 좁혀 주세요」
@@ -29,14 +29,16 @@ import { STATUS_LABEL, type TaskStatus } from "@/components/shared/StatusDot";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
-import { canTransition, fetchRelationCandidates, type TaskRelation } from "@/features/tasks";
 import { isMeetingNotFound, isValidationError, meetingInlineError } from "@/features/meetings/errors";
 import type { AddLineInput, MeetingLine, MeetingRefSummary, PendingChange } from "@/features/meetings/types";
 import { queryKeys } from "@/lib/api/queryKeys";
+import { fetchRelationCandidates } from "@/lib/api/tasks";
 import { formatDueDate, type DateKey } from "@/lib/datetime";
 import { useProjectsQuery } from "@/lib/hooks/useWorkSettings";
 import type { useOverlay } from "@/lib/overlay/OverlayProvider";
+import { canTransition } from "@/lib/taskStatus";
 import { cn } from "@/lib/utils";
+import type { TaskRelation } from "@/types/api";
 
 import { TaskDateField } from "@/features/meetings/components/TaskDateField";
 

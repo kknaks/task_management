@@ -11,7 +11,9 @@
  * 8. 공용 부품(`MeetingAttachmentsTab` · `AttachmentFileDrawer` · `MeetingAgendaList` · `MeetingStatusBar`)이
  *    회의 상태·라우트를 import 하지 않는다 · 자동 저장 실패를 `useState` 로 드는 컴포넌트 0건
  * 9. 영역 사이 import 0건 — **모든 `features/*`** 가 다른 영역을 부르지 않는다 (§2 규칙 4).
- *    WORK-006 검수 W-1 — meetings→settings 만 보던 검사가 tasks→settings 를 놓쳤다. 이제 전 영역을 본다
+ *    WORK-006 검수 W-1 — meetings→settings 만 보던 검사가 tasks→settings 를 놓쳤다. 이제 전 영역을 본다.
+ *    WORK-008 검수 F-1 — `@/features/<b>/…` 만 잡던 정규식이 **배럴 `@/features/<b>`** 를 통과시켰다. 이제 배럴도 잡고,
+ *    규칙 4 의 단 하나의 예외(드로어 재사용)만 **이름 목록**으로 둔다
  * 10. `text-[NNpx]` 임의 글꼴 크기 0건 — 타이포 계단은 프리셋으로만 (§5-1 · W-4)
  */
 
@@ -131,23 +133,105 @@ describe("⑧ 공용 부품 — 상태·라우트 무의존 · 실패 state 0건
   });
 });
 
-describe("⑨ 영역 사이 import 금지 — 전 영역", () => {
-  it("features/<a> 가 features/<b> 를 import 하지 않는다(테스트 파일 제외) — 공유는 lib/ · components/shared/", () => {
-    const FEATURES = path.join(SRC, "features");
+/**
+ * **규칙 4 의 단 하나의 예외 — 이름 목록**(frontend/README.md §2 규칙 4 · DEC-005 §2).
+ *
+ * 「업무·회의 상세/생성 드로어는 캘린더·회의록이 재사용한다」 — 지금 실제로 다른 영역이 쓰는 것은 회의록의 「결과 입력」 →
+ * 업무 상세 드로어(`openTaskDetailDrawer` · SPEC-004 U-6 · SPEC-008 U-6) **하나**다. 그래서 목록도 하나다.
+ * 캘린더가 업무 생성 드로어·회의 드로어를 가져가는 work 가 오면 **그때 그 이름을 여기 더한다** — 미리 열어 두지 않는다.
+ *
+ * 드로어가 아닌 것(훅 · API · 전이 표 · 타입)은 예외가 아니다 — `lib/` 로 올린다(WORK-006 검수 W-1 → G-5 · WORK-008 검수 F-1).
+ * 배럴(`@/features/<b>`)로 가져와도 이 목록 밖의 이름이면 위반이다.
+ */
+const CROSS_AREA_ALLOWED: Record<string, ReadonlySet<string>> = {
+  tasks: new Set(["openTaskDetailDrawer"]),
+};
+
+/**
+ * 파일 하나의 영역 사이 import 위반 목록 — 문자열로 돌려준다(어느 경로 · 어느 이름이 걸렸는지 실패 메시지에 그대로 실린다).
+ *
+ * - `@/features/<b>/…`(내부 경로) — **전부 위반**. 예외도 배럴로만 가져온다.
+ * - `@/features/<b>`(배럴) — `import { … } from` 의 이름이 **전부** `CROSS_AREA_ALLOWED[b]` 안에 있을 때만 통과.
+ *   기본 import · `* as` · `import()` · `export … from` 은 이름을 추출하지 않으므로 위반이다.
+ */
+function crossAreaViolations(code: string, area: string): string[] {
+  const violations: string[] = [];
+  // 이름을 판정한 배럴 import 문(통과 · 위반 모두) — 아래 원시 리터럴 검사에서 같은 수만큼 빼 준다(위반은 한 번만 센다).
+  const judgedBarrel = new Map<string, number>();
+  for (const match of code.matchAll(/import\s+(?:type\s+)?\{([^}]*)\}\s+from\s+["']@\/features\/([a-z-]+)["']/g)) {
+    const [, clause, other] = match;
+    if (other === area) {
+      continue;
+    }
+    const names = clause.split(",").map((name) => name.trim().replace(/^type\s+/, "").replace(/\s+as\s+.*$/, "")).filter(Boolean);
+    const allowed = CROSS_AREA_ALLOWED[other] ?? new Set<string>();
+    const rejected = names.filter((name) => !allowed.has(name));
+    if (rejected.length > 0) {
+      violations.push(`@/features/${other} { ${rejected.join(", ")} }`);
+    }
+    judgedBarrel.set(other, (judgedBarrel.get(other) ?? 0) + 1);
+  }
+  // 원시 리터럴 — import 문 형태와 무관하게 `@/features/<b>` · `@/features/<b>/…` 전부를 센다.
+  for (const match of code.matchAll(/["']@\/features\/([a-z-]+)(\/[^"']*)?["']/g)) {
+    const [, other, subpath] = match;
+    if (other === area) {
+      continue;
+    }
+    if (subpath) {
+      violations.push(`@/features/${other}${subpath}`);
+      continue;
+    }
+    const remaining = judgedBarrel.get(other) ?? 0;
+    if (remaining > 0) {
+      judgedBarrel.set(other, remaining - 1);
+    } else {
+      violations.push(`@/features/${other} (배럴 — 허용 이름 목록 밖 형태)`);
+    }
+  }
+  return violations;
+}
+
+describe("⑨ 영역 사이 import 금지 — 전 영역 · 배럴 포함", () => {
+  const FEATURES = path.join(SRC, "features");
+  const areaSources = (area: string) =>
+    walk(path.join(FEATURES, area)).filter((file) => /\.tsx?$/.test(file) && !/\.test\.tsx?$/.test(file));
+
+  it("features/<a> 가 features/<b> 를 import 하지 않는다(테스트 파일 제외 · 배럴 `@/features/<b>` 포함) — 공유는 lib/ · components/shared/ · 예외는 드로어 이름 목록뿐", () => {
     const offenders: string[] = [];
     for (const area of readdirSync(FEATURES)) {
-      const sources = walk(path.join(FEATURES, area)).filter(
-        (file) => /\.tsx?$/.test(file) && !/\.test\.tsx?$/.test(file),
-      );
-      for (const file of sources) {
-        const imports = read(file).match(/@\/features\/([a-z-]+)\//g) ?? [];
-        // 규칙 4 의 단 하나의 예외(캘린더가 업무·회의 드로어를 재사용)는 아직 없는 영역이다 — 예외 목록 없음.
-        if (imports.some((hit) => hit !== `@/features/${area}/`)) {
-          offenders.push(rel(file));
+      for (const file of areaSources(area)) {
+        for (const violation of crossAreaViolations(read(file), area)) {
+          offenders.push(`${rel(file)} → ${violation}`);
         }
       }
     }
     expect(offenders).toEqual([]);
+  });
+
+  it("예외 목록에 실제로 쓰이는 드로어 하나만 있다 — 목록에 있는 이름은 다른 영역이 실제로 가져간다(죽은 예외 0)", () => {
+    for (const [owner, names] of Object.entries(CROSS_AREA_ALLOWED)) {
+      const importers = readdirSync(FEATURES)
+        .filter((area) => area !== owner)
+        .flatMap((area) => areaSources(area))
+        .map(read);
+      for (const name of names) {
+        const used = importers.some((code) => new RegExp(`import\\s+\\{[^}]*\\b${name}\\b[^}]*\\}\\s+from\\s+["']@/features/${owner}["']`).test(code));
+        expect(used, `${owner}.${name}`).toBe(true);
+      }
+    }
+  });
+
+  it("검사 자신이 배럴을 잡는다 — 배럴 · 내부 경로 · 목록 밖 이름 · 기본 import 를 넣으면 전부 위반으로 센다(⑨ 의 자기 검증 · F-1 재발 방지)", () => {
+    expect(crossAreaViolations('import { canTransition } from "@/features/tasks";', "meetings")).toEqual(["@/features/tasks { canTransition }"]);
+    expect(crossAreaViolations('import { openTaskDetailDrawer, useTaskDoneToast } from "@/features/tasks";', "meetings")).toEqual(["@/features/tasks { useTaskDoneToast }"]);
+    expect(crossAreaViolations('import { fetchRelationCandidates } from "@/features/tasks/api";', "meetings")).toEqual(["@/features/tasks/api"]);
+    expect(crossAreaViolations('import type { TaskRelation } from "@/features/tasks";', "meetings")).toEqual(["@/features/tasks { TaskRelation }"]);
+    expect(crossAreaViolations('import tasks from "@/features/tasks";', "meetings")).toEqual(["@/features/tasks (배럴 — 허용 이름 목록 밖 형태)"]);
+    expect(crossAreaViolations('const m = await import("@/features/tasks");', "meetings")).toEqual(["@/features/tasks (배럴 — 허용 이름 목록 밖 형태)"]);
+    expect(crossAreaViolations('export { openTaskDetailDrawer } from "@/features/tasks";', "meetings")).toEqual(["@/features/tasks (배럴 — 허용 이름 목록 밖 형태)"]);
+    // 통과하는 것 — 예외 이름만 · 자기 영역 · 타입 import 라도 이름이 목록 안이면
+    expect(crossAreaViolations('import { openTaskDetailDrawer } from "@/features/tasks";', "meetings")).toEqual([]);
+    expect(crossAreaViolations('import { x } from "@/features/meetings/api";', "meetings")).toEqual([]);
   });
 });
 
@@ -363,21 +447,14 @@ describe("⑳ 업무 연동 — 업무 API 직접 호출 0건 · 판정 코드 0
   const ALL_SOURCES = walk(SRC).filter((file) => /\.tsx?$/.test(file) && !/\.test\.tsx?$/.test(file) && !file.includes("/test/"));
 
   it("`features/meetings` 에 `/api/tasks` 리터럴이 0건이다(주석 제외) — 생성 · 갱신은 전부 `/api/meetings/…/task`", () => {
-    const offenders = meetingSources.filter((file) => /\/api\/tasks/.test(stripComments(read(file)))).map(rel);
+    // `@/lib/api/tasks`(모듈 경로)는 URL 리터럴이 아니다 — 앞 글자가 단어 문자면 경로라서 뺀다(F-1 수정으로 `lib/api/tasks` 가 생겼다).
+    const offenders = meetingSources.filter((file) => /(?<!\w)\/api\/tasks/.test(stripComments(read(file)))).map(rel);
     expect(offenders).toEqual([]);
   });
 
-  it("`features/meetings` 가 `features/tasks` 에서 가져가는 것은 배럴(`@/features/tasks`)의 넷뿐 — 상세 드로어 · 완료 토스트 · 후보 검색 · 전이 표. 업무 생성 · 갱신 · 상태 전이 호출은 0건", () => {
-    const allowed = new Set(["openTaskDetailDrawer", "useTaskDoneToast", "fetchRelationCandidates", "canTransition", "TaskRelation"]);
+  it("`features/meetings` 에 업무 생성 · 갱신 · 상태 전이 · 실행취소 호출이 0건이다 — `features/tasks` 에서 가져가는 이름은 ⑨ 의 예외 목록(상세 드로어 하나)이 판정한다", () => {
     for (const file of meetingSources) {
-      const code = read(file);
-      for (const match of code.matchAll(/import\s+(?:type\s+)?\{([^}]*)\}\s+from\s+["']@\/features\/tasks["']/g)) {
-        const names = match[1].split(",").map((name) => name.trim().replace(/^type\s+/, "")).filter(Boolean);
-        for (const name of names) {
-          expect(allowed.has(name), `${rel(file)} imports ${name}`).toBe(true);
-        }
-      }
-      expect(code, rel(file)).not.toMatch(/changeTaskStatus|undoTaskStatus|createTask\b|updateTask\b|addMemo|useTaskStatus|useTaskMutations/);
+      expect(read(file), rel(file)).not.toMatch(/changeTaskStatus|undoTaskStatus|createTask\b|updateTask\b|addMemo|useTaskStatus|useTaskMutations/);
     }
   });
 

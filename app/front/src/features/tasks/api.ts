@@ -12,7 +12,6 @@ import type {
   TaskDetail,
   TaskListItem,
   TaskListResponse,
-  TaskRelation,
   TaskStatusInput,
   TasksListQuery,
   UpdateTaskInput,
@@ -82,66 +81,9 @@ export function deleteAttachment(taskId: number, attachmentId: number): Promise<
 }
 
 /**
- * **연관업무 후보 검색**(SPEC-003 §4, 2026-09-06 신설).
- *
- * 업무에 매달리지 않는 **컬렉션 표면**이고 정렬 근거를 쿼리로 받는다 — 생성 드로어에는
- * 자기 id 가 없기 때문이다. 표면을 둘로 두면 생성·상세가 다른 코드를 타고 정렬이 갈린다.
- *
- * - **상세 드로어**: `excludeId` 만 보낸다 — 서버가 그 업무의 `project`·`due` 를 쓰고
- *   **이미 연결된 것도 함께 제외**한다
- * - **생성 드로어**: `excludeId` 없이 **폼에 입력 중인** `projectId`·`dueDate` 를 보낸다
+ * **연관업무 후보 검색은 `lib/api/tasks.ts` 로 올라갔다**(WORK-008 검수 F-1) — 업무 드로어와 회의록 U-9 드로어가 함께 부른다.
+ * 실행취소(`undoTaskStatus`)도 같은 이유로 그쪽이다(완료 토스트 `lib/hooks/useTaskDoneToast`).
  */
-/**
- * **필터 칩 3 과 1:1**(SPEC-003 §4 `scope` 표 · U-8).
- *
- * `projectId`·`dueDate` 가 **정렬 힌트**인 것과 달리 `scope` 는 **후보를 잘라내는 필터**다 —
- * 역할이 달라서 따로 있다. 칩이 필터인데 서버에 필터가 없으면 화면이 「전체 정렬본」을
- * 세 번 똑같이 보여주게 된다.
- */
-export type RelationScope = "project" | "recent30" | "all";
-
-export interface RelationCandidateQuery {
-  keyword?: string;
-  excludeId?: number | null;
-  projectId?: number | null;
-  dueDate?: string | null;
-  scope?: RelationScope;
-}
-
-/** `total` 은 **`scope` 를 적용한 뒤의 총계**이고 `items` 는 거기서 상위 20건이다(§4). */
-export interface RelationCandidatePage {
-  items: TaskRelation[];
-  total: number;
-}
-
-export async function fetchRelationCandidates(
-  query: RelationCandidateQuery,
-): Promise<RelationCandidatePage> {
-  const search = new URLSearchParams();
-  if (query.keyword && query.keyword.trim().length > 0) {
-    search.set("keyword", query.keyword.trim());
-  }
-  if (query.excludeId != null) {
-    search.set("excludeId", String(query.excludeId));
-  }
-  if (query.projectId != null) {
-    search.set("projectId", String(query.projectId));
-  }
-  if (query.dueDate) {
-    search.set("dueDate", query.dueDate);
-  }
-  if (query.scope) {
-    search.set("scope", query.scope);
-  }
-  const suffix = search.size > 0 ? `?${search.toString()}` : "";
-  const response = await apiFetch<RelationCandidatePage>(
-    `/api/tasks/relations/candidates${suffix}`,
-    { cache: "no-store" },
-  );
-  // **`total` 을 `items.length` 로 대신하지 않는다** — 20건을 넘으면 갈리고,
-  // 그게 「n건 중 m」 카운트가 있는 이유다(§4 · U-8).
-  return { items: response.items, total: response.total };
-}
 
 /** 연관 연결도 같은 계약이다 — **갱신된 `TaskDetail`**(§4 자식 컬렉션 응답 절 · 검수 W-7). */
 export function linkRelations(taskId: number, taskIds: number[]): Promise<TaskDetail> {
@@ -191,11 +133,6 @@ export function fetchTasks(query: TasksListQuery): Promise<TaskListResponse> {
  */
 export function changeTaskStatus(id: number, input: TaskStatusInput): Promise<TaskListItem> {
   return apiFetch<TaskListItem>(`/api/tasks/${id}/status`, { method: "PATCH", body: input });
-}
-
-/** 마지막 전이 되돌리기 — **직전 상태 복원 + 그 전이 로그 삭제**(4초 이내). */
-export function undoTaskStatus(id: number): Promise<TaskListItem> {
-  return apiFetch<TaskListItem>(`/api/tasks/${id}/status/undo`, { method: "POST" });
 }
 
 /** **소프트 딜리트** — 목록·집계에서 빠지고 자식 행은 남는다(T-11). 복원 표면은 없다. */

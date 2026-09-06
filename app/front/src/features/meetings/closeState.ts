@@ -7,7 +7,7 @@
  */
 
 import type { AgendaBadge } from "@/features/meetings/components/AgendaHeader";
-import type { AgendaState, MeetingAgenda, MeetingDetail, MeetingTrack } from "@/features/meetings/types";
+import type { AgendaState, MeetingAgenda, MeetingDetail, MeetingLine, MeetingTrack } from "@/features/meetings/types";
 
 /** 회의록 탭이 그리는 트랙 = 편집 대상 트랙(M-20 「대상 트랙은 편집 모드와 같다」). */
 export type NotesTrack = Extract<MeetingTrack, "human" | "merged">;
@@ -34,6 +34,15 @@ export function editTrackOf(meeting: Pick<MeetingDetail, "status" | "integration
 /** 회의록 탭에 그릴 안건 — `notesTrackOf` 가 고른 트랙. */
 export function notesAgendasOf(meeting: MeetingDetail): MeetingAgenda[] {
   return meeting.agendas[notesTrackOf(meeting)];
+}
+
+/**
+ * 통합본 줄의 화살표 — `detail`·`evidence` 둘 다 없으면 없다(SPEC-008 U-5).
+ * 상세 본문(`MeetingDetailBody`)과 목록 미리보기(`MeetingPreviewPanel` — SPEC-006 §7 「SPEC-008 규격을 읽기 전용으로 그대로」)가
+ * 같은 판정을 `AgendaLineTree` 의 `expandable` 로 넘긴다.
+ */
+export function notesExpandable(line: MeetingLine): boolean {
+  return Boolean(line.detail) || line.evidence.length > 0;
 }
 
 /**
