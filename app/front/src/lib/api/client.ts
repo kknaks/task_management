@@ -68,10 +68,12 @@ async function toApiError(response: Response): Promise<ApiError> {
   try {
     const payload: unknown = await response.json();
     if (payload && typeof payload === "object") {
-      const body = payload as { detail?: unknown; code?: unknown };
+      const body = payload as { detail?: unknown; code?: unknown; field?: unknown };
       const detail = typeof body.detail === "string" ? body.detail : fallbackDetail;
       const code = typeof body.code === "string" ? body.code : `http_${response.status}`;
-      return new ApiError(response.status, code, detail);
+      // `field` 는 선택이다 — 있으면 화면이 그 컨트롤에 붙인다(§3-5 · SPEC-006 §4 「해당 컨트롤」).
+      const field = typeof body.field === "string" ? body.field : null;
+      return new ApiError(response.status, code, detail, field);
     }
   } catch {
     // 본문이 JSON 이 아니면 상태코드만 남는다 — 가리지 않고 그대로 올린다.

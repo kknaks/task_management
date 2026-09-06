@@ -35,7 +35,7 @@ import { Selector } from "@/components/shared/Selector";
 import { StatusDot, STATUS_LABEL } from "@/components/shared/StatusDot";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { StatusPopover } from "@/features/tasks/components/StatusPopover";
-import { useProjectsQuery, useWorkTypesQuery } from "@/features/settings/hooks/useWorkSettings";
+import { useProjectsQuery, useWorkTypesQuery } from "@/lib/hooks/useWorkSettings";
 import {
   currentDate,
   formatSchedule,

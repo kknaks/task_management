@@ -27,7 +27,7 @@ import {
   taskInlineError,
 } from "@/features/tasks/errors";
 import { useTaskMutations } from "@/features/tasks/hooks/useTaskMutations";
-import { useRowFailures } from "@/features/settings/useRowFailures";
+import { useRowFailures } from "@/lib/hooks/useRowFailures";
 import type { TaskDetail, UpdateTaskInput } from "@/features/tasks/types";
 
 /**

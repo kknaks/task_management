@@ -37,8 +37,8 @@ import { RelationPopover } from "@/features/tasks/components/RelationPopover";
 import { taskInlineError } from "@/features/tasks/errors";
 import { useTaskMutations } from "@/features/tasks/hooks/useTaskMutations";
 import type { TaskDetail, TaskRelation } from "@/features/tasks/types";
-import { inlineErrorMessage } from "@/features/settings/errors";
-import { useProjectMutations, useProjectsQuery, useWorkTypesQuery } from "@/features/settings/hooks/useWorkSettings";
+import { useProjectMutations, useProjectsQuery, useWorkTypesQuery } from "@/lib/hooks/useWorkSettings";
+import { inlineErrorMessage } from "@/lib/api/errors";
 import { cn } from "@/lib/utils";
 
 /** 링크 첨부는 서버에 보내기 전까지 화면에만 있다 — 생성이 한 번에 가기 때문이다(§5). */
@@ -227,9 +227,9 @@ export function TaskCreateDrawer({
               onRemove={(link) => setLinks((prev) => prev.filter((item) => item !== link))}
             />
             <AttachmentPopover
-              role="reference"
+              /* 역할은 **호출부가 닫는다** — 팝오버는 업무의 역할 축을 모른다(W-2) */
               onAddLink={async (input) => {
-                setLinks((prev) => [...prev, input]);
+                setLinks((prev) => [...prev, { ...input, role: "reference" }]);
               }}
               trigger={
                 <AddRowButton>

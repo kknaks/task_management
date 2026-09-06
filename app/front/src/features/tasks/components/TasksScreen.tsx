@@ -39,7 +39,7 @@ import {
 } from "@/features/tasks/hooks/useTasksViewParams";
 import { formatPeriod, periodRange, shiftPeriod } from "@/lib/datetime";
 import { openTaskCreateDrawer, openTaskDetailDrawer } from "@/features/tasks/openTaskDrawers";
-import { useWorkTypesQuery } from "@/features/settings/hooks/useWorkSettings";
+import { useWorkTypesQuery } from "@/lib/hooks/useWorkSettings";
 import type { TaskListItem, TaskStatus, TasksView } from "@/features/tasks/types";
 import { useOverlay } from "@/lib/overlay/OverlayProvider";
 import { cn } from "@/lib/utils";

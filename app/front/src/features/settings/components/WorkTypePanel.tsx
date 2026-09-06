@@ -19,9 +19,10 @@ import { InlineEditText } from "@/components/shared/InlineEditText";
 import { TypeBadge } from "@/components/shared/TypeBadge";
 import { InlineAddRow, ADD_ROW_CONTROL_HEIGHT } from "@/features/settings/components/InlineAddRow";
 import { SettingChip, SettingsPanel } from "@/features/settings/components/SettingsPanel";
-import { autoSaveErrorToast, inlineErrorMessage, isNotFound } from "@/features/settings/errors";
-import { useWorkTypeMutations, useWorkTypesQuery } from "@/features/settings/hooks/useWorkSettings";
-import { useRowFailures } from "@/features/settings/useRowFailures";
+import { autoSaveErrorToast, isNotFound } from "@/features/settings/errors";
+import { inlineErrorMessage } from "@/lib/api/errors";
+import { useWorkTypeMutations, useWorkTypesQuery } from "@/lib/hooks/useWorkSettings";
+import { useRowFailures } from "@/lib/hooks/useRowFailures";
 import { Button } from "@/components/ui/button";
 import {
   Select,

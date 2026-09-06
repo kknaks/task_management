@@ -20,6 +20,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Loader2, Paperclip, Plus, X } from "lucide-react";
 import { toast } from "sonner";
 
@@ -34,8 +35,9 @@ import { MeetingDateTimeField, slotError, type MeetingSlot } from "@/features/me
 import { meetingInlineError } from "@/features/meetings/errors";
 import { useMeetingMutations } from "@/features/meetings/hooks/useMeetingMutations";
 import type { MeetingDetail } from "@/features/meetings/types";
-import { inlineErrorMessage } from "@/features/settings/errors";
-import { useProjectMutations, useProjectsQuery, useWorkTypesQuery } from "@/features/settings/hooks/useWorkSettings";
+import { useProjectMutations, useProjectsQuery, useWorkTypesQuery } from "@/lib/hooks/useWorkSettings";
+import { inlineErrorMessage } from "@/lib/api/errors";
+import { queryKeys } from "@/lib/api/queryKeys";
 import { isEnterSubmit } from "@/lib/keyboard";
 import { defaultMeetingSlot, splitDateTime, toDateTimeIso } from "@/lib/datetime";
 import { cn } from "@/lib/utils";
@@ -50,7 +52,26 @@ interface DraftLink {
   folderPath: null;
 }
 
-type FieldKey = "title" | "workType" | "project" | "time";
+/** 인라인이 붙는 자리 — 컨트롤 넷 + **폼 전체**(서버가 어느 칸인지 말하지 않을 때 · W-3). */
+type FieldKey = "title" | "workType" | "project" | "time" | "form";
+
+interface FieldError {
+  message: string;
+  /** 토스트로 이미 알린 것(`schedule_overlap`) — **테두리만** 켜고 문구를 칸 옆에 반복하지 않는다(Case Matrix). */
+  toast: boolean;
+}
+
+/** 칸 옆 인라인 문구 — 토스트로 알린 것은 그리지 않는다. */
+function InlineError({ error, field }: { error: FieldError | undefined; field: FieldKey }) {
+  if (!error || error.toast) {
+    return null;
+  }
+  return (
+    <p role="alert" data-field={field} className="text-caption text-destructive">
+      {error.message}
+    </p>
+  );
+}
 
 function initialSlot(initial?: { startAt?: string; endAt?: string }): MeetingSlot {
   if (initial?.startAt && initial.endAt) {
@@ -82,7 +103,7 @@ export function MeetingCreateDrawerHeader({
         </button>
       ) : null}
       <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
-        <h2 className="text-[18px] font-bold tracking-title text-foreground">새 회의록</h2>
+        <h2 className="text-drawer-title text-foreground">새 회의록</h2>
         <p className="text-caption text-fg-caption">안건을 미리 적어두면 회의 중 화면이 안건별로 열립니다</p>
       </div>
       {fullscreen ? null : (
@@ -113,6 +134,7 @@ export function MeetingCreateDrawer({
   const { data: projects = [] } = useProjectsQuery();
   const projectMutations = useProjectMutations();
   const { create } = useMeetingMutations();
+  const client = useQueryClient();
 
   const titleRef = useRef<HTMLInputElement>(null);
   const [title, setTitle] = useState("");
@@ -122,7 +144,7 @@ export function MeetingCreateDrawer({
   const [agendas, setAgendas] = useState<string[]>([]);
   const [agendaDraft, setAgendaDraft] = useState("");
   const [links, setLinks] = useState<DraftLink[]>([]);
-  const [errors, setErrors] = useState<Partial<Record<FieldKey, string>>>({});
+  const [errors, setErrors] = useState<Partial<Record<FieldKey, FieldError>>>({});
 
   /** **종류=미팅 유형만**(DEC-003 §3 · M-2). 업무 유형은 목록에 없다. */
   const meetingTypes = workTypes.filter((item) => item.kind === "meeting");
@@ -172,10 +194,17 @@ export function MeetingCreateDrawer({
       .catch((error: unknown) => {
         const inline = meetingInlineError(error);
         if (inline) {
-          // **드로어가 닫히지 않고 입력이 남는다**(§4 Case Matrix).
-          setErrors({ [inline.field ?? "title"]: inline.message });
+          // **드로어가 닫히지 않고 입력이 남는다**(§4 Case Matrix). 칸을 모르면 폼 전체(W-3).
+          setErrors({ [inline.field ?? "form"]: { message: inline.message, toast: inline.toast } });
           if (inline.toast) {
             toast.error(inline.message);
+          }
+          // **목록 갱신**(Case Matrix `invalid_work_type` · `invalid_project`) — 삭제된 항목을 고른 것이라
+          // 목록을 다시 받아야 다른 것을 고를 수 있다. 무효화 키는 `queryKeys` 하나(§3-3).
+          if (inline.field === "workType") {
+            void client.invalidateQueries({ queryKey: queryKeys.workTypes() });
+          } else if (inline.field === "project") {
+            void client.invalidateQueries({ queryKey: queryKeys.projects() });
           }
           return;
         }
@@ -186,6 +215,8 @@ export function MeetingCreateDrawer({
   return (
     <>
       <div className="flex flex-col gap-[22px]">
+        {/* 칸을 짚지 못한 `validation_error` — 폼 전체 인라인(W-3). 엉뚱한 칸에 붙이지 않는다 */}
+        <InlineError error={errors.form} field="form" />
         {/* ① 제목 44 */}
         <Field label="제목">
           <Input
@@ -196,7 +227,7 @@ export function MeetingCreateDrawer({
             onChange={(event) => setTitle(event.target.value)}
             className={cn("h-11 text-body font-semibold", errors.title && "border-destructive")}
           />
-          {errors.title ? <p role="alert" className="text-caption text-destructive">{errors.title}</p> : null}
+          <InlineError error={errors.title} field="title" />
         </Field>
 
         {/* ② 프로젝트 · 유형 2열 `1fr 1fr` gap 22 — 1280~1439 에서는 1열로 쌓인다(U-6) */}
@@ -221,7 +252,7 @@ export function MeetingCreateDrawer({
               createErrorMessage={(error) => inlineErrorMessage(error, "project")}
             />
             <p className="text-caption text-fg-caption">목록에 없으면 셀렉터 맨 아래 &apos;새 프로젝트로 추가&apos;</p>
-            {errors.project ? <p role="alert" className="text-caption text-destructive">{errors.project}</p> : null}
+            <InlineError error={errors.project} field="project" />
           </Field>
           <Field label="유형">
             <Selector
@@ -235,7 +266,7 @@ export function MeetingCreateDrawer({
               }}
               saveFailed={Boolean(errors.workType)}
             />
-            {errors.workType ? <p role="alert" className="text-caption text-destructive">{errors.workType}</p> : null}
+            <InlineError error={errors.workType} field="workType" />
           </Field>
         </div>
 
@@ -249,6 +280,8 @@ export function MeetingCreateDrawer({
             }}
             saveFailed={Boolean(errors.time)}
           />
+          {/* 서버가 일시를 거절한 문구 — **일시 칸**에 붙는다(Case Matrix 「해당 컨트롤」 · W-3) */}
+          <InlineError error={errors.time} field="time" />
         </Field>
 
         {/* ④ 안건 — 행 44 + 마지막 빈 행 + 「추가」 버튼 병행 */}
@@ -259,7 +292,7 @@ export function MeetingCreateDrawer({
                 key={`${item}-${index}`}
                 className="group flex h-11 items-center gap-3 rounded-control border border-border px-3.5"
               >
-                <span className="w-10 shrink-0 text-[11px] font-bold text-fg-caption">안건 {index + 1}</span>
+                <span className="w-10 shrink-0 text-row-label text-fg-caption">안건 {index + 1}</span>
                 <Input
                   aria-label={`안건 ${index + 1}`}
                   value={item}
@@ -285,7 +318,7 @@ export function MeetingCreateDrawer({
               </div>
             ))}
             <div className="flex h-11 items-center gap-3 rounded-control border border-divider px-3.5">
-              <span className="w-10 shrink-0 text-[11px] font-bold text-fg-caption">안건 {agendas.length + 1}</span>
+              <span className="w-10 shrink-0 text-row-label text-fg-caption">안건 {agendas.length + 1}</span>
               <Input
                 aria-label="새 안건"
                 placeholder="안건 입력 후 Enter"
@@ -329,7 +362,6 @@ export function MeetingCreateDrawer({
               </span>
             </V2Gate>
             <AttachmentPopover
-              role="reference"
               onAddLink={async ({ url, label }) => {
                 setLinks((prev) => [
                   ...prev,

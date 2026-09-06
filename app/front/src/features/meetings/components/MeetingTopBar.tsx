@@ -51,7 +51,7 @@ export function MeetingTopBar(props: MeetingTopBarProps) {
       aria-label="AI 한 줄 요약"
       className="flex h-14 w-full items-center gap-3 rounded-xl border border-ai-bar-border bg-ai-bar px-5"
     >
-      <span className="inline-flex h-[22px] shrink-0 items-center rounded-chip border border-ai-bar-border bg-card px-2 text-[11px] font-bold text-ai-bar-badge">
+      <span className="inline-flex h-[22px] shrink-0 items-center rounded-chip border border-ai-bar-border bg-card px-2 text-row-label text-ai-bar-badge">
         AI 한 줄 요약
       </span>
       {/* **한 문장 · 넘치면 말줄임**, 줄바꿈 없음([09] L731) */}

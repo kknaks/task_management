@@ -131,3 +131,36 @@ describe("삭제 — 컨텍스트 메뉴 → 모달 → 다음 행", () => {
     expect(await screen.findByRole("button", { name: "삭제" })).toBeDisabled();
   });
 });
+
+describe("삭제 실패 — 목록 갱신(검수 F-1)", () => {
+  it("`404 not_found` 면 토스트 + **목록을 다시 받는다** — 이미 지워진 행이 남지 않게", async () => {
+    let listGets = 0;
+    server.use(
+      http.get(`${API_BASE}/api/meetings`, () => {
+        listGets += 1;
+        return HttpResponse.json(SEED_LIST);
+      }),
+      http.get(`${API_BASE}/api/meetings/:id`, ({ params }) => {
+        const item = SEED_ITEMS.find((row) => row.id === Number(params.id));
+        return HttpResponse.json(meetingDetail({ ...item, agendas: { human: [], ai: [], merged: [] }, attachments: [] }));
+      }),
+      http.delete(`${API_BASE}/api/meetings/21`, () =>
+        HttpResponse.json({ detail: "회의록을 찾을 수 없습니다", code: "not_found" }, { status: 404 }),
+      ),
+    );
+    renderWithProviders(<MeetingsScreen />);
+    const row = await screen.findByRole("button", { name: "제품 소개서 리뷰" });
+    await waitFor(() => expect(listGets).toBe(1));
+
+    fireEvent.contextMenu(row, { clientX: 20, clientY: 20 });
+    await userEvent.click(await screen.findByRole("button", { name: "삭제" }));
+    const dialog = (await screen.findByText("'제품 소개서 리뷰' 회의록을 삭제할까요?")).closest(
+      "[role=dialog]",
+    ) as HTMLElement;
+    await userEvent.click(within(dialog).getByRole("button", { name: "삭제" }));
+
+    expect(await screen.findByText("이미 없는 회의록입니다")).toBeInTheDocument();
+    // **목록 갱신** — `GET /api/meetings` 가 한 번 더 나간다(Case Matrix `not_found` · 목록).
+    await waitFor(() => expect(listGets).toBe(2));
+  });
+});

@@ -211,6 +211,20 @@ const config: Config = {
         "brand-body": ["16px", { lineHeight: "1.7", letterSpacing: "-0.02em", fontWeight: "400" }],
         /* 유형 배지 — 시안 [02] STATUS & TYPE TOKENS 「badge · h20 · r4 · 11px/600」 */
         badge: ["11px", { lineHeight: "1", letterSpacing: "-0.02em", fontWeight: "600" }],
+
+        /**
+         * 아래 넷은 **회의록 시안이 쓰는데 [03] TYPE 계단에 없는 조합**이다(회의록.dc.html).
+         * 컴포넌트가 `text-[NNpx]` 를 쓰지 않도록 이름을 붙여 올린다(§5-1 · WORK-006 검수 W-4).
+         * ⚠ 더할 때 `lib/utils.ts` 의 twMerge `font-size` 목록에도 같이 더한다.
+         */
+        /* 행 번호·작은 굵은 칩 — 「안건 n」(L497 · L586) · 「AI 한 줄 요약」 배지([09] L731) · 11 / 700 */
+        "row-label": ["11px", { lineHeight: "1.4", letterSpacing: "-0.02em", fontWeight: "700" }],
+        /* 빈 상태 제목(L601) · 파일 드로어 헤더 이름([09] L1170) · 17 / 700 */
+        subhead: ["17px", { lineHeight: "1.4", letterSpacing: "-0.02em", fontWeight: "700" }],
+        /* 드로어 헤더 제목 「새 회의록」(L442) · 18 / 700 / -0.03 */
+        "drawer-title": ["18px", { lineHeight: "1.4", letterSpacing: "-0.03em", fontWeight: "700" }],
+        /* MD 타일 글자([09] L1170 · 시안 L1170) · 10 / 800 */
+        "tile-mark": ["10px", { lineHeight: "1", letterSpacing: "0", fontWeight: "800" }],
       },
 
       letterSpacing: {

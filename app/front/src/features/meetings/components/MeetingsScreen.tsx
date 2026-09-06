@@ -24,7 +24,7 @@ import { MeetingContextMenu, type MeetingMenuTarget } from "@/features/meetings/
 import { openMeetingDeleteModal } from "@/features/meetings/components/MeetingDeleteModal";
 import { MeetingListPanel } from "@/features/meetings/components/MeetingListPanel";
 import { MeetingPreviewPanel, meetingDetailHref } from "@/features/meetings/components/MeetingPreviewPanel";
-import { meetingInlineError } from "@/features/meetings/errors";
+import { isMeetingNotFound, meetingInlineError } from "@/features/meetings/errors";
 import { useMeetingMutations } from "@/features/meetings/hooks/useMeetingMutations";
 import { useMeetingsQuery } from "@/features/meetings/hooks/useMeetingsQuery";
 import { useMeetingsViewParams } from "@/features/meetings/hooks/useMeetingsViewParams";
@@ -81,8 +81,10 @@ export function MeetingsScreen() {
         params.setParams({ id: next?.id ?? null });
       } catch (error) {
         const inline = meetingInlineError(error);
-        toast.error(inline?.message ?? "회의록을 삭제하지 못했습니다");
-        if (inline?.toast) {
+        const gone = isMeetingNotFound(error);
+        toast.error(gone ? "이미 없는 회의록입니다" : (inline?.message ?? "회의록을 삭제하지 못했습니다"));
+        // **목록 갱신**(Case Matrix) — 상태 가드(409)도, 이미 지워진 행(404)도 화면이 낡은 것이 원인이다.
+        if (inline?.toast || gone) {
           void mutations.refresh();
         }
         throw error;

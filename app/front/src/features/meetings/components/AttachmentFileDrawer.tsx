@@ -37,8 +37,8 @@ export function MdTile({ size = 34 }: { size?: 32 | 34 }) {
       aria-hidden
       className={
         size === 34
-          ? "flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[9px] bg-secondary text-[10px] font-extrabold text-secondary-foreground"
-          : "flex h-8 w-8 shrink-0 items-center justify-center rounded-control bg-secondary text-[10px] font-extrabold text-secondary-foreground"
+          ? "flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[9px] bg-secondary text-tile-mark text-secondary-foreground"
+          : "flex h-8 w-8 shrink-0 items-center justify-center rounded-control bg-secondary text-tile-mark text-secondary-foreground"
       }
     >
       MD
@@ -72,7 +72,7 @@ export function AttachmentFileDrawerHeader({
       ) : null}
       <MdTile size={34} />
       <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
-        <span className="truncate text-[17px] font-bold tracking-title text-foreground">
+        <span className="truncate text-subhead tracking-title text-foreground">
           {attachment.name}
         </span>
         <span className="truncate text-caption text-fg-caption">{attachmentMeta(attachment)}</span>

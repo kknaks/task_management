@@ -22,6 +22,29 @@ export const INVALID_STATUS_MESSAGE = "지금 상태에서는 할 수 없습니�
 export const DURATION_MESSAGE = "회의는 5분 이상 300분 이하여야 합니다";
 export const END_BEFORE_START_MESSAGE = "종료 시각은 시작보다 뒤여야 합니다";
 
+/** v2 게이트가 샜을 때의 안전망 토스트(Case Matrix · `501 v2_not_available`). `V2Gate` 와 같은 문구다. */
+export const V2_NOT_AVAILABLE_MESSAGE = "v2에서 제공됩니다";
+
+/**
+ * `validation_error` 의 **`field`(요청 본문 키) → 컨트롤**. 서버가 어느 입력인지 말해 줄 때만 짚는다 —
+ * 모르면 `undefined`(폼 전체). **제목으로 기본을 두지 않는다** — 일시 오류를 제목 칸에 붙이게 된다(W-3).
+ */
+function validationField(field: string | null): MeetingInlineError["field"] {
+  switch (field) {
+    case "title":
+      return "title";
+    case "workTypeId":
+      return "workType";
+    case "projectId":
+      return "project";
+    case "startAt":
+    case "endAt":
+      return "time";
+    default:
+      return undefined;
+  }
+}
+
 /**
  * 인라인/토스트로 옮길 사유. **`null` 이면 그 밖의 5xx·네트워크**이고 호출자가
  * 「가리지 않는」 실패 처리를 한다(Case Matrix 마지막 두 행).
@@ -33,7 +56,8 @@ export function meetingInlineError(error: unknown): MeetingInlineError | null {
 
   switch (error.code) {
     case API_ERROR_CODE.VALIDATION_ERROR:
-      return { message: error.detail, toast: false, field: "title" };
+      // **해당 컨트롤**(Case Matrix) — 서버가 `field` 를 주면 그 칸, 아니면 폼 전체.
+      return { message: error.detail, toast: false, field: validationField(error.field) };
     case API_ERROR_CODE.INVALID_WORK_TYPE:
       return {
         message: "삭제됐거나 회의에 쓸 수 없는 유형입니다. 다시 골라 주세요",
@@ -49,6 +73,9 @@ export function meetingInlineError(error: unknown): MeetingInlineError | null {
       return { message: INVALID_STATUS_MESSAGE, toast: true };
     case API_ERROR_CODE.UNSUPPORTED_FILE_TYPE:
       return { message: "md 문서만 첨부할 수 있습니다", toast: false };
+    case API_ERROR_CODE.V2_NOT_AVAILABLE:
+      // 정상 경로가 아니다 — `V2Gate` 가 새서 요청이 나갔을 때의 안전망(Case Matrix · W-5).
+      return { message: V2_NOT_AVAILABLE_MESSAGE, toast: true };
     default:
       return null;
   }

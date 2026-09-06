@@ -54,9 +54,7 @@ export type AddLinkHandler = (input: { url: string; label: string | null }) => P
 export function AttachmentAddTrigger({ onAddLink }: { onAddLink: AddLinkHandler }) {
   return (
     <AttachmentPopover
-      /* 회의 첨부에는 역할(참고/결과) 축이 없다 — 팝오버 계약상 필수라 채워 보내고 **버린다** */
-      role="reference"
-      onAddLink={({ url, label }) => onAddLink({ url, label })}
+      onAddLink={onAddLink}
       trigger={
         <button
           type="button"
@@ -89,8 +87,7 @@ export function MeetingAttachmentsTab({
           <div className="flex h-full flex-col items-center justify-center gap-[18px] py-10 text-center">
             <p className="text-meta text-fg-caption">첨부한 파일이 없습니다</p>
             <AttachmentPopover
-              role="reference"
-              onAddLink={({ url, label }) => onAddLink({ url, label })}
+              onAddLink={onAddLink}
               trigger={
                 <button
                   type="button"

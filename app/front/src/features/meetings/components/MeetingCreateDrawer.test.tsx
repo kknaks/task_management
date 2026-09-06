@@ -235,6 +235,138 @@ describe("생성 — 요청 하나", () => {
   });
 });
 
+describe("에러 뒤 후속 동작 — Case Matrix(검수 F-1 · W-3 · W-5)", () => {
+  /**
+   * 유형·프로젝트 목록 GET 을 세면서 드로어를 연다 — 「목록 갱신」이 **실제 재요청**으로 나가는지 본다.
+   * 첫 로드가 각 1건이고, 422 뒤 무효화된 쪽만 2건이 되어야 한다.
+   */
+  function setupCounting() {
+    const counts = { workTypes: 0, projects: 0 };
+    server.use(
+      http.get(`${API_BASE}/api/work-types`, () => {
+        counts.workTypes += 1;
+        return HttpResponse.json(WORK_TYPES);
+      }),
+      http.get(`${API_BASE}/api/projects`, () => {
+        counts.projects += 1;
+        return HttpResponse.json(PROJECTS);
+      }),
+    );
+    const onCreated = vi.fn();
+    renderWithProviders(<Opener onCreated={onCreated} />);
+    return { counts, onCreated };
+  }
+
+  async function fillAndSubmit(beforeSubmit?: () => void) {
+    await waitFor(() => expect(screen.getByRole("button", { name: "유형" })).toHaveTextContent("미팅·회의"));
+    await userEvent.type(screen.getByRole("textbox", { name: "회의 제목" }), "회의");
+    beforeSubmit?.();
+    await userEvent.click(screen.getByRole("button", { name: "만들기" }));
+  }
+
+  it("`422 invalid_work_type` — 인라인 뒤 **유형 목록을 다시 받는다**(프로젝트 목록은 그대로)", async () => {
+    server.use(
+      http.post(`${API_BASE}/api/meetings`, () =>
+        HttpResponse.json({ detail: "사용할 수 없는 유형입니다", code: "invalid_work_type" }, { status: 422 }),
+      ),
+    );
+    const { counts, onCreated } = setupCounting();
+    // 제출 전엔 첫 로드 각 1건이다.
+    await fillAndSubmit(() => expect(counts).toEqual({ workTypes: 1, projects: 1 }));
+
+    expect(await screen.findByRole("alert")).toHaveAttribute("data-field", "workType");
+    await waitFor(() => expect(counts.workTypes).toBe(2));
+    expect(counts.projects).toBe(1);
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(screen.getByRole("textbox", { name: "회의 제목" })).toHaveValue("회의");
+  });
+
+  it("`422 invalid_project` — 인라인 뒤 **프로젝트 목록을 다시 받는다**(유형 목록은 그대로)", async () => {
+    server.use(
+      http.post(`${API_BASE}/api/meetings`, () =>
+        HttpResponse.json({ detail: "사용할 수 없는 프로젝트입니다", code: "invalid_project" }, { status: 422 }),
+      ),
+    );
+    const { counts } = setupCounting();
+    // 제출 전엔 첫 로드 각 1건이다.
+    await fillAndSubmit(() => expect(counts).toEqual({ workTypes: 1, projects: 1 }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveAttribute("data-field", "project");
+    expect(alert).toHaveTextContent("삭제된 프로젝트입니다. 다시 골라 주세요");
+    await waitFor(() => expect(counts.projects).toBe(2));
+    expect(counts.workTypes).toBe(1);
+  });
+
+  it("`422 validation_error` 에 `field: endAt` 이 오면 **일시 칸**에 붙는다 — 제목 칸이 아니다", async () => {
+    server.use(
+      http.post(`${API_BASE}/api/meetings`, () =>
+        HttpResponse.json(
+          { detail: "회의는 5분 이상 300분 이하여야 합니다", code: "validation_error", field: "endAt" },
+          { status: 422 },
+        ),
+      ),
+    );
+    setup();
+    await fillAndSubmit();
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveAttribute("data-field", "time");
+    expect(alert).toHaveTextContent("회의는 5분 이상 300분 이하여야 합니다");
+    expect(screen.getByRole("button", { name: "종료 시각" })).toHaveClass("border-destructive");
+    expect(screen.getByRole("textbox", { name: "회의 제목" })).not.toHaveClass("border-destructive");
+  });
+
+  it("`422 validation_error` 에 `field` 가 없으면 **폼 전체**에 붙는다 — 제목 칸을 짚지 않는다", async () => {
+    server.use(
+      http.post(`${API_BASE}/api/meetings`, () =>
+        HttpResponse.json({ detail: "입력값을 확인해 주세요", code: "validation_error" }, { status: 422 }),
+      ),
+    );
+    setup();
+    await fillAndSubmit();
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveAttribute("data-field", "form");
+    expect(alert).toHaveTextContent("입력값을 확인해 주세요");
+    expect(screen.getByRole("textbox", { name: "회의 제목" })).not.toHaveClass("border-destructive");
+    expect(screen.getByRole("button", { name: "종료 시각" })).not.toHaveClass("border-destructive");
+  });
+
+  it("`422 validation_error` 에 `field: title` 이면 제목 칸에 붙는다", async () => {
+    server.use(
+      http.post(`${API_BASE}/api/meetings`, () =>
+        HttpResponse.json(
+          { detail: "제목은 200자까지 입력할 수 있습니다", code: "validation_error", field: "title" },
+          { status: 422 },
+        ),
+      ),
+    );
+    setup();
+    await fillAndSubmit();
+
+    expect(await screen.findByRole("alert")).toHaveAttribute("data-field", "title");
+    expect(screen.getByRole("textbox", { name: "회의 제목" })).toHaveClass("border-destructive");
+  });
+
+  it("`501 v2_not_available` — 「v2에서 제공됩니다」 토스트, 드로어는 열린 채", async () => {
+    server.use(
+      http.post(`${API_BASE}/api/meetings`, () =>
+        HttpResponse.json({ detail: "v2에서 제공됩니다", code: "v2_not_available" }, { status: 501 }),
+      ),
+    );
+    const { onCreated } = setup();
+    await fillAndSubmit();
+
+    expect(await screen.findByText("v2에서 제공됩니다")).toBeInTheDocument();
+    expect(screen.queryByText("회의록을 만들지 못했습니다")).not.toBeInTheDocument();
+    // 토스트로 알린 것은 칸 옆에 반복하지 않는다.
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "회의 제목" })).toHaveValue("회의");
+    expect(onCreated).not.toHaveBeenCalled();
+  });
+});
+
 describe("첨부 드롭 영역 — v2 게이트", () => {
   it("파일을 드롭하면 「v2에서 제공됩니다」 토스트만 뜨고 **요청이 0건**이다", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");

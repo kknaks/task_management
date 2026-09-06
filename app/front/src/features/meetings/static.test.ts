@@ -10,7 +10,9 @@
  * 7. `MeetingCreateDrawer` 가 라우터·부모 상태를 import 하지 않는다 · 드로어 폭 리터럴이 `DrawerFrame` 밖에 0건
  * 8. 공용 부품(`MeetingAttachmentsTab` · `AttachmentFileDrawer` · `MeetingAgendaList` · `MeetingTopBar`)이
  *    회의 상태·라우트를 import 하지 않는다 · 자동 저장 실패를 `useState` 로 드는 컴포넌트 0건
- * 9. `features/meetings` 가 `features/tasks` 를 부르지 않는다 (§2 규칙 4)
+ * 9. 영역 사이 import 0건 — **모든 `features/*`** 가 다른 영역을 부르지 않는다 (§2 규칙 4).
+ *    WORK-006 검수 W-1 — meetings→settings 만 보던 검사가 tasks→settings 를 놓쳤다. 이제 전 영역을 본다
+ * 10. `text-[NNpx]` 임의 글꼴 크기 0건 — 타이포 계단은 프리셋으로만 (§5-1 · W-4)
  */
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
@@ -129,9 +131,29 @@ describe("⑧ 공용 부품 — 상태·라우트 무의존 · 실패 state 0건
   });
 });
 
-describe("⑨ 영역 사이 import 금지", () => {
-  it("features/meetings 가 features/tasks 를 부르지 않는다", () => {
-    const offenders = meetingSources.filter((file) => /@\/features\/tasks/.test(read(file)));
+describe("⑨ 영역 사이 import 금지 — 전 영역", () => {
+  it("features/<a> 가 features/<b> 를 import 하지 않는다(테스트 파일 제외) — 공유는 lib/ · components/shared/", () => {
+    const FEATURES = path.join(SRC, "features");
+    const offenders: string[] = [];
+    for (const area of readdirSync(FEATURES)) {
+      const sources = walk(path.join(FEATURES, area)).filter(
+        (file) => /\.tsx?$/.test(file) && !/\.test\.tsx?$/.test(file),
+      );
+      for (const file of sources) {
+        const imports = read(file).match(/@\/features\/([a-z-]+)\//g) ?? [];
+        // 규칙 4 의 단 하나의 예외(캘린더가 업무·회의 드로어를 재사용)는 아직 없는 영역이다 — 예외 목록 없음.
+        if (imports.some((hit) => hit !== `@/features/${area}/`)) {
+          offenders.push(rel(file));
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+});
+
+describe("⑩ 타이포 — 임의 글꼴 크기 0건", () => {
+  it("features/meetings 에 `text-[NNpx]` 가 없다 — 계단은 tailwind.config.ts 프리셋으로만(§5-1)", () => {
+    const offenders = meetingSources.filter((file) => /text-\[\d+px\]/.test(read(file)));
     expect(offenders.map(rel)).toEqual([]);
   });
 });

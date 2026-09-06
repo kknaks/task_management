@@ -23,7 +23,7 @@ import {
   INVALID_STATUS_MESSAGE,
 } from "@/features/meetings/errors";
 import { useMeetingMutations } from "@/features/meetings/hooks/useMeetingMutations";
-import { useRowFailures } from "@/features/settings/useRowFailures";
+import { useRowFailures } from "@/lib/hooks/useRowFailures";
 
 const AGENDA_LABEL = "안건";
 

@@ -10,6 +10,9 @@
  *   안내 캡션만 보인다(WP Phase 4 · §Open Issues). **선택 경로를 만들지 않는다** —
  *   `kind=doc` 은 서버가 거부한다(T-9)
  * - 링크 갈래는 URL + 표시 이름(비우면 URL 을 그대로 이름으로 쓴다)
+ * - **역할(참고/결과)은 팝오버가 모른다.** 그 축은 업무 첨부 API 만의 것이라(SPEC-003 §4) 회의는 없다 —
+ *   공용은 두 영역의 **공통 부분만** 갖고(FE §2 규칙 3), 업무 호출부가 `onAddLink` 클로저에서
+ *   자기 `role` 을 닫아 넣는다(WORK-006 검수 W-2)
  */
 
 import { useState, type ReactNode } from "react";
@@ -20,27 +23,19 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 
-export type AttachmentRole = "reference" | "deliverable";
-
 type Segment = "doc" | "link";
 
 export function AttachmentPopover({
-  role,
   trigger,
   onAddLink,
 }: {
-  role: AttachmentRole;
   trigger: ReactNode;
   /** URL 링크 한 건을 붙인다. **팝오버는 닫히지 않는다**(연달아 붙이기 위해). */
   /**
    * `false` 를 돌려주면 **입력을 그대로 둔다** — 저장이 실패했다는 뜻이다.
    * 그 밖의 값(`void` 포함)은 성공으로 보고 입력을 비운다.
    */
-  onAddLink: (input: {
-    role: AttachmentRole;
-    url: string;
-    label: string | null;
-  }) => Promise<boolean | void>;
+  onAddLink: (input: { url: string; label: string | null }) => Promise<boolean | void>;
 }) {
   const [open, setOpen] = useState(false);
   const [segment, setSegment] = useState<Segment>("link");
@@ -57,7 +52,6 @@ export function AttachmentPopover({
     setAdding(true);
     try {
       const added = await onAddLink({
-        role,
         url: url.trim(),
         // 비우면 URL 을 그대로 이름으로 쓴다 — 서버가 그렇게 처리하도록 `null` 을 보낸다.
         label: label.trim().length > 0 ? label.trim() : null,

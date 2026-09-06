@@ -81,7 +81,7 @@ export function MeetingAgendaList({
                 failed && "ring-1 ring-destructive",
               )}
             >
-              <span className="w-10 shrink-0 text-[11px] font-bold text-fg-caption">
+              <span className="w-10 shrink-0 text-row-label text-fg-caption">
                 안건 {index + 1}
               </span>
               {readOnly || !onRename ? (
@@ -98,7 +98,7 @@ export function MeetingAgendaList({
                 />
               )}
               {agenda.state ? (
-                <span className="inline-flex h-5 shrink-0 items-center rounded-chip bg-agenda-badge px-[7px] text-[11px] font-semibold text-fg-meta">
+                <span className="inline-flex h-5 shrink-0 items-center rounded-chip bg-agenda-badge px-[7px] text-badge text-fg-meta">
                   {AGENDA_STATE_LABEL[agenda.state]}
                 </span>
               ) : null}
@@ -138,7 +138,7 @@ export function AgendaEmptyState() {
         </svg>
       </span>
       <div className="flex flex-col items-center gap-2">
-        <p className="text-[17px] font-bold text-foreground">아직 안건이 없습니다</p>
+        <p className="text-subhead text-foreground">아직 안건이 없습니다</p>
         <p className="text-control-label text-fg-meta">
           아래에 안건을 적어 두면 회의 중 화면이 안건별로 열립니다.
           <br />

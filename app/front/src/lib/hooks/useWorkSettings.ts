@@ -1,7 +1,10 @@
 "use client";
 
 /**
- * 업무 설정의 쿼리·뮤테이션 — `['workTypes']`·`['projects']`(frontend/README.md §3-3).
+ * 유형·프로젝트의 쿼리·뮤테이션 — `['workTypes']`·`['projects']`(frontend/README.md §3-3).
+ *
+ * `features/settings/hooks` 에 있던 것을 **`lib/hooks/` 로 올렸다**(WORK-006 검수 W-1) — 설정 화면 ·
+ * 업무 드로어 · 회의 드로어 세 곳이 같은 훅을 쓴다. 영역이 영역을 import 하지 않는다(§2 규칙 4).
  *
  * **낙관적 갱신을 하지 않는다.** 이름 중복·기본 유형 잠금·팔레트 검사가 **거부할 수 있는**
  * 변경이라, 서버 응답을 받고 반영한다(§3-4 원칙 · SPEC-002 §4).
@@ -26,7 +29,7 @@ import {
   type CreateWorkTypeInput,
   type UpdateProjectInput,
   type UpdateWorkTypeInput,
-} from "@/features/settings/api";
+} from "@/lib/api/workSettings";
 import { queryKeys } from "@/lib/api/queryKeys";
 
 /** 이 표에 없는 무효화를 하지 않는다(§3-3). */

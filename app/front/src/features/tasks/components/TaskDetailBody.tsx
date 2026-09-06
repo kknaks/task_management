@@ -218,10 +218,12 @@ export function TaskMainBlocks({
             }
           />
           <AttachmentPopover
-            role="reference"
             // 아직 행이 없다 — 키는 블록 단위고 「다시 저장」이 **같은 입력**을 다시 보낸다.
+            // 역할은 **호출부가 닫는다** — 팝오버는 업무의 역할 축을 모른다(W-2).
             onAddLink={(input) =>
-              references.run("attachment:new", () => mutations.addAttachment.mutateAsync(input))
+              references.run("attachment:new", () =>
+                mutations.addAttachment.mutateAsync({ ...input, role: "reference" }),
+              )
             }
             /* 추가는 **마지막 행**이다 — 점선 박스가 아니다(시안 1961줄) */
             /**
@@ -650,8 +652,8 @@ function CompletionCard({
           <AttachmentList attachments={deliverables} emptyMessage="" onRemove={onRemove} />
         ) : null}
         <AttachmentPopover
-          role="deliverable"
-          onAddLink={onAddLink}
+          /* 이 카드는 결과자료다 — 역할은 **호출부가 닫는다**(W-2) */
+          onAddLink={(input) => onAddLink({ ...input, role: "deliverable" })}
           /* **점선 등록 버튼 h44**(시안 1988줄) — 이 카드에만 점선을 쓴다 */
           trigger={
             <DashedAddButton className="h-11">
@@ -929,8 +931,7 @@ function PageReferences({ task, draft }: { task: TaskDetail; draft: TaskEditDraf
         */}
       {draft.editing ? (
         <AttachmentPopover
-          role="reference"
-          onAddLink={(input) => addAttachment.mutateAsync(input).then(() => true)}
+          onAddLink={(input) => addAttachment.mutateAsync({ ...input, role: "reference" }).then(() => true)}
           trigger={
             <AddRowButton className="px-[18px]">
               <Plus aria-hidden />

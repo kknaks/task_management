@@ -43,6 +43,11 @@ const twMerge = extendTailwindMerge({
             "block-label",
             "control-label",
             "brand-body",
+            /* WORK-006 W-4 — 회의록 계단 넷 */
+            "row-label",
+            "subhead",
+            "drawer-title",
+            "tile-mark",
           ],
         },
       ],

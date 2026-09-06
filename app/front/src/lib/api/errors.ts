@@ -8,13 +8,20 @@ export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
   readonly detail: string;
+  /**
+   * **어느 입력이 틀렸는가** — 응답 본문에 `field` 가 실려 오면 그대로 든다(요청 본문의 키 이름).
+   * 지금 백엔드 응답은 `{detail, code}` 뿐이라 **대개 비어 있다**(SPEC-006 검수 G-2) — 화면은
+   * 있으면 그 컨트롤에, 없으면 **폼 전체**에 붙이고 엉뚱한 칸을 짚지 않는다(W-3).
+   */
+  readonly field: string | null;
 
-  constructor(status: number, code: string, detail: string) {
+  constructor(status: number, code: string, detail: string, field: string | null = null) {
     super(detail);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
     this.detail = detail;
+    this.field = field;
   }
 }
 
@@ -78,6 +85,45 @@ export const API_ERROR_CODE = {
    */
   INVALID_MEETING_STATUS: "invalid_meeting_status",
 } as const;
+
+/** 「유형」/「프로젝트」로 갈리는 문구가 있어 대상을 받는다. */
+export type SettingEntity = "workType" | "project";
+
+/**
+ * **문구를 템플릿으로 만들지 않는다.** SPEC-002 Case Matrix 가 「같은 이름의 **유형이**」 /
+ * 「같은 이름의 **프로젝트가**」로 조사를 갈라 적었다 — `${label}가` 로 묶으면 「유형가」가 나온다.
+ */
+const DUPLICATE_NAME_MESSAGE: Record<SettingEntity, string> = {
+  workType: "같은 이름의 유형이 이미 있습니다",
+  project: "같은 이름의 프로젝트가 이미 있습니다",
+};
+
+/**
+ * 유형·프로젝트 **생성·수정이 거절됐을 때 인라인에 붙일 사유**(SPEC-002 §4 Case Matrix).
+ * **`null` 이면 인라인이 아니라 토스트로 갈 실패**다(5xx·네트워크 — 사유를 폼 옆에 붙이지 않는다).
+ *
+ * 설정 패널과 업무·회의 드로어의 「+ 새 프로젝트로 추가」가 같은 문구를 쓴다 — 그래서
+ * `features/settings` 가 아니라 여기 산다(FE §2 규칙 4 · WORK-006 검수 W-1).
+ */
+export function inlineErrorMessage(error: unknown, entity: SettingEntity): string | null {
+  if (!isApiError(error)) {
+    return null;
+  }
+
+  switch (error.code) {
+    case API_ERROR_CODE.DUPLICATE_NAME:
+      return DUPLICATE_NAME_MESSAGE[entity];
+    case API_ERROR_CODE.VALIDATION_ERROR:
+      return "이름은 1~30자로 입력해 주세요";
+    case API_ERROR_CODE.WORK_TYPE_LOCKED:
+      // 토스트로 흘리지 않는다 — **해당 항목 옆 인라인 안내**다(Case Matrix).
+      return error.detail;
+    case API_ERROR_CODE.INVALID_COLOR_TOKEN:
+      return "허용된 색이 아닙니다";
+    default:
+      return null;
+  }
+}
 
 /**
  * **클라이언트에서만 만들어지는 code.** 서버가 응답하지 못한 실패라 `status` 가 없다(0).
