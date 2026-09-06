@@ -4,7 +4,10 @@
 
 **SPEC-007(WORK-007) 이 더한 표면** — `POST …/lines`(201 `LineItem`) · `PATCH …/agendas/{id}` 의 `state` ·
 `GET …/transcript`. `WS …/stream` 만 WS 전용 `meeting_stream_router` 다.
-**여기 없는 회의 표면** — `POST …/end`(202 + jobId) · `DELETE …/lines/{id}` — 는 SPEC-008 이 더한다.
+**SPEC-008(WORK-008) 이 더한 표면** — `POST …/end`·`POST …/integrate`(202 + jobId) · `PATCH`·`DELETE …/lines/{id}` ·
+`POST …/lines` 의 `ended` 확장 갈래 · `PATCH …/agendas/{id} {title}` 의 `ended` 갈래. 줄·안건 쓰기는 **`meeting_edit_service`** 가 앞문이고
+(트랙 규칙 · 상태 잠금 한 곳) 회의 중·시작 전 갈래는 거기서 `meeting_service` 로 넘긴다 — 라우터는 상태를 보지 않는다.
+`.../lines/{id}/task` 둘은 Phase 5.
 
 **`PATCH /api/schedules` 는 없다** — 파생은 단방향이라 원본(`PATCH /api/meetings/{id}`)을 고친다(BE-10).
 쓰기 응답은 **전부 `MeetingDetail`**(같은 빌더) · 삭제만 204.
@@ -19,11 +22,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.deps import get_db, require_account
 from dto.enums import MeetingSort
 from dto.meeting import MeetingListFilterDTO
+from schemas.job import JobAccepted
 from schemas.meeting import (
     AgendaCreate,
     AgendaUpdate,
     LineCreate,
     LineItem,
+    LineUpdate,
     MeetingAttachmentCreate,
     MeetingCreate,
     MeetingDetail,
@@ -31,7 +36,7 @@ from schemas.meeting import (
     MeetingUpdate,
     TranscriptResponse,
 )
-from service import meeting_service
+from service import meeting_edit_service, meeting_finalize_service, meeting_service
 
 router = APIRouter(
     prefix="/api/meetings",
@@ -162,6 +167,44 @@ async def start_meeting(
     )
 
 
+@router.post(
+    "/{meeting_id}/end",
+    response_model=JobAccepted,
+    response_model_by_alias=True,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def end_meeting(
+    meeting_id: int,
+    account_id: int = Depends(require_account),
+    session: AsyncSession = Depends(get_db),
+) -> JobAccepted:
+    """`recording → generating` + job(BE §6). **202 — 응답을 기다리는 동안 작업이 도는 구조가 아니다.** 사전 조건은 `recording` 하나(스트림 무관)."""
+    return JobAccepted(
+        job_id=await meeting_finalize_service.end(
+            session, account_id=account_id, meeting_id=meeting_id
+        )
+    )
+
+
+@router.post(
+    "/{meeting_id}/integrate",
+    response_model=JobAccepted,
+    response_model_by_alias=True,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def integrate_meeting(
+    meeting_id: int,
+    account_id: int = Depends(require_account),
+    session: AsyncSession = Depends(get_db),
+) -> JobAccepted:
+    """「다시 생성」 — `ended`+`failed` 에서만(표 밖은 409). 통합(②)만 다시 돈다 · 한 줄 요약도 같은 응답에서 온다."""
+    return JobAccepted(
+        job_id=await meeting_finalize_service.integrate(
+            session, account_id=account_id, meeting_id=meeting_id
+        )
+    )
+
+
 # --- 안건 ---------------------------------------------------------------
 #
 # **세 SPEC 이 공유하는 표면이다** — 시작 전(이 spec) · 회의 중 「새 안건」(SPEC-007) · 종료 후 제목 수정(SPEC-008).
@@ -200,9 +243,12 @@ async def update_agenda(
     account_id: int = Depends(require_account),
     session: AsyncSession = Depends(get_db),
 ) -> MeetingDetail:
-    """**보낸 필드만** — `title`(시작 전·종료 후) · `state`(회의 중 `active`·`done`·`next`). 응답은 `MeetingDetail` 전체."""
+    """**보낸 필드만** — `title`(시작 전·종료 후) · `state`(회의 중 `active`·`done`·`next`). 응답은 `MeetingDetail` 전체.
+
+    앞문은 `meeting_edit_service` — `ended` 면 이름만(편집 대상 트랙 · `state` 동봉 422), 그 밖은 `meeting_service` 로 넘긴다.
+    """
     return MeetingDetail.from_dto(
-        await meeting_service.update_agenda(
+        await meeting_edit_service.update_agenda(
             session,
             account_id=account_id,
             meeting_id=meeting_id,
@@ -243,12 +289,50 @@ async def add_line(
     account_id: int = Depends(require_account),
     session: AsyncSession = Depends(get_db),
 ) -> LineItem:
-    """회의 중 사람 줄 하나 — `status='recording'` 에서만(표 밖은 409). 응답은 **`LineItem`**(SPEC-007 §4 Request/Response)."""
+    """사람 줄 하나 — 회의 중(SPEC-007)과 종료 후 편집(SPEC-008 확장 갈래)이 한 표면. 응답은 **`LineItem`**(코디 판정 — 줄은 초 단위로 쌓인다)."""
     return LineItem.from_dto(
-        await meeting_service.add_line(
+        await meeting_edit_service.add_line(
             session, account_id=account_id, meeting_id=meeting_id, command=body.to_dto()
         )
     )
+
+
+@router.patch(
+    "/{meeting_id}/lines/{line_id}",
+    response_model=MeetingDetail,
+    response_model_by_alias=True,
+)
+async def update_line(
+    meeting_id: int,
+    line_id: int,
+    body: LineUpdate,
+    account_id: int = Depends(require_account),
+    session: AsyncSession = Depends(get_db),
+) -> MeetingDetail:
+    """인라인 수정 · 종류 전환(SPEC-008 U-7). `ended` 에서 편집 대상 트랙의 줄만. 응답은 `MeetingDetail` 전체."""
+    return MeetingDetail.from_dto(
+        await meeting_edit_service.update_line(
+            session,
+            account_id=account_id,
+            meeting_id=meeting_id,
+            line_id=line_id,
+            command=body.to_dto(),
+        )
+    )
+
+
+@router.delete("/{meeting_id}/lines/{line_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_line(
+    meeting_id: int,
+    line_id: int,
+    account_id: int = Depends(require_account),
+    session: AsyncSession = Depends(get_db),
+) -> Response:
+    """「제거」(SPEC-008 U-7 · M-20) — 회의록 탭이 그리는 트랙의 행 하나만 **하드 삭제**. 원본·AI·트랜스크립트·녹음·업무는 그대로. 없는 줄은 404."""
+    await meeting_edit_service.delete_line(
+        session, account_id=account_id, meeting_id=meeting_id, line_id=line_id
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get(

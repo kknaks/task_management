@@ -52,6 +52,8 @@ class TaskStatus(StrEnum):
 UNFINISHED_STATUSES = frozenset({TaskStatus.TODO.value, TaskStatus.IN_PROGRESS.value})
 # 종결 2종 — R-4 가 이것들만 **실적 시각**으로 거른다(`due_date` 로 거르지 않는다).
 FINISHED_STATUSES = frozenset({TaskStatus.DONE.value, TaskStatus.CANCELLED.value})
+# 회의록 `pendingChange.status` 가 담을 수 있는 상태 — **`cancelled` 불가**(사유가 필수라 세 키로 표현할 수 없다 · SPEC-008 §4 Validation).
+PENDING_CHANGE_STATUSES = frozenset(TaskStatus) - {TaskStatus.CANCELLED}
 
 
 class AttachmentRole(StrEnum):
@@ -207,3 +209,46 @@ class StreamDisconnectReason(StrEnum):
 
     UPSTREAM = "upstream"
     WRITE_FAILED = "write_failed"
+
+
+# --- 종료 파이프라인 · job (WORK-008 · SPEC-008 §4 · BE §6) -------------------------
+
+
+class JobKind(StrEnum):
+    """`job.kind`. v1 은 회의 종료 파이프라인 하나다(ERD `job`)."""
+
+    MEETING_FINALIZE = "meeting_finalize"
+
+
+class JobTargetType(StrEnum):
+    """`job.target_type` — 어느 리소스의 작업인가. `activeJobId` 파생이 `(target_type, target_id)` 로 찾는다."""
+
+    MEETING = "meeting"
+
+
+class JobStatus(StrEnum):
+    """`job.status` 4종(BE §6). `SUCCEEDED`·`FAILED` 가 종결이고 폴링이 멈춘다."""
+
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+# 종결 2종 — 폴링이 멈추는 상태. 기동 스윕은 **이 밖의 행**을 마감한다(BE §5-3).
+JOB_TERMINAL_STATUSES = frozenset({JobStatus.SUCCEEDED.value, JobStatus.FAILED.value})
+
+
+class JobErrorCode(StrEnum):
+    """`job.error_code` **3종뿐**(SPEC-008 §4 Case Matrix · ERD `job`). 그 밖의 실패는 코드를 발명하지 않고 전파한다."""
+
+    INTEGRATION_FAILED = "integration_failed"
+    INTEGRATION_TIMEOUT = "integration_timeout"
+    JOB_TIMEOUT = "job_timeout"
+
+
+class JobPhase(StrEnum):
+    """`GET /api/jobs/{id}` 의 `progress.phase`(BE §6 · SPEC-008 §4) — 컬럼이 아니라 **파생**이다."""
+
+    FINAL_BATCH = "final_batch"
+    INTEGRATION = "integration"

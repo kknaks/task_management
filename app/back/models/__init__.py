@@ -3,6 +3,7 @@
 from models.account import Account, AuthSession, Career, Project, WorkType
 from models.base import Base
 from models.calendar import Schedule
+from models.job import Job
 from models.meeting import (
     Meeting,
     MeetingAgenda,
@@ -28,6 +29,7 @@ __all__ = [
     "Project",
     "WorkType",
     "Schedule",
+    "Job",
     "Meeting",
     "MeetingAgenda",
     "MeetingAttachment",

@@ -141,3 +141,14 @@ class InvalidMeetingStatusError(ConflictError):
     """
 
     code = "invalid_meeting_status"
+
+
+class SurfaceNotImplementedError(AppError):
+    """501 — 표면은 계약에 있으나 **이 Phase 가 아직 채우지 않은 갈래**(WORK-008 Phase 2 「`newTask` 갈래를 501 스텁으로」).
+
+    SPEC-008 Case Matrix 에 없는 코드다 — WP 가 스텁을 명시해서 둔 **임시 자리**이고, Phase 5(업무 연동)가
+    `meeting_task_link_service` 로 채우는 순간 이 예외를 던지는 코드가 사라진다. 정상 경로가 아니다.
+    """
+
+    status = 501
+    code = "not_implemented"

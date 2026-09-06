@@ -543,10 +543,12 @@ def test_static_meeting_detail_is_built_in_exactly_one_place() -> None:
     assert hits == [("service/meeting_service.py", hits[0][1])], hits
 
 
-def test_static_meeting_status_is_assigned_only_by_start_recording() -> None:
-    """WP 「상태 대입 격리」 — `status=` 대입은 `meeting_repository.start_recording` 의 UPDATE 하나뿐이다."""
+def test_static_meeting_status_is_assigned_only_by_transition_functions() -> None:
+    """WP 「상태 대입 격리」 — `status=` 대입은 `meeting_repository` 의 **전이 함수 셋**(`start_recording`→recording ·
+    `begin_generating`→generating · `finish_integration`→ended — WORK-008 이 둘을 더했다)의 UPDATE 뿐이다. service·router 에는 없다."""
     hits = []
-    for relative in ("service/meeting_service.py", "repository/meeting_repository.py", "repository/meeting_child_repository.py", "api/meeting_router.py"):
+    for relative in ("service/meeting_service.py", "service/meeting_finalize_service.py", "service/meeting_edit_service.py",
+                     "repository/meeting_repository.py", "repository/meeting_child_repository.py", "api/meeting_router.py"):
         for line_no, line in enumerate(_read(relative).splitlines(), 1):
             stripped = line.strip()
             # 주석·docstring 은 코드가 아니다
@@ -554,9 +556,10 @@ def test_static_meeting_status_is_assigned_only_by_start_recording() -> None:
                 continue
             if re.search(r"\bstatus\s*=\s*(MeetingStatus|['\"])", line):
                 hits.append((relative, line_no, stripped))
-    assert len(hits) == 1, hits
-    assert hits[0][0] == "repository/meeting_repository.py"
-    assert "RECORDING" in hits[0][2]
+    assert [hit[0] for hit in hits] == ["repository/meeting_repository.py"] * 3, hits
+    assert sorted(value for hit in hits for value in ("RECORDING", "GENERATING", "ENDED") if value in hit[2]) == [
+        "ENDED", "GENERATING", "RECORDING",
+    ]
 
 
 def test_static_schedule_writes_live_only_in_schedule_service() -> None:

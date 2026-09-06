@@ -70,6 +70,9 @@ REASON_INVALID_STATUS = "invalid_meeting_status"
 REASON_STREAM_ACTIVE = "meeting_stream_active"
 REASON_NOT_FOUND = "not_found"
 REASON_DISCONNECTED = "meeting_stream_disconnected"
+# `/end` 가 살아 있는 스트림을 닫는 코드(SPEC-007 §4 · SPEC-008 §4 `/end` 「WS 닫기(1000)」)
+CLOSE_ENDED = 1000
+REASON_ENDED = "meeting_ended"
 
 # 발화 블록 경계 — SPEC-007 §4 가 정한 값(WP L145 「이미 SPEC 에 있다」). env 가 아니다
 BLOCK_MAX_CHARS = 300
@@ -148,6 +151,19 @@ async def serve(
         await stream.shutdown()
 
 
+async def close_for_end(meeting_id: int) -> bool:
+    """`/end` — 살아 있는 스트림이 있으면 `1000 meeting_ended` 로 닫는다(SPEC-008 §4 `/end` 순서 ①). **없으면 그냥 True 가 아니라 False** —
+    `paused/stream`(WS 없음)에서도 종료는 진행된다(BE §8-2 L243). 종료는 상태 전이 + job 이지 스트림 조작이 아니다.
+
+    닫힘 뒤 `serve()` 의 `finally` 가 업스트림(Soniox)을 닫고 레지스트리에서 뺀다 — 종료 프레임은 그 자리다.
+    """
+    stream = _sessions.get(meeting_id)
+    if stream is None:
+        return False
+    await stream.end()
+    return True
+
+
 async def push_ai_batch(
     meeting_id: int, *, seq: int, agendas: list[MeetingAgendaDTO], lines: list[MeetingLineDTO]
 ) -> bool:
@@ -199,6 +215,8 @@ class StreamSession:
         self._speakers: set[str] = set()
         self._recording_path_saved = False
         self._failed: str | None = None
+        # `/end` 가 세운다 — 펌프 셋과 함께 기다려 세션을 끝낸다(`finally` 가 업스트림을 닫는다)
+        self._ended = asyncio.Event()
 
     # --- 실행 -------------------------------------------------------------------
 
@@ -215,6 +233,7 @@ class StreamSession:
             asyncio.create_task(self._pump_client(), name="stream-client"),
             asyncio.create_task(self._pump_upstream(), name="stream-upstream"),
             asyncio.create_task(self._pump_outbox(), name="stream-outbox"),
+            asyncio.create_task(self._ended.wait(), name="stream-ended"),
         ]
         done, pending = await asyncio.wait(pumps, return_when=asyncio.FIRST_COMPLETED)
         for task in pending:
@@ -227,6 +246,14 @@ class StreamSession:
         for task in done:
             # 설계 밖 예외는 여기서 그대로 올라간다
             task.result()
+
+    async def end(self) -> None:
+        """`/end` — 클라이언트를 `1000 meeting_ended` 로 닫고 세션을 끝낸다. 실패 프레임이 아니다(정상 종료)."""
+        try:
+            await self.client.close(CLOSE_ENDED, REASON_ENDED)
+        except StreamClientClosed:
+            pass
+        self._ended.set()
 
     async def shutdown(self) -> None:
         """`finally` 에서 부른다 — 열린 블록을 적재하고 **업스트림을 반드시 닫는다**."""

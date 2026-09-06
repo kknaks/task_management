@@ -15,11 +15,14 @@ from typing import Annotated, Literal
 
 from pydantic import AwareDatetime, ConfigDict, StringConstraints, field_validator, model_validator
 
+from dto.enums import PENDING_CHANGE_STATUSES
 from dto.meeting import (
     AgendaCreateDTO,
     AgendaUpdateDTO,
     LineCreateDTO,
+    LineNewTaskDTO,
     LineTaskSummaryDTO,
+    LineUpdateDTO,
     MeetingAgendaDTO,
     MeetingAttachmentCreateDTO,
     MeetingAttachmentDTO,
@@ -30,6 +33,7 @@ from dto.meeting import (
     MeetingListResultDTO,
     MeetingUpdateDTO,
     MergedSummaryDTO,
+    PendingChangeDTO,
     ProjectCountDTO,
     TranscriptDTO,
     TranscriptItemDTO,
@@ -112,17 +116,117 @@ class AgendaUpdate(_MeetingRequest):
         )
 
 
+# SPEC-008 §4 Validation — `detail` 4000 이하 · `note` 1~2000 · `pendingChange.status` 는 `cancelled` 불가
+LineDetail = Annotated[str, StringConstraints(max_length=4000)]
+PendingNote = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
+# SPEC-003 `POST /api/tasks` Validation 그대로(`newTask` · `/lines/{id}/task`) — 제목 1~200 · 설명 4000 이하
+TaskTitle = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+TaskDescription = Annotated[str, StringConstraints(max_length=4000)]
+
+
+class PendingChange(_MeetingRequest):
+    """`pendingChange` — 키는 **`dueDate` · `status` · `note` 만**(M-14-a). `extra="forbid"` 가 넷째 키를, `Literal` 이 `cancelled` 를 막는다.
+
+    보냈으면 키가 1개 이상이어야 한다. 값은 `null` 로 비울 수 없다(「보내지 않음」이 곧 「변경 없음」).
+    """
+
+    due_date: date | None = None
+    # 허용값의 정본은 `dto.enums.PENDING_CHANGE_STATUSES`(= 업무 상태 − `cancelled`) — 문자열을 여기 다시 적지 않는다
+    status: str | None = None
+    note: PendingNote | None = None
+
+    @field_validator("status")
+    @classmethod
+    def _status_in_allowed_set(cls, value: str | None) -> str | None:
+        if value is not None and value not in PENDING_CHANGE_STATUSES:
+            raise ValueError("pendingChange.status 에 담을 수 없는 상태입니다")
+        return value
+
+    @model_validator(mode="after")
+    def _at_least_one_and_no_null(self) -> "PendingChange":
+        if not self.model_fields_set:
+            raise ValueError("pendingChange 에 키가 하나 이상 있어야 합니다")
+        for name in ("due_date", "status", "note"):
+            if name in self.model_fields_set and getattr(self, name) is None:
+                raise ValueError(f"{name} 은 비울 수 없습니다")
+        return self
+
+    def to_dto(self) -> PendingChangeDTO:
+        return PendingChangeDTO(due_date=self.due_date, status=self.status, note=self.note)
+
+
+class LineNewTask(_MeetingRequest):
+    """`newTask` — 업무 생성 + 줄 한 트랜잭션(U-10 칩 진입). 규칙은 SPEC-003 `POST /api/tasks` 그대로. **Phase 5 가 채운다**(지금은 501)."""
+
+    title: TaskTitle
+    work_type_id: int
+    project_id: int | None = None
+    due_date: date | None = None
+    description: TaskDescription | None = None
+
+    def to_dto(self) -> LineNewTaskDTO:
+        return LineNewTaskDTO(
+            title=self.title,
+            work_type_id=self.work_type_id,
+            project_id=self.project_id,
+            due_date=self.due_date,
+            description=self.description,
+        )
+
+
 class LineCreate(_MeetingRequest):
-    """`POST …/lines` — 회의 중 사람 줄 하나(SPEC-007 §4). `agendaId` 는 **이 회의의 사람 트랙** 안건(service 가 판정)."""
+    """`POST …/lines` — 회의 중(SPEC-007 §4)과 종료 후 편집(SPEC-008 §4) **한 표면**.
+
+    회의 중은 `agendaId`·`kind`·`content` 만. 종료 후가 더하는 것 — `detail`(U-8) · `taskId`+`pendingChange`(U-9 · `content` 는
+    서버가 업무 제목으로) · `newTask`(U-10). `content` 는 그래서 선택이고, **필수 여부는 service 가 종류로 판정**한다.
+    `recording` 에서 확장 필드가 오면 service 가 `validation_error` 다.
+    """
 
     agenda_id: int
     kind: LineKindValue
-    content: LineContent
+    content: LineContent | None = None
+    detail: LineDetail | None = None
+    task_id: int | None = None
+    pending_change: PendingChange | None = None
+    new_task: LineNewTask | None = None
 
     _no_newline = field_validator("content")(_reject_newlines)
 
     def to_dto(self) -> LineCreateDTO:
-        return LineCreateDTO(agenda_id=self.agenda_id, kind=self.kind, content=self.content)
+        return LineCreateDTO(
+            agenda_id=self.agenda_id,
+            kind=self.kind,
+            content=self.content,
+            detail=self.detail,
+            task_id=self.task_id,
+            pending_change=None if self.pending_change is None else self.pending_change.to_dto(),
+            new_task=None if self.new_task is None else self.new_task.to_dto(),
+        )
+
+
+class LineUpdate(_MeetingRequest):
+    """`PATCH …/lines/{id}` — 보낸 필드만(SPEC-008 §4). `content` · `kind` 둘 다 `null` 로 비울 수 없고, 하나는 보내야 한다."""
+
+    content: LineContent | None = None
+    kind: LineKindValue | None = None
+
+    _no_newline = field_validator("content")(_reject_newlines)
+
+    @model_validator(mode="after")
+    def _reject_null_and_empty(self) -> "LineUpdate":
+        if not self.model_fields_set:
+            raise ValueError("바꿀 필드가 없습니다")
+        for name in ("content", "kind"):
+            if name in self.model_fields_set and getattr(self, name) is None:
+                raise ValueError(f"{name} 은 비울 수 없습니다")
+        return self
+
+    def to_dto(self) -> LineUpdateDTO:
+        sent = self.model_fields_set
+        return LineUpdateDTO(
+            content=self.content if "content" in sent else UNSET,  # type: ignore[arg-type]
+            kind=self.kind if "kind" in sent else UNSET,  # type: ignore[arg-type]
+        )
 
 
 class MeetingAttachmentCreate(_MeetingRequest):

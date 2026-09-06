@@ -5,6 +5,9 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,6 +16,7 @@ from fastapi.responses import JSONResponse
 from api import (
     auth_router,
     health_router,
+    job_router,
     meeting_router,
     meeting_stream_router,
     setting_router,
@@ -20,6 +24,7 @@ from api import (
 )
 from config import get_settings
 from core.exceptions import AppError, ValidationError
+from service import job_service
 
 # pydantic `loc` 의 앞머리 — 필드 경로에 싣지 않는다
 _LOC_ROOTS = frozenset({"body", "query", "path", "header"})
@@ -70,10 +75,17 @@ async def request_validation_error_handler(
     )
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """기동 스윕(BE §5-3) — `queued`/`running` 으로 남은 job 을 마감한다. **별도 태스크**라 실패해도 기동을 막지 않는다."""
+    job_service.launch_sweep()
+    yield
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
 
-    app = FastAPI(title="task-management API", version=settings.app_version)
+    app = FastAPI(title="task-management API", version=settings.app_version, lifespan=lifespan)
 
     # CORS — **명시 목록**. `*` 를 쓰지 않는다.
     # 쿠키를 쓰지 않으므로(Bearer) `allow_credentials=False` 다(DEC-001 §4 · SYS-3).
@@ -94,6 +106,7 @@ def create_app() -> FastAPI:
     app.include_router(setting_router.router)
     app.include_router(task_router.router)
     app.include_router(meeting_router.router)
+    app.include_router(job_router.router)
     # WS 전용 라우터 — REST 표면은 `meeting_router` 에 더한다(SPEC-007 §4)
     app.include_router(meeting_stream_router.router)
 

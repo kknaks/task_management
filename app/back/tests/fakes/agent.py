@@ -50,6 +50,9 @@ class FakeAgentGateway:
         item = self.responses.pop(0)
         if isinstance(item, BaseException):
             raise item
+        if callable(item):
+            # 프롬프트를 보고 출력을 만드는 「대역 모델」 — 통합 출력은 ① 이 만든 AI 줄 id 를 참조해야 해서 미리 적을 수 없다(WORK-008)
+            item = item(prompt)
         if isinstance(item, str):
             return AgentRunResult(session_id=self.session_id, output=item)
         return AgentRunResult(session_id=self.session_id, output=json.dumps(item))
@@ -68,3 +71,7 @@ class FakeAgentGateway:
 
     def will_return(self, payload: object) -> None:
         self.responses.append(payload)
+
+    def will_answer(self, build) -> None:  # type: ignore[no-untyped-def]
+        """`build(prompt) -> dict | str` — 호출 시점의 프롬프트로 출력을 만든다."""
+        self.responses.append(build)

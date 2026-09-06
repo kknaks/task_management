@@ -27,7 +27,12 @@ from core.exceptions import InvalidMeetingStatusError, NotFoundError, Validation
 from dto.enums import (
     AgendaState,
     AttachmentKind,
+    BatchPhase,
+    BatchRunStatus,
     BatchTriggerCause,
+    IntegrationState,
+    JobTargetType,
+    LineKind,
     MeetingStatus,
     MeetingTrack,
     WorkTypeKind,
@@ -44,13 +49,15 @@ from dto.meeting import (
     MeetingDTO,
     MeetingLineDTO,
     MeetingListFilterDTO,
-    MeetingLineDTO,
     MeetingListResultDTO,
     MeetingUpdateDTO,
+    MergedSummaryDTO,
     TranscriptDTO,
 )
 from dto.unset import UNSET
 from repository import (
+    job_repository,
+    meeting_batch_run_repository,
     meeting_child_repository,
     meeting_line_repository,
     meeting_repository,
@@ -86,9 +93,12 @@ _ALLOWED_URL_SCHEMES = frozenset({"http", "https"})
 # | agenda_delete   | ✔         | ✗         | ✗          | ✗     |
 # | attachment      | ✔         | ✔         | ✗          | ✔     |
 # | delete          | ✔         | ✗         | ✗          | ✔     |
-# | line_write      | ✗         | ✔         | ✗          | ✗     |  ← WORK-007 (`POST …/lines`). `ended` 편집은 SPEC-008
+# | line_write      | ✗         | ✔         | ✗          | ✔     |  ← WORK-007 (`POST …/lines`) + SPEC-008 `ended` 편집(확장 필드는 `ended` 만 — edit service)
+# | line_edit       | ✗         | ✗         | ✗          | ✔     |  ← WORK-008 (`PATCH`·`DELETE …/lines/{id}`). `generating` 은 편집 잠금
+# | end             | ✗         | ✔         | ✗          | ✗     |  ← WORK-008 `POST …/end`. **스트림 상태를 보지 않는다**(BE §8-2 L243)
+# | integrate       | ✗         | ✗         | ✗          | ✔ ¹   |  ← WORK-008 `POST …/integrate`. ¹ `integration_state='failed'` 일 때만(M-4)
 #
-# WORK-008 은 `end` · `integrate` … 를 **이 표에 행으로** 더한다.
+# 상태 축 밖의 조건은 `_REQUIRED_INTEGRATION_STATE` 한 표가 더 갖는다 — 판정 함수는 여전히 `_assert_allowed` 하나다.
 _S, _R, _G, _E = (
     MeetingStatus.SCHEDULED.value,
     MeetingStatus.RECORDING.value,
@@ -105,7 +115,14 @@ _ALLOWED: dict[str, frozenset[str]] = {
     "agenda_delete": frozenset({_S}),
     "attachment": frozenset({_S, _R, _E}),
     "delete": frozenset({_S, _E}),
-    "line_write": frozenset({_R}),
+    "line_write": frozenset({_R, _E}),
+    "line_edit": frozenset({_E}),
+    "end": frozenset({_R}),
+    "integrate": frozenset({_E}),
+}
+# `integration_state` 축의 추가 조건(SPEC-008 §4 Validation 「`/integrate` 는 `ended` AND `failed`」 · M-4 「다시 생성은 이 조합에서만」)
+_REQUIRED_INTEGRATION_STATE: dict[str, frozenset[str]] = {
+    "integrate": frozenset({IntegrationState.FAILED.value}),
 }
 
 
@@ -113,9 +130,17 @@ def _assert_allowed(meeting: MeetingDTO, action: str) -> None:
     """**상태별 허용 판정은 여기 한 곳이다.** 화면이 버튼을 비활성으로 미리 알리지만 판정은 서버가 한다.
 
     모르는 `action` 은 KeyError 로 그대로 터진다 — 표에 없는 동작을 조용히 통과시키지 않는다(BE §8-1).
+    `_REQUIRED_INTEGRATION_STATE` 에 행이 있는 동작은 `integration_state` 도 본다 — 같은 `invalid_meeting_status` 다.
     """
     if meeting.status not in _ALLOWED[action]:
         raise InvalidMeetingStatusError(_INVALID_STATUS)
+    required = _REQUIRED_INTEGRATION_STATE.get(action)
+    if required is not None and meeting.integration_state not in required:
+        raise InvalidMeetingStatusError(_INVALID_STATUS)
+
+
+# 다른 회의 service(`meeting_finalize_service` · `meeting_edit_service`)가 **같은 표**를 지나는 공개 이름. 판정 함수는 위 하나다.
+assert_allowed = _assert_allowed
 
 
 def _not_found() -> NotFoundError:
@@ -140,6 +165,11 @@ async def _require_meeting(
     if found is None:
         raise _not_found()
     return found
+
+
+# 다른 회의 service 가 같은 소유 검사·같은 404 를 지나는 공개 이름(WORK-008)
+require_meeting = _require_meeting
+not_found = _not_found
 
 
 def duration_minutes(start_at: datetime, end_at: datetime) -> int:
@@ -167,20 +197,60 @@ async def build_detail(
     return MeetingDetailDTO(
         meeting=meeting,
         duration_minutes=duration_minutes(meeting.start_at, meeting.end_at),
-        # M-19 — 통합(WORK-008)이 채운다. 그전엔 None 이고 여기서는 읽어 실을 뿐이다
+        # M-19 — 통합 ② 와 같은 트랜잭션에서 채워진 값을 읽어 실을 뿐이다. 실패면 NULL
         headline=meeting.ai_headline,
-        # SPEC-008 이 정의한다 — 통합 전 None
-        merged_summary=None,
+        # SPEC-008 §4 — 파생. `succeeded` 일 때만, `merged` 트리에서 센다(저장하지 않는다 — 줄을 지우면 바로 따라 바뀐다)
+        merged_summary=await _build_merged_summary(session, meeting, tracks.merged),
         agendas=tracks,
         attachments=await meeting_child_repository.list_attachments(session, meeting_id),
-        # M-6-a — 성공한 배치의 최대 seq. 시작 전 0
+        # M-6-a — 성공한 배치(증분·최종)의 최대 seq. 시작 전 0
         latest_batch_seq=await meeting_child_repository.max_succeeded_batch_seq(
             session, meeting_id
         ),
-        # SPEC-008 — 최종 배치 결과 · 진행 중 job. 이 work 시점엔 둘 다 None
-        final_batch_state=None,
-        active_job_id=None,
+        # SPEC-008 §4 — `meeting_batch_run(phase='final')` 최신 행의 결과. 없으면 None
+        final_batch_state=await _final_batch_state(session, meeting_id),
+        # SPEC-008 §4 — `job(kind='meeting_finalize', target=이 회의, status∈{queued,running})`. 없으면 None
+        active_job_id=await job_repository.find_active_job_id(
+            session, target_type=JobTargetType.MEETING.value, target_id=meeting_id
+        ),
     )
+
+
+async def _final_batch_state(session: AsyncSession, meeting_id: int) -> str | None:
+    """`finalBatchState` — `succeeded` | `failed` | None. 폐기(`discarded`)도 화면에는 「종결 정리 실패」다."""
+    run = await meeting_batch_run_repository.find_latest_by_phase(
+        session, meeting_id, phase=BatchPhase.FINAL.value
+    )
+    if run is None:
+        return None
+    return "succeeded" if run.status == BatchRunStatus.SUCCEEDED.value else "failed"
+
+
+async def _build_merged_summary(
+    session: AsyncSession, meeting: MeetingDTO, merged: list[MeetingAgendaDTO]
+) -> MergedSummaryDTO | None:
+    """「안건 n · 결정 n · 액션 n」 — `merged` 안건 수 · `decision` 줄 수 · `action`+`task` 줄 수(업무로 바꿀수록 줄어드는 수를 만들지 않는다).
+
+    `integratedAt` 은 통합 성공 행(`phase='integration'`)의 시각 — 성공 상태와 같은 트랜잭션에 쓰였으므로 없으면 데이터가 어긋난 것이다.
+    """
+    if meeting.integration_state != IntegrationState.SUCCEEDED.value:
+        return None
+    run = await meeting_batch_run_repository.find_latest_by_phase(
+        session, meeting.id, phase=BatchPhase.INTEGRATION.value
+    )
+    if run is None or run.status != BatchRunStatus.SUCCEEDED.value:
+        raise RuntimeError(f"회의 {meeting.id} 는 통합 성공 상태인데 성공한 통합 행이 없습니다")
+    lines = [line for agenda in merged for line in agenda.lines]
+    return MergedSummaryDTO(
+        agenda_count=len(merged),
+        decision_count=sum(line.kind == LineKind.DECISION.value for line in lines),
+        action_count=sum(line.kind in _ACTION_KINDS for line in lines),
+        integrated_at=run.created_at,
+    )
+
+
+# SPEC-008 §7 「통합 결과의 actionCount」 — `action` + `task`
+_ACTION_KINDS = frozenset({LineKind.ACTION.value, LineKind.TASK.value})
 
 
 def _build_tracks(
@@ -202,6 +272,10 @@ def _build_tracks(
         ai=by_track[MeetingTrack.AI.value],
         merged=by_track[MeetingTrack.MERGED.value],
     )
+
+
+# 통합 입력(사람 트리 · AI 트리)이 상세와 **같은 모양**으로 중첩되게 — 공개 이름(WORK-008)
+build_tracks = _build_tracks
 
 
 async def get_detail(
@@ -643,7 +717,7 @@ async def remove_agenda(
 async def add_line(
     session: AsyncSession, *, account_id: int, meeting_id: int, command: LineCreateDTO
 ) -> MeetingLineDTO:
-    """`POST …/lines` — `status='recording'` 에서 사람 줄 하나(SPEC-007 U-3).
+    """`POST …/lines` **회의 중 갈래** — `status='recording'` 에서 사람 줄 하나(SPEC-007 U-3). `ended` 갈래는 `meeting_edit_service`.
 
     `agendaId` 는 **이 회의의 사람 트랙** 안건이어야 한다 — AI 안건·없는 안건은 `validation_error`(본문 필드 참조).
     `detail`·`evidence`·`task_id`·`pending_change` 는 **항상 비어** 저장된다(M-14 — 값이 차는 것은 종료 후 편집·통합).
@@ -651,6 +725,11 @@ async def add_line(
     """
     meeting = await _require_meeting(session, account_id=account_id, meeting_id=meeting_id)
     _assert_allowed(meeting, "line_write")
+    if meeting.status != MeetingStatus.RECORDING.value:
+        # `ended` 갈래는 `meeting_edit_service.add_line` 이 받는다 — 이 함수는 회의 중 갈래만이다(SPEC-007)
+        raise InvalidMeetingStatusError(_INVALID_STATUS)
+    if command.content is None:
+        raise _invalid_input("content")
 
     agenda = await meeting_child_repository.find_agenda(
         session, meeting_id=meeting_id, agenda_id=command.agenda_id

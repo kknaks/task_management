@@ -18,6 +18,9 @@
    백그라운드 태스크라 요청 경계가 없으므로 단계마다 `session_scope()` 를 연다.
 
 AI 는 `track='ai'` 에만 INSERT 한다(M-6). 사람 안건·줄은 **읽기 전용 컨텍스트**로 프롬프트에 들어간다(BASE-003 L36·L38).
+
+**WORK-008 이 더한 것 — `run_final()`**: 종료 파이프라인 ①(최종 배치). 범위 = 전체, 결과가 검증을 지나면 AI 트랙 **전량 교체**(M-7).
+실패면 증분 상태 그대로(DEC-003 §7 L139). 두 번째 배치 경로가 아니라 같은 검증 4단 · 같은 스키마 · 같은 `_persist` 다.
 """
 
 from __future__ import annotations
@@ -338,20 +341,122 @@ async def _load_input(session: AsyncSession, meeting_id: int) -> _BatchInput | N
 
 
 async def _record(
-    meeting_id: int, *, seq: int, status: str, first_id: int, last_id: int, reason: str
+    meeting_id: int,
+    *,
+    seq: int,
+    status: str,
+    first_id: int | None,
+    last_id: int | None,
+    reason: str,
+    phase: str = BatchPhase.INCREMENTAL.value,
 ) -> None:
-    """실패·폐기 기록 — **커서는 전진하지 않는다**(성공분만 커서다). 사용자에게 표시할 것이 없다."""
+    """실패·폐기 기록 — **커서는 전진하지 않는다**(성공분만 커서다). 사용자에게 표시할 것이 없다.
+
+    `phase='final'` 이면 SPEC-008 「마지막 배치 실패」의 기록이다 — AI 탭 안내 바 「종결 정리 실패」의 원천(`finalBatchState`).
+    """
     async with session_scope() as session:
         await meeting_batch_run_repository.create_run(
             session,
             meeting_id=meeting_id,
             seq=seq,
-            phase=BatchPhase.INCREMENTAL.value,
+            phase=phase,
             status=status,
             from_transcript_id=first_id,
             to_transcript_id=last_id,
             reason=reason[:2000],
         )
+
+
+# --- ① 최종 배치 (SPEC-008 §4 종료 파이프라인 · M-7 · DEC-003 §7 L139) ----------------------------
+
+
+async def run_final(meeting_id: int, *, timeout_sec: int) -> bool:
+    """**AI 트랙 전체 재정리** — 회의 전체 트랜스크립트 + 사람 안건·줄 + 화이트리스트를 **같은 세션**에 보내고, 결과가
+    스키마·화이트리스트 검증을 지나면 `track='ai'` 안건·줄을 **한 트랜잭션에서 DELETE + INSERT** 한다(M-7).
+
+    실패(워커 오류 · 상한 초과 · 스키마 위반)면 **증분 상태 그대로**(§7 L139) — 검증 전에 지우지 않는다(SPEC-008 §5).
+    돌려주는 값 = 성공 여부. `meeting_finalize_service` 만 부른다. 회의당 락을 **기다려** 잡는다 — 진행 중인 증분 배치가
+    끝난 뒤에 돈다(동시 실행 0 · M-12). 입력·출력 스키마는 증분과 같고 범위만 전체다(SPEC-008 §4 표 ①).
+    """
+    _assert_single_session()
+    async with _lock_for(meeting_id):
+        _disarm_timer(meeting_id)
+        return await _run_final_once(meeting_id, timeout_sec=timeout_sec)
+
+
+async def _run_final_once(meeting_id: int, *, timeout_sec: int) -> bool:
+    async with session_scope() as session:
+        batch_input = await _load_final_input(session, meeting_id)
+    if batch_input.meeting.ai_session_id is None:
+        raise RuntimeError(f"회의 {meeting_id} 에 AI 세션이 없습니다")
+
+    first_id = batch_input.blocks[0].id if batch_input.blocks else None
+    last_id = batch_input.blocks[-1].id if batch_input.blocks else None
+    phase = BatchPhase.FINAL.value
+
+    try:
+        result = await agent_integration.get_gateway().run(
+            prompt=build_final_prompt(batch_input),
+            session_id=batch_input.meeting.ai_session_id,
+            output_schema=OUTPUT_SCHEMA,
+            timeout_sec=timeout_sec,
+        )
+    except (AgentRunFailed, AgentRunTimeout) as exc:
+        await _record(meeting_id, seq=batch_input.seq, status=BatchRunStatus.FAILED.value,
+                      first_id=first_id, last_id=last_id, reason=str(exc), phase=phase)
+        return False
+
+    try:
+        lines = _parse_output(result.output, batch_input)
+    except _SchemaViolation as exc:
+        await _record(meeting_id, seq=batch_input.seq, status=BatchRunStatus.DISCARDED.value,
+                      first_id=first_id, last_id=last_id, reason=str(exc), phase=phase)
+        return False
+
+    demoted = [_demote_if_needed(line, batch_input.whitelist, meeting_id=meeting_id) for line in lines]
+
+    # 검증을 통과한 결과로만 전량 교체 — 줄 → 안건 순(FK). 그리고 새 결과 INSERT. 한 트랜잭션
+    async with session_scope() as session:
+        await meeting_line_repository.delete_by_track(
+            session, meeting_id=meeting_id, track=MeetingTrack.AI.value
+        )
+        await meeting_child_repository.delete_agendas_by_track(
+            session, meeting_id=meeting_id, track=MeetingTrack.AI.value
+        )
+        await _persist(session, batch_input, demoted)
+        await meeting_batch_run_repository.create_run(
+            session,
+            meeting_id=meeting_id,
+            seq=batch_input.seq,
+            phase=phase,
+            status=BatchRunStatus.SUCCEEDED.value,
+            from_transcript_id=first_id,
+            to_transcript_id=last_id,
+        )
+    return True
+
+
+async def _load_final_input(session: AsyncSession, meeting_id: int) -> _BatchInput:
+    """범위 = **전체**. 기존 AI 안건은 입력에 넣지 않는다(`ai_agendas=[]`) — 전량 교체라 `aiAgendaId` 참조가 설 자리가 없다.
+    사람 안건은 `humanAgendaId`, 그 밖은 `newTitle` 로만 낸다."""
+    meeting = await meeting_repository.find_ai_context(session, meeting_id=meeting_id)
+    if meeting is None:
+        raise RuntimeError(f"회의 {meeting_id} 가 없습니다")
+    return _BatchInput(
+        meeting=meeting,
+        seq=await meeting_batch_run_repository.next_seq(session, meeting_id),
+        blocks=await meeting_transcript_repository.list_after(session, meeting_id, after_id=None),
+        human_agendas=await meeting_child_repository.list_agendas_by_track(
+            session, meeting_id, track=MeetingTrack.HUMAN.value
+        ),
+        human_lines=await meeting_line_repository.list_human_lines_since(
+            session, meeting_id, since=None
+        ),
+        ai_agendas=[],
+        tasks=await task_repository.list_meeting_context(
+            session, account_id=meeting.account_id, project_id=meeting.project_id
+        ),
+    )
 
 
 # --- 검증 2단 · 3단 -------------------------------------------------------------
@@ -373,7 +478,8 @@ def _parse_output(output: str, batch_input: _BatchInput) -> list[_OutputLine]:
 
     human_ids = {agenda.id for agenda in batch_input.human_agendas}
     ai_ids = {agenda.id for agenda in batch_input.ai_agendas}
-    last_end_ms = max(block.end_ms for block in batch_input.blocks)
+    # 최종 배치는 블록이 0개일 수 있다 — 그때 어떤 evidence 구간도 범위 안일 수 없다
+    last_end_ms = max((block.end_ms for block in batch_input.blocks), default=0)
 
     lines: list[_OutputLine] = []
     for index, item in enumerate(data["items"]):
@@ -596,6 +702,38 @@ def build_warm_start_prompt(context: WarmStartContext) -> str:
         "업무 목록의 id 만 이후 `taskId` 로 쓸 수 있다. 목록 밖의 업무를 만들어 내지 마라.\n"
         "이번 요청에는 아무 작업도 하지 말고 「준비됨」이라고만 답하라.\n\n"
         f"컨텍스트:\n{_dumps(payload)}"
+    )
+
+
+def build_final_prompt(batch_input: _BatchInput) -> str:
+    """① 최종 배치 — 회의 전체를 다시 정리한다. 출력 스키마는 증분과 같다(SPEC-008 §4 표 ①)."""
+    payload = {
+        "transcript": [
+            {
+                "id": block.id,
+                "speakerLabel": block.speaker_label,
+                "atMs": block.at_ms,
+                "endMs": block.end_ms,
+                "content": block.content,
+            }
+            for block in batch_input.blocks
+        ],
+        "humanAgendas": _agenda_rows(batch_input.human_agendas),
+        "humanLines": [
+            {"agendaId": line.agenda_id, "kind": line.kind, "content": line.content}
+            for line in batch_input.human_lines
+        ],
+        "taskWhitelist": sorted(batch_input.whitelist),
+    }
+    return (
+        "회의가 끝났다. **마지막 배치**다 — 아래 회의 전체 확정 발화(transcript)를 처음부터 다시 읽고 AI 요약 트랙을 "
+        "**전체 재정리**한 결과를 낸다. 이전 배치에서 낸 AI 줄은 전부 버려지고 이 출력이 AI 요약 탭 전체가 된다.\n"
+        "사람 안건(humanAgendas)과 사람 줄(humanLines)은 읽기 전용 컨텍스트다 — 고치지도 제안하지도 마라. "
+        "줄은 반드시 안건 하나에 붙인다: 맞는 사람 안건이 있으면 `humanAgendaId`, 어디에도 맞지 않으면 `newTitle` 로 "
+        "새 안건을 만든다. **`aiAgendaId` 는 쓰지 마라**(기존 AI 안건은 이 출력으로 대체된다).\n"
+        "`evidence` 는 근거가 된 발화의 [atMs, endMs] 구간이다(최대 3개). `taskId` 는 kind 가 task 일 때만, "
+        "taskWhitelist 안의 id 만 쓴다. 출력은 지정된 JSON 스키마 그대로다.\n\n"
+        f"입력:\n{_dumps(payload)}"
     )
 
 

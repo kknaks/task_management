@@ -19,6 +19,12 @@ __all__ = [
     "AgendaCreateDTO",
     "AgendaUpdateDTO",
     "LineCreateDTO",
+    "LineNewTaskDTO",
+    "LineUpdateDTO",
+    "PendingChangeDTO",
+    "MergePlanDTO",
+    "MergedAgendaPlanDTO",
+    "MergedLinePlanDTO",
     "MeetingAiContextDTO",
     "TaskContextDTO",
     "TranscriptDTO",
@@ -257,12 +263,101 @@ class AgendaUpdateDTO:
 
 
 @dataclass(frozen=True)
+class PendingChangeDTO:
+    """`pendingChange` — 담는 것은 **기한 · 상태 · note 셋뿐**(M-14-a · DEC-003 §4 L102). 보낸 키만 값이 있다.
+
+    저장 형태는 JSONB `{dueDate, status, note}` 이고 `to_json()` 이 **보낸 키만** 싣는다 — 「보내지 않음」이 곧 「변경 없음」이다.
+    `cancelled` 는 담지 않는다(사유가 필수라 세 키로 표현할 수 없다 — SPEC-008 §4 Validation). 적용은 Phase 5.
+    """
+
+    due_date: date | None = None
+    status: str | None = None
+    note: str | None = None
+
+    def to_json(self) -> dict[str, object]:
+        payload: dict[str, object] = {}
+        if self.due_date is not None:
+            payload["dueDate"] = self.due_date.isoformat()
+        if self.status is not None:
+            payload["status"] = self.status
+        if self.note is not None:
+            payload["note"] = self.note
+        return payload
+
+
+@dataclass(frozen=True)
+class LineNewTaskDTO:
+    """`POST …/lines { newTask }` — 업무 생성 + 줄 한 트랜잭션(SPEC-008 U-10 칩 진입). **Phase 5 가 채운다** — Phase 2 는 501 스텁."""
+
+    title: str
+    work_type_id: int
+    project_id: int | None = None
+    due_date: date | None = None
+    description: str | None = None
+
+
+@dataclass(frozen=True)
 class LineCreateDTO:
-    """`POST …/lines` — 회의 중 사람 줄 하나(SPEC-007 §4). `detail`·`evidence`·`task_id` 는 항상 비어 저장된다(M-14)."""
+    """`POST …/lines` — 사람 줄 하나. 회의 중(SPEC-007 §4)과 종료 후 편집(SPEC-008 §4)이 **같은 표면**이다.
+
+    회의 중에는 `agenda_id`·`kind`·`content` 만 — `detail`·`task_id`·`pending_change`·`new_task` 는 **`ended` 에서만** 받고
+    `recording` 에서 오면 `meeting_edit_service` 가 `validation_error` 로 거른다(SPEC-007 규칙 유지).
+    `content` 는 `task_id`·`new_task` 줄에서는 서버가 업무 제목으로 채우므로 None 일 수 있다.
+    """
 
     agenda_id: int
     kind: str
+    content: str | None
+    detail: str | None = None
+    task_id: int | None = None
+    pending_change: PendingChangeDTO | None = None
+    new_task: LineNewTaskDTO | None = None
+
+
+@dataclass(frozen=True)
+class LineUpdateDTO:
+    """`PATCH …/lines/{id}` — **보낸 필드만**(SPEC-008 §4). `kind` 가 `task` 를 벗어나면 `task_id`·`pending_change` 가 비워진다."""
+
+    content: str | Unset = UNSET
+    kind: str | Unset = UNSET
+
+
+# --- 통합본 (SPEC-008 §4 「통합 규칙」) -------------------------------------------
+
+
+@dataclass(frozen=True)
+class MergedLinePlanDTO:
+    """`meeting_merge_service.validate_and_build()` 가 낸 통합 줄 하나 — **본문은 원본에서 복사한 값**이다(M-8-a).
+
+    `source_human_line_id`·`source_ai_line_id` 중 최소 하나가 있다. 모델 출력의 텍스트가 여기 들어올 자리가 없다.
+    """
+
+    kind: str
     content: str
+    detail: str | None
+    evidence: list
+    task_id: int | None
+    pending_change: dict | None
+    source_human_line_id: int | None
+    source_ai_line_id: int | None
+
+
+@dataclass(frozen=True)
+class MergedAgendaPlanDTO:
+    """통합 안건 하나 — 사람 안건(순서 그대로 · `state` 복사) 또는 어느 사람 안건에도 안 붙은 AI 안건(뒤에 · `state=None`)."""
+
+    title: str
+    state: str | None
+    source_agenda_id: int
+    lines: list[MergedLinePlanDTO]
+
+
+@dataclass(frozen=True)
+class MergePlanDTO:
+    """검증 7종을 전부 지난 통합 결과 — `headline`(모델 문장 · 1~200자) + `merged` 트리. 적재는 `meeting_finalize_service` 가 한 트랜잭션에서 한다."""
+
+    headline: str
+    agendas: list[MergedAgendaPlanDTO]
 
 
 # --- 회의 중 (SPEC-007) ----------------------------------------------------
@@ -322,6 +417,8 @@ class BatchRunDTO:
     phase: str
     status: str
     reason: str | None
+    # SPEC-008 §4 — 「종결 · HH:MM」(최종 배치 성공 시각) · `mergedSummary.integratedAt` 의 원천
+    created_at: datetime
 
 
 @dataclass(frozen=True)

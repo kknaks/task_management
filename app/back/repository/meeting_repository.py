@@ -14,7 +14,7 @@ from sqlalchemy import ColumnElement, Select, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from dto.enums import MeetingSort, MeetingStatus, MeetingTrack
+from dto.enums import IntegrationState, MeetingSort, MeetingStatus, MeetingTrack
 from dto.meeting import (
     MeetingAiContextDTO,
     MeetingDTO,
@@ -146,10 +146,11 @@ async def update_fields(
 async def start_recording(
     session: AsyncSession, *, account_id: int, meeting_id: int, started_at: datetime
 ) -> None:
-    """**`meeting.status` 에 값을 대입하는 유일한 코드다** — `status='recording'` + `recording_started_at` **한 UPDATE**.
+    """`status='recording'` + `recording_started_at` **한 UPDATE**.
 
-    판정(상태별 허용 표)은 하지 않는다 — 그건 `meeting_service.start()` 의 몫이고,
-    이 함수를 부르는 곳도 그 판정을 지난 `start()` 하나뿐이다(WP 「상태 대입 격리」).
+    **`meeting.status` 에 값을 대입하는 코드는 이 파일의 전이 함수 셋뿐이다** — `start_recording`(→recording) ·
+    `begin_generating`(→generating) · `finish_integration`(→ended). 판정(상태별 허용 표)은 하지 않는다 —
+    그건 `meeting_service._assert_allowed()` 의 몫이고, 부르는 곳도 그 판정을 지난 전이 함수 하나씩이다(WP 「상태 대입 격리」).
     `start_at`(예정)은 건드리지 않는다(M-1-a).
     """
     await session.execute(
@@ -160,6 +161,48 @@ async def start_recording(
             Meeting.id == meeting_id,
         )
         .values(status=MeetingStatus.RECORDING.value, recording_started_at=started_at)
+        .execution_options(synchronize_session="fetch")
+    )
+    await session.flush()
+
+
+async def begin_generating(session: AsyncSession, *, meeting_id: int) -> None:
+    """`/end`·`/integrate` — `status='generating'` + `integration_state='running'` **한 UPDATE**(SPEC-008 §4).
+
+    부르는 곳은 `meeting_finalize_service.end()`·`integrate()` 둘이고 둘 다 허용 표를 먼저 지난다.
+    """
+    await session.execute(
+        update(Meeting)
+        .where(Meeting.id == meeting_id, Meeting.deleted_at.is_(None))
+        .values(
+            status=MeetingStatus.GENERATING.value,
+            integration_state=IntegrationState.RUNNING.value,
+        )
+        .execution_options(synchronize_session="fetch")
+    )
+    await session.flush()
+
+
+async def finish_integration(
+    session: AsyncSession, *, meeting_id: int, succeeded: bool, headline: str | None
+) -> None:
+    """종료 파이프라인 ② 의 종결 — `status='ended'` + `integration_state` + **`ai_headline`** 한 UPDATE(M-19 ①·②).
+
+    성공이면 `headline` 이 함께 들어가고, 실패면 **`NULL`** 로 둔다(부분 저장 없음). `ai_headline` 을 쓰는 SQL 은 이것 하나고
+    부르는 곳은 `meeting_finalize_service` 하나다(WP Phase 1 정적 검사).
+    """
+    if not succeeded and headline is not None:
+        raise ValueError("실패 종결에 headline 을 실을 수 없다(M-19 ②)")
+    await session.execute(
+        update(Meeting)
+        .where(Meeting.id == meeting_id, Meeting.deleted_at.is_(None))
+        .values(
+            status=MeetingStatus.ENDED.value,
+            integration_state=(
+                IntegrationState.SUCCEEDED.value if succeeded else IntegrationState.FAILED.value
+            ),
+            ai_headline=headline,
+        )
         .execution_options(synchronize_session="fetch")
     )
     await session.flush()

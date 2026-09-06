@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MeetingIntegrationOutput",
+  "description": "SPEC-008 §4 「통합 규칙」. codex --output-schema 로 강제하고, 백엔드가 같은 파일로 다시 검증한다. **본문 필드가 없다** — 모델은 참조 id 와 자리(agendaRef · sourceHumanLineId · sourceAiLineId), 그리고 headline 한 문장만 낸다. 줄 본문·종류·상세·업무는 서버가 원본(사람 줄 · AI 줄)에서 복사한다(ERD M-8-a). agendaRef 는 두 키 중 정확히 하나만 값이고, 그 판정과 사람 줄 전수 · 이중 계승 · AI 중복 참조 · 참조 없음 · 안건 축 · 줄 순서는 코드가 한다(strict 스키마에 oneOf 를 두지 않는다).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["headline", "agendas"],
+  "properties": {
+    "headline": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "agendas": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["agendaRef", "lines"],
+        "properties": {
+          "agendaRef": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["humanAgendaId", "aiAgendaId"],
+            "properties": {
+              "humanAgendaId": { "type": ["integer", "null"] },
+              "aiAgendaId": { "type": ["integer", "null"] }
+            }
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["sourceHumanLineId", "sourceAiLineId"],
+              "properties": {
+                "sourceHumanLineId": { "type": ["integer", "null"] },
+                "sourceAiLineId": { "type": ["integer", "null"] }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

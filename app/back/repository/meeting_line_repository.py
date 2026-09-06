@@ -1,6 +1,8 @@
-"""3층 — `meeting_line` **쓰기**와 배치 입력용 읽기. 상세 조립용 읽기(`list_lines`)는 `meeting_child_repository` 에 있다.
+"""3층 — `meeting_line` **쓰기**와 배치·통합 입력용 읽기. 상세 조립용 읽기(`list_lines`)는 `meeting_child_repository` 에 있다.
 
-- 사람 줄(`track='human'`)은 회의 중 `POST …/lines` 가, AI 줄(`track='ai'`)은 배치가 **INSERT 만** 한다(M-6 · M-7).
+- 사람 줄(`track='human'`)은 `POST …/lines` 가, AI 줄(`track='ai'`)은 배치가 **INSERT** 한다(M-6 · M-7).
+  통합 줄(`track='merged'`)은 종료 파이프라인 ② 가 **한 트랜잭션**에 INSERT 한다(M-8-a).
+- 종료 후 편집(SPEC-008) — `update_line` · **`delete_line`(하드 · 뒤 줄 `order_index` 당김)**. 판정(트랙 · 상태)은 service.
 - `order_index` = 그 안건 안의 마지막 + 1(SPEC-007 §4).
 - `commit()` 하지 않는다.
 """
@@ -9,7 +11,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dto.enums import MeetingTrack
@@ -37,8 +39,14 @@ async def create_line(
     detail: str | None = None,
     evidence: list | None = None,
     task_id: int | None = None,
+    pending_change: dict | None = None,
+    source_human_line_id: int | None = None,
+    source_ai_line_id: int | None = None,
 ) -> int:
-    """새 줄의 id 를 돌려준다. dto 는 `find_by_ids` 로 다시 읽는다(업무 요약 조인 때문)."""
+    """새 줄의 id 를 돌려준다. dto 는 `find_by_ids` 로 다시 읽는다(업무 요약 조인 때문).
+
+    `source_*_line_id` 는 `track='merged'` 에서만 값을 갖는다 — 그 밖은 DB CHECK 가 막는다(M-8-a).
+    """
     row = MeetingLine(
         meeting_id=meeting_id,
         agenda_id=agenda_id,
@@ -49,6 +57,9 @@ async def create_line(
         evidence=evidence,
         order_index=order_index,
         task_id=task_id,
+        pending_change=pending_change,
+        source_human_line_id=source_human_line_id,
+        source_ai_line_id=source_ai_line_id,
     )
     session.add(row)
     await session.flush()
@@ -67,6 +78,20 @@ async def find_by_ids(session: AsyncSession, *, line_ids: list[int]) -> list[Mee
     return [line_row_to_dto(row) for row in rows]
 
 
+async def find_line(
+    session: AsyncSession, *, meeting_id: int, line_id: int
+) -> MeetingLineDTO | None:
+    """**이 회의의** 줄 하나. 다른 회의의 줄은 None(404) — 소유는 service 가 부모 회의로 먼저 확인했다."""
+    row = (
+        await session.execute(
+            select_lines_with_task().where(
+                MeetingLine.id == line_id, MeetingLine.meeting_id == meeting_id
+            )
+        )
+    ).one_or_none()
+    return None if row is None else line_row_to_dto(row)
+
+
 async def list_human_lines_since(
     session: AsyncSession, meeting_id: int, *, since: datetime | None
 ) -> list[MeetingLineDTO]:
@@ -79,3 +104,61 @@ async def list_human_lines_since(
         query = query.where(MeetingLine.created_at >= since)
     rows = (await session.execute(query.order_by(MeetingLine.id))).all()
     return [line_row_to_dto(row) for row in rows]
+
+
+async def list_by_track(
+    session: AsyncSession, meeting_id: int, *, track: str
+) -> list[MeetingLineDTO]:
+    """한 트랙의 줄 전부를 `(agenda_id, order_index, id)` 순으로 — 통합 입력(사람 트리 · AI 트리)이 읽는다."""
+    rows = (
+        await session.execute(
+            select_lines_with_task()
+            .where(MeetingLine.meeting_id == meeting_id, MeetingLine.track == track)
+            .order_by(MeetingLine.agenda_id, MeetingLine.order_index, MeetingLine.id)
+        )
+    ).all()
+    return [line_row_to_dto(row) for row in rows]
+
+
+async def update_line(
+    session: AsyncSession, *, meeting_id: int, line_id: int, values: dict[str, object]
+) -> None:
+    """**보낸 필드만**(SPEC-008 §4). `order_index`·`track`·`source_*` 는 여기로 오지 않는다 — 순서 변경 표면이 없다(M-20)."""
+    row = (
+        await session.scalars(
+            select(MeetingLine).where(
+                MeetingLine.id == line_id, MeetingLine.meeting_id == meeting_id
+            )
+        )
+    ).one()
+    for name, value in values.items():
+        setattr(row, name, value)
+    await session.flush()
+
+
+async def delete_line(
+    session: AsyncSession, *, meeting_id: int, line_id: int, agenda_id: int, order_index: int
+) -> None:
+    """**그 행 하나만 하드 삭제 + 같은 안건의 뒤 줄 `order_index` 를 하나씩 당긴다**(M-20 · DB §0-1).
+
+    `source_*_line_id` 가 가리키던 원본 줄 · 업무 · 트랜스크립트를 건드리는 SQL 이 없다 — 참조는 지워지는 쪽에 있었다.
+    """
+    await session.execute(
+        delete(MeetingLine).where(MeetingLine.id == line_id, MeetingLine.meeting_id == meeting_id)
+    )
+    await session.execute(
+        update(MeetingLine)
+        .where(MeetingLine.agenda_id == agenda_id, MeetingLine.order_index > order_index)
+        .values(order_index=MeetingLine.order_index - 1)
+        .execution_options(synchronize_session="fetch")
+    )
+    await session.flush()
+
+
+async def delete_by_track(session: AsyncSession, *, meeting_id: int, track: str) -> int:
+    """트랙 전량 삭제 — **최종 배치의 AI 트랙 전량 교체(M-7)** 만 부른다. 검증을 통과한 결과가 있을 때만(SPEC-008 §5)."""
+    result = await session.execute(
+        delete(MeetingLine).where(MeetingLine.meeting_id == meeting_id, MeetingLine.track == track)
+    )
+    await session.flush()
+    return result.rowcount or 0

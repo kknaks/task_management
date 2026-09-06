@@ -3,17 +3,17 @@
 소유 검사는 **service 가 부모 회의로 먼저 한다**(§9) — 여기 오는 `meeting_id` 는 이미 본인 것이다.
 `commit()` 하지 않는다.
 
-- 안건 · 첨부 — 쓰기(사람 트랙 · 하드 삭제 — DB §0-1)
-- 줄 — **읽기만**(상세 응답 조립). 쓰기는 WORK-007·008
+- 안건 · 첨부 — 쓰기(사람 트랙 · 하드 삭제 — DB §0-1). WORK-008 이 `/end` 의 `active→done` 과 AI 트랙 전량 삭제를 더했다
+- 줄 — **읽기만**(상세 응답 조립). 쓰기는 `meeting_line_repository`(WORK-007·008)
 - 배치 이력 — `latestBatchSeq` 파생을 위한 읽기만(M-6-a)
 """
 
 from __future__ import annotations
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from dto.enums import AttachmentKind, BatchRunStatus, MeetingTrack
+from dto.enums import AgendaState, AttachmentKind, BatchPhase, BatchRunStatus, MeetingTrack
 from dto.meeting import (
     LineTaskSummaryDTO,
     MeetingAgendaDTO,
@@ -155,6 +155,33 @@ async def find_ai_agenda_by_source(
         )
     ).one_or_none()
     return None if row is None else _agenda_to_dto(row)
+
+
+async def mark_active_agendas_done(session: AsyncSession, *, meeting_id: int) -> int:
+    """`/end` — 사람 트랙의 `active` 안건을 `done` 으로(M-5-c 「`ended` 회의에 `active` 안건은 없다」). 바뀐 행 수를 돌려준다."""
+    result = await session.execute(
+        update(MeetingAgenda)
+        .where(
+            MeetingAgenda.meeting_id == meeting_id,
+            MeetingAgenda.track == MeetingTrack.HUMAN.value,
+            MeetingAgenda.state == AgendaState.ACTIVE.value,
+        )
+        .values(state=AgendaState.DONE.value)
+        .execution_options(synchronize_session="fetch")
+    )
+    await session.flush()
+    return result.rowcount or 0
+
+
+async def delete_agendas_by_track(session: AsyncSession, *, meeting_id: int, track: str) -> int:
+    """트랙 전량 삭제 — **최종 배치의 AI 트랙 전량 교체(M-7)** 만 부른다. 줄을 먼저 지운 뒤여야 한다(FK)."""
+    result = await session.execute(
+        delete(MeetingAgenda).where(
+            MeetingAgenda.meeting_id == meeting_id, MeetingAgenda.track == track
+        )
+    )
+    await session.flush()
+    return result.rowcount or 0
 
 
 async def count_lines_for_agenda(session: AsyncSession, *, agenda_id: int) -> int:
@@ -339,11 +366,15 @@ async def delete_attachment(
 
 
 async def max_succeeded_batch_seq(session: AsyncSession, meeting_id: int) -> int:
-    """`latestBatchSeq` — 성공한 배치의 최대 `seq`(M-6-a · 파생). 비어 있으면 `0`."""
+    """`latestBatchSeq` — 성공한 **배치**(증분 · 최종)의 최대 `seq`(M-6-a · 파생). 비어 있으면 `0`.
+
+    통합(`phase='integration'`) 행은 배치 회차가 아니라 세지 않는다 — 「배치 n회 반영」이 통합 성공으로 늘지 않는다(SPEC-008 §4).
+    """
     current = await session.scalar(
         select(func.max(MeetingBatchRun.seq)).where(
             MeetingBatchRun.meeting_id == meeting_id,
             MeetingBatchRun.status == BatchRunStatus.SUCCEEDED.value,
+            MeetingBatchRun.phase != BatchPhase.INTEGRATION.value,
         )
     )
     return 0 if current is None else current
