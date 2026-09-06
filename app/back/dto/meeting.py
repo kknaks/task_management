@@ -71,13 +71,18 @@ class MeetingDTO:
 
 @dataclass(frozen=True)
 class LineTaskSummaryDTO:
-    """`kind='task'` 줄이 가리키는 업무 요약(SPEC-008 이 정의 · 이 work 는 자리만). 삭제돼도 제목을 그대로 담는다."""
+    """`kind='task'` 줄이 가리키는 업무 요약(SPEC-008 이 정의 · 이 work 는 자리만). 삭제돼도 제목을 그대로 담는다.
+
+    `work_type` — AI 업무 줄의 **유형 배지 원천**(SPEC-007 §4 LineItem · U-4 · Data Contract). 업무의 유형과 같은 것이라
+    `WorkTypeRefDTO` 를 그대로 쓴다(WORK-007 검수 F-1).
+    """
 
     id: int
     title: str
     status: str
     due_date: date | None
     is_deleted: bool
+    work_type: WorkTypeRefDTO
 
 
 @dataclass(frozen=True)

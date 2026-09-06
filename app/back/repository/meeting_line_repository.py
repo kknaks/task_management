@@ -15,8 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from dto.enums import MeetingTrack
 from dto.meeting import MeetingLineDTO
 from models.meeting import MeetingLine
-from models.task import Task
-from repository.meeting_child_repository import _line_to_dto
+from repository.meeting_child_repository import line_row_to_dto, select_lines_with_task
 
 
 async def next_order_index(session: AsyncSession, *, agenda_id: int) -> int:
@@ -62,28 +61,21 @@ async def find_by_ids(session: AsyncSession, *, line_ids: list[int]) -> list[Mee
         return []
     rows = (
         await session.execute(
-            select(MeetingLine, Task)
-            .outerjoin(Task, Task.id == MeetingLine.task_id)
-            .where(MeetingLine.id.in_(line_ids))
-            .order_by(MeetingLine.id)
+            select_lines_with_task().where(MeetingLine.id.in_(line_ids)).order_by(MeetingLine.id)
         )
     ).all()
-    return [_line_to_dto(row.MeetingLine, row.Task) for row in rows]
+    return [line_row_to_dto(row) for row in rows]
 
 
 async def list_human_lines_since(
     session: AsyncSession, meeting_id: int, *, since: datetime | None
 ) -> list[MeetingLineDTO]:
     """배치 입력의 「미처리 구간 동안 사람이 적은 줄」 — **읽기 전용 컨텍스트**(M-6). `since=None` 이면 전량."""
-    query = (
-        select(MeetingLine, Task)
-        .outerjoin(Task, Task.id == MeetingLine.task_id)
-        .where(
-            MeetingLine.meeting_id == meeting_id,
-            MeetingLine.track == MeetingTrack.HUMAN.value,
-        )
+    query = select_lines_with_task().where(
+        MeetingLine.meeting_id == meeting_id,
+        MeetingLine.track == MeetingTrack.HUMAN.value,
     )
     if since is not None:
         query = query.where(MeetingLine.created_at >= since)
     rows = (await session.execute(query.order_by(MeetingLine.id))).all()
-    return [_line_to_dto(row.MeetingLine, row.Task) for row in rows]
+    return [line_row_to_dto(row) for row in rows]

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from pathlib import Path
 
 import pytest
@@ -26,6 +27,7 @@ from tests.meeting_live_fixtures import (  # noqa: F401
     AUDIO,
     add_block,
     add_task,
+    batch_log,
     live_scope,
     start_meeting,
 )
@@ -223,8 +225,38 @@ async def test_task_outside_the_whitelist_is_demoted_to_action_keeping_its_body(
     body = await get_detail(client, owner, detail["id"])
     ai_lines = body["agendas"]["ai"][0]["lines"]
     assert ai_lines[0]["task"]["title"] == "소개서 v2 문구 정리"
+    # 검수 F-1 — 배치가 넣은 업무 줄도 유형 배지 원천(`workType`)을 싣는다
+    assert ai_lines[0]["task"]["workType"]["id"] == owner.task_type_id
+    assert ai_lines[0]["task"]["workType"]["isDeleted"] is False
     assert ai_lines[1]["kind"] == "action" and ai_lines[1]["taskId"] is None
     assert body["latestBatchSeq"] == 1
+
+
+async def test_task_id_on_a_non_task_line_is_stripped_with_a_reason_log(
+    client: AsyncClient, owner: MeetingOwner, db_session: AsyncSession, fake_agent: FakeAgentGateway,
+    batch_log: pytest.LogCaptureFixture,
+) -> None:
+    """**검수 W-4** — `kind≠task` 인데 `taskId` 가 온 출력은 조용히 정정되지 않는다: 떼되 **사유 로그**가 남는다(SPEC-007 §4 L421).
+
+    폐기로 볼지 무시로 볼지는 문서가 정한다(D-5) — 정해지기 전까지 동작(떼고 적재)은 그대로다.
+    """
+    detail = await start_meeting(client, owner, projectId=owner.project_id)
+    human_id = detail["agendas"]["human"][0]["id"]
+    inside = await add_task(db_session, owner, title="안쪽 업무", project_id=owner.project_id)
+    await add_block(db_session, detail["id"], content="가" * 600)
+    fake_agent.will_return({"items": [
+        _item({"humanAgendaId": human_id}, kind="decision", content="결정에 붙은 taskId", task_id=inside),
+    ]})
+
+    batch_log.set_level(logging.WARNING, logger="service.meeting_batch_service")
+    assert await meeting_batch_service.evaluate(detail["id"], TRANSCRIPT) is True
+
+    _, lines = await _ai_rows(db_session, detail["id"])
+    assert [(line.kind, line.task_id) for line in lines] == [("decision", None)]
+    stripped = [record for record in batch_log.records if record.levelno == logging.WARNING and "taskId" in record.getMessage()]
+    assert len(stripped) == 1
+    assert f"회의 {detail['id']}" in stripped[0].getMessage()
+    assert f"taskId={inside}" in stripped[0].getMessage() and "kind=decision" in stripped[0].getMessage()
 
 
 # --- 실패 1단 · 프로토콜 오류 ---------------------------------------------------------------
@@ -261,6 +293,31 @@ async def test_protocol_errors_propagate_without_a_failed_row(
     fake_agent.will_raise(RuntimeError("broker protocol error"))
     with pytest.raises(RuntimeError, match="broker protocol error"):
         await meeting_batch_service.evaluate(detail["id"], TRANSCRIPT)
+    assert await _runs(db_session, detail["id"]) == []
+
+
+async def test_scheduled_batch_task_exception_is_logged_with_its_stack(
+    client: AsyncClient, owner: MeetingOwner, db_session: AsyncSession, fake_agent: FakeAgentGateway,
+    batch_log: pytest.LogCaptureFixture,
+) -> None:
+    """**검수 W-2** — 실제 경로는 `schedule()` 의 백그라운드 태스크다. 요청 경계 밖이라 500 이 없으니
+    설계 밖 예외를 **done 콜백이 읽어 스택째 ERROR 로그**로 드러낸다. 삼키지 않는다 — 태스크는 그 예외로 끝나고 `failed` 행도 없다."""
+    detail = await start_meeting(client, owner)
+    await add_block(db_session, detail["id"], content="가" * 600)
+    fake_agent.will_raise(RuntimeError("broker protocol error"))
+    batch_log.set_level(logging.ERROR, logger="service.meeting_batch_service")
+
+    meeting_batch_service.schedule(detail["id"], TRANSCRIPT)
+    [task] = list(meeting_batch_service._tasks)
+    with pytest.raises(RuntimeError, match="broker protocol error"):
+        await task
+    await asyncio.sleep(0)  # done 콜백이 돈다
+
+    assert task not in meeting_batch_service._tasks
+    errors = [record for record in batch_log.records if record.levelno == logging.ERROR]
+    assert len(errors) == 1
+    assert errors[0].exc_info is not None and isinstance(errors[0].exc_info[1], RuntimeError)
+    assert "broker protocol error" in batch_log.text and "Traceback" in batch_log.text
     assert await _runs(db_session, detail["id"]) == []
 
 
@@ -317,13 +374,19 @@ async def test_successful_batch_is_pushed_right_after_commit(
     )
     await fake_client.wait_for(lambda: bool(fake_client.frames(ReadyFrame)))
 
-    fake_agent.will_return({"items": [_item({"humanAgendaId": human_id}, content="push 된 줄")]})
+    task_id = await add_task(db_session, owner, title="push 되는 업무", project_id=None)
+    fake_agent.will_return({"items": [
+        _item({"humanAgendaId": human_id}, content="push 된 줄"),
+        _item({"humanAgendaId": human_id}, kind="task", content="push 된 업무 줄", task_id=task_id),
+    ]})
     assert await meeting_batch_service.evaluate(detail["id"], TRANSCRIPT) is True
     await fake_client.wait_for(lambda: bool(fake_client.frames(AiBatchFrame)))
     frame = fake_client.frames(AiBatchFrame)[0]
     assert frame.seq == 1
     assert [agenda.source_agenda_id for agenda in frame.agendas] == [human_id]
-    assert [line.content for line in frame.lines] == ["push 된 줄"] and frame.lines[0].track == "ai"
+    assert [line.content for line in frame.lines] == ["push 된 줄", "push 된 업무 줄"] and frame.lines[0].track == "ai"
+    # 검수 F-1 — push 프레임의 업무 줄도 상세와 같은 `task` 요약(유형 포함)을 싣는다
+    assert frame.lines[1].task is not None and frame.lines[1].task.work_type.id == owner.task_type_id
 
     fake_client.disconnect()
     await asyncio.wait_for(stream, timeout=3)

@@ -6,6 +6,8 @@
  * - `error{upstream}` + close → `paused/stream:upstream` · **재연결 0건**(WebSocket 생성 스파이) · 다시 `resume()` 때만 +1
  * - `write_failed` 문구 · `4409 meeting_stream_active` → `stream:elsewhere` + `canResume=false`
  * - 마이크 트랙 `ended` → `paused/mic` + `pause{mic}` 프레임 · 새 연결 없음
+ * - `startCapture` 가 던지면(설계 밖 실패) **마이크 실패로 접히지 않는다** — `pause{mic}` 0건 · 예외 전파(검수 F-2)
+ * - `4404` 는 상태 바를 갈지 않는다 — 재조회(404) 결과로만 갈린다(검수 W-3)
  * - 사용자 `pause()` → `pause{user}` · 잠정 비움 · `resume()` 은 **같은 소켓에 `resume` 프레임**(새 연결 없음)
  * - 잠정 교체 · 확정 append(트랜스크립트 캐시) · `ai.batch` 즉시 병합(`latestBatchSeq` · `aiVersion`)
  * - 마이크 거부 → `paused/mic` + 토스트, 연결 없음
@@ -213,6 +215,33 @@ describe("실패 3종 — 일시정지 경로 하나로 모인다 · 자동 재�
     expect(FakeWebSocket.instances).toHaveLength(1);
   });
 
+  it("`4404` → 상세 재조회만 — 상태 바를 「서버 연결이 끊겼습니다」로 갈지 **않는다**(서버는 살아 있다 · SPEC-007 §4 close code 표)", async () => {
+    let reads = 0;
+    server.use(
+      http.get(`${API_BASE}/api/meetings/${MEETING}`, () => {
+        reads += 1;
+        return reads === 1
+          ? HttpResponse.json(meetingDetail({ status: "recording" }))
+          : HttpResponse.json({ detail: "없는 회의록입니다", code: "not_found" }, { status: 404 });
+      }),
+    );
+    const { result } = mountWithDetail();
+    await waitFor(() => expect(reads).toBe(1));
+    await act(async () => {
+      await result.current.resume();
+      await flush();
+    });
+    const before = result.current.status;
+    act(() => FakeWebSocket.last.serverClose(4404, "not_found"));
+    expect(result.current.status).toEqual(before);
+    expect(result.current.status).not.toEqual({ kind: "paused", reason: "stream:upstream" });
+    // 재조회가 404 로 돌아온다 — 「없는 회의록입니다」는 그 결과로 화면이 그린다(MeetingDetailPage)
+    await waitFor(() => expect(reads).toBe(2));
+    await waitFor(() => expect(client.getQueryState(queryKeys.meetingDetail(MEETING))?.status).toBe("error"));
+    expect(result.current.status).not.toEqual({ kind: "paused", reason: "stream:upstream" });
+    expect(FakeWebSocket.instances).toHaveLength(1);
+  });
+
   it("`4409 invalid_meeting_status` → 상세 재조회(화면이 낡았다)", async () => {
     let reads = 0;
     server.use(
@@ -252,6 +281,37 @@ describe("실패 3종 — 일시정지 경로 하나로 모인다 · 자동 재�
     // 새 마이크 → 새 recorder
     expect(FakeMediaRecorder.instances).toHaveLength(2);
     expect(FakeMediaRecorder.instances[1].state).toBe("recording");
+  });
+});
+
+describe("설계 밖 실패 — 마이크 실패로 접지 않는다(DEC-003 §7 · 검수 F-2)", () => {
+  it("`startCapture` 가 던지면(`MediaRecorder` 가 mime 을 전부 거부) **`pause{mic}` 0건 · `paused/mic` 아님** · 예외가 그대로 전파된다", async () => {
+    const { result } = mount();
+    await act(async () => {
+      await result.current.resume();
+      await flush();
+    });
+    const ws = FakeWebSocket.last;
+    act(() => ws.serverOpen());
+
+    // 환경 실패 — 이 recorder 는 어떤 mime 도 못 연다(audioCapture.ts 의 `NotSupportedError` 자리)
+    vi.stubGlobal(
+      "MediaRecorder",
+      class {
+        static isTypeSupported(): boolean {
+          return false;
+        }
+        constructor() {
+          throw new DOMException("no supported mime", "NotSupportedError");
+        }
+      },
+    );
+
+    expect(() => act(() => ws.serverSend(READY))).toThrow(/no supported mime/);
+    expect(ws.sentFrames.filter((frame) => frame.type === "pause")).toEqual([]);
+    expect(result.current.status).not.toEqual({ kind: "paused", reason: "mic" });
+    expect(FakeMediaRecorder.instances).toHaveLength(0);
+    expect(FakeWebSocket.instances).toHaveLength(1);
   });
 });
 

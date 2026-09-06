@@ -33,13 +33,14 @@ export interface MeetingWorkTypeSummary extends MeetingRefSummary {
   kind: "meeting" | "task";
 }
 
-/** `kind='task'` 줄의 업무 요약(SPEC-008). 이 work 는 읽기만 한다. */
+/** `kind='task'` 줄의 업무 요약(SPEC-008). 이 work 는 읽기만 한다. `workType` 은 AI 업무 줄 유형 배지의 원천(SPEC-007 §4 · U-4). */
 export interface LineTaskSummary {
   id: number;
   title: string;
   status: string;
   dueDate: string | null;
   isDeleted: boolean;
+  workType: MeetingRefSummary;
 }
 
 /** 줄 종류 **4종**(DEC-003 §1 표 · SPEC-007 §4 Validation). 「논의」·「업무」는 표시 매핑이다(G-4). */

@@ -45,7 +45,7 @@ function pickMimeType(): string | undefined {
 
 /**
  * 캡처를 시작한다. `onChunk` 는 `CHUNK_MS` 마다 인코딩된 조각(Blob)을 받는다 — 그대로 WS 바이너리 프레임으로 보낸다.
- * `MediaRecorder` 가 없는 환경이면 예외 — 호출자가 마이크 실패로 처리한다.
+ * `MediaRecorder` 가 없는 환경이면 예외 — **설계 밖 실패**라 호출자가 잡지 않는다(마이크 실패로 접지 않는다 · DEC-003 §7).
  */
 export function startCapture(stream: MediaStream, onChunk: (chunk: Blob) => void): Capture {
   if (typeof MediaRecorder === "undefined") {

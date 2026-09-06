@@ -19,7 +19,9 @@ from dto.meeting import (
     MeetingAgendaDTO,
     MeetingAttachmentDTO,
     MeetingLineDTO,
+    WorkTypeRefDTO,
 )
+from models.account import WorkType
 from models.meeting import MeetingAgenda, MeetingAttachment, MeetingBatchRun, MeetingLine
 from models.task import Task
 
@@ -169,12 +171,11 @@ async def list_lines(session: AsyncSession, meeting_id: int) -> list[MeetingLine
     """회의의 줄 전부를 `(track, agenda_id, order_index)` 순으로. 안건 밑에 끼우는 것은 빌더가 한다.
 
     `kind='task'` 줄의 업무 요약은 **삭제된 업무도 제목 그대로** 담고 `is_deleted` 로 알린다(A-6 와 같은 결).
-    이 work 시점에는 줄이 0건이다 — 형태만 확정한다(SPEC-007·008 이 채운다).
+    업무의 유형(`work_type`)을 함께 조인한다 — AI 업무 줄의 유형 배지 원천이다(SPEC-007 §4 · F-1).
     """
     rows = (
         await session.execute(
-            select(MeetingLine, Task)
-            .outerjoin(Task, Task.id == MeetingLine.task_id)
+            select_lines_with_task()
             .where(MeetingLine.meeting_id == meeting_id)
             .order_by(
                 MeetingLine.track,
@@ -184,10 +185,26 @@ async def list_lines(session: AsyncSession, meeting_id: int) -> list[MeetingLine
             )
         )
     ).all()
-    return [_line_to_dto(row.MeetingLine, row.Task) for row in rows]
+    return [line_row_to_dto(row) for row in rows]
 
 
-def _line_to_dto(line: MeetingLine, task: Task | None) -> MeetingLineDTO:
+def select_lines_with_task():
+    """`(MeetingLine, Task, WorkType)` — 줄 + 업무 요약 + 그 업무의 유형. 줄을 읽는 모든 조회가 이 select 하나를 쓴다."""
+    return (
+        select(MeetingLine, Task, WorkType)
+        .outerjoin(Task, Task.id == MeetingLine.task_id)
+        .outerjoin(WorkType, WorkType.id == Task.work_type_id)
+    )
+
+
+def line_row_to_dto(row) -> MeetingLineDTO:
+    return _line_to_dto(row.MeetingLine, row.Task, row.WorkType)
+
+
+def _line_to_dto(line: MeetingLine, task: Task | None, work_type: WorkType | None) -> MeetingLineDTO:
+    if task is not None and work_type is None:
+        # `task.work_type_id` 는 NOT NULL 이고 FK 다 — 조인이 비면 조회가 틀린 것이다. 기본값으로 때우지 않는다(BE §8-1)
+        raise RuntimeError(f"업무 {task.id} 의 유형을 조인하지 못했습니다")
     return MeetingLineDTO(
         id=line.id,
         track=line.track,
@@ -210,6 +227,13 @@ def _line_to_dto(line: MeetingLine, task: Task | None) -> MeetingLineDTO:
                 status=task.status,
                 due_date=task.due_date,
                 is_deleted=task.deleted_at is not None,
+                work_type=WorkTypeRefDTO(
+                    id=work_type.id,  # type: ignore[union-attr]
+                    name=work_type.name,  # type: ignore[union-attr]
+                    kind=work_type.kind,  # type: ignore[union-attr]
+                    color_token=work_type.color_token,  # type: ignore[union-attr]
+                    is_deleted=work_type.deleted_at is not None,  # type: ignore[union-attr]
+                ),
             )
         ),
         created_at=line.created_at,

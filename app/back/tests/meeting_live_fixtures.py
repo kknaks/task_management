@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from datetime import date
@@ -38,6 +39,20 @@ def live_scope(monkeypatch: pytest.MonkeyPatch, db_session: AsyncSession) -> Ite
     meeting_batch_service.reset_state()
     yield
     meeting_batch_service.reset_state()
+
+
+@pytest.fixture
+def batch_log(caplog: pytest.LogCaptureFixture) -> Iterator[pytest.LogCaptureFixture]:
+    """배치 서비스 로거의 `caplog`.
+
+    `migrated_database` 가 도는 alembic `env.py` 의 `fileConfig()` 가 **이미 만들어진 로거를 전부 끈다**(`disable_existing_loggers`
+    기본값) — 앱 프로세스에서는 alembic 이 돌지 않으므로 테스트에서만 생기는 일이다. 검사 대상 로거 하나만 도로 켠다.
+    """
+    logger = logging.getLogger("service.meeting_batch_service")
+    was_disabled = logger.disabled
+    logger.disabled = False
+    yield caplog
+    logger.disabled = was_disabled
 
 
 class ScheduleRecorder:

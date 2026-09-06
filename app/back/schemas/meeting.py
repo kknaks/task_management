@@ -208,13 +208,17 @@ class MeetingUpdate(_MeetingRequest):
 
 
 class LineTaskSummary(CamelModel):
-    """`kind='task'` 줄의 업무 요약(SPEC-008). 삭제된 업무도 제목 그대로 · `isDeleted` 로 알린다."""
+    """`kind='task'` 줄의 업무 요약(SPEC-008). 삭제된 업무도 제목 그대로 · `isDeleted` 로 알린다.
+
+    `workType` — AI 업무 줄의 유형 배지 원천(SPEC-007 §4 LineItem L378 · U-4 · SPEC-008 §4 L451). 업무 목록의 `WorkTypeRef` 와 같은 모양.
+    """
 
     id: int
     title: str
     status: str
     due_date: date | None
     is_deleted: bool
+    work_type: WorkTypeRef
 
     @classmethod
     def from_dto(cls, dto: LineTaskSummaryDTO) -> "LineTaskSummary":
@@ -224,6 +228,13 @@ class LineTaskSummary(CamelModel):
             status=dto.status,
             due_date=dto.due_date,  # type: ignore[arg-type]
             is_deleted=dto.is_deleted,
+            work_type=WorkTypeRef(
+                id=dto.work_type.id,
+                name=dto.work_type.name,
+                kind=dto.work_type.kind,
+                color_token=dto.work_type.color_token,
+                is_deleted=dto.work_type.is_deleted,
+            ),
         )
 
 

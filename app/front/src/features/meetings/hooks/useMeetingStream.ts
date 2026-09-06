@@ -28,6 +28,7 @@
  *
  * `getUserMedia` 는 `resume()` 안에서만 부른다(권한 프롬프트가 사용자 동작에 붙는다). 트랙 `ended` → `pause{mic}` 프레임 + `paused/mic`.
  * 「재개」 → 다시 잡고, 못 잡으면 같은 상태 + 토스트 「마이크를 사용할 수 없습니다」(Case Matrix).
+ * 마이크 실패는 그 셋(권한 거부 · 장치 분리 · 트랙 `ended`)뿐이다 — `startCapture` 의 실패(`MediaRecorder` 부재 등)는 설계 밖이라 **잡지 않고 전파한다**.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -168,12 +169,10 @@ export function useMeetingStream({ meetingId }: { meetingId: number }): UseMeeti
       return;
     }
     stopCapture();
-    try {
-      captureRef.current = startCapture(mic, (chunk) => socketRef.current?.send(chunk));
-    } catch {
-      onTrackEnded();
-    }
-  }, [onTrackEnded, stopCapture]);
+    // 설계 밖 실패(`MediaRecorder` 부재 · 후보 mime 전부 미지원)는 **잡지 않는다** — 마이크 실패(권한 거부 · 장치 분리 · 트랙 `ended`)로
+    // 접으면 서버는 정상 일시정지로 보고 「재개」마다 같은 자리에서 다시 접혀 어디서 깨졌는지가 가려진다(DEC-003 §7 · BASE-003 L43 · Case Matrix).
+    captureRef.current = startCapture(mic, (chunk) => socketRef.current?.send(chunk));
+  }, [stopCapture]);
 
   const onFrame = useCallback(
     (frame: StreamServerFrame) => {
@@ -260,8 +259,9 @@ export function useMeetingStream({ meetingId }: { meetingId: number }): UseMeeti
         return;
       }
       if (event.code === WS_CLOSE.NOT_FOUND) {
+        // `4404` — 없는 회의록·남의 것. **상태 바를 갈지 않는다** — 서버는 살아 있으니 「서버 연결이 끊겼습니다」는 사실과 다르다.
+        // 상세 재조회가 404 로 돌아오면 화면이 「없는 회의록입니다」로 바뀐다(SPEC-007 §4 close code 표 L305).
         void client.invalidateQueries({ queryKey: detailKey });
-        transition({ kind: "paused", reason: "stream:upstream" });
         return;
       }
       transition({

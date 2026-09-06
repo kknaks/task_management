@@ -1,6 +1,11 @@
-# 로컬 개발 스택 — PostgreSQL + API.
-# SPEC-000 §5 「백엔드는 compose 로 PostgreSQL + API 를 함께 띄운다」.
-# Redis · open-kknaks worker · 파일 저장소는 회의록 배치에서 여기에 합류한다.
+# 로컬 개발 스택 — PostgreSQL + API + Redis + open-kknaks worker (+ 파일 저장소 볼륨).
+# SPEC-000 §5 「백엔드는 compose 로 PostgreSQL + API 를 함께 띄운다」 · system/README.md §Component(배치 = 서버 1대에 전부).
+# Redis · worker 는 회의록 배치(WORK-007 검수 D-8)에서 합류했다 — 없으면 `/start` 의 웜스타트가 브로커 연결에서 예외를 내
+# 회의를 시작할 수 없다. 파일 저장소는 `storage` 명명 볼륨(`STORAGE_ROOT=/data`) — 녹음 원본은 컨테이너와 함께 사라지지 않는다.
+#
+# worker 준비물(호스트, .env 로 위치를 준다 — .env.example 참고):
+#   1. 리눅스용 codex CLI 번들(node + @openai/codex) — CODEX_TOOLS_DIR. 이미지에 굽지 않는다(system/README.md §codex 바인드 마운트)
+#   2. codex 로그인 결과 auth.json — CODEX_AUTH_JSON. **파일 하나만** ro 로 얹는다
 
 name: task-management-local
 
@@ -21,6 +26,18 @@ services:
       timeout: 3s
       retries: 20
 
+  redis:
+    # open-kknaks 브로커(system/README.md §Component). 캐시·세션 저장소로 쓰지 않는다.
+    image: redis:7-alpine
+    ports:
+      # 호스트에서 직접 돌리는 pytest·uvicorn 용 — .env 의 REDIS_URL(redis://localhost:6379/0)이 여기로 붙는다.
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
   api:
     build:
       context: ./app/back
@@ -29,12 +46,16 @@ services:
     environment:
       # 컨테이너 안에서는 DB 호스트가 `db` 다. 호스트용 .env 값을 덮어쓴다.
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
-      # 볼륨 경로. 이 work 는 자리만 만들고 쓰지 않는다(SPEC-000 §5).
+      # 브로커도 같은 이유로 덮어쓴다 — config.py 기본값(localhost)은 컨테이너 안에서 닿지 않는다.
+      REDIS_URL: redis://redis:6379/0
+      # 녹음 원본 · md 저장 루트 — 아래 `storage` 명명 볼륨(SPEC-007 M-13 영구 보관).
       STORAGE_ROOT: /data
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     volumes:
       - ./app/back:/app
@@ -48,6 +69,43 @@ services:
       - "8000"
       - --reload
 
+  worker:
+    # open-kknaks 데몬 — codex 실행. 우리 코드가 아니다(Dockerfile.worker 머리 주석). back 과 **같은** 브로커·네임스페이스·큐.
+    build:
+      context: ./app/back
+      dockerfile: Dockerfile.worker
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      # .env 의 AI_NAMESPACE · AI_QUEUE 와 같은 값(BE §11 「worker 설정과 일치해야 한다」). 기본값은 config.py 와 같다.
+      AI_NAMESPACE: ${AI_NAMESPACE:-task-management}
+      AI_QUEUE: ${AI_QUEUE:-default}
+      AI_CWD: /work
+      CONCURRENCY: ${WORKER_CONCURRENCY:-1}
+      CODEX_HOME: /root/.codex
+      # 마운트한 codex 번들을 PATH 선두에 — open-kknaks 는 `which("codex")` 로만 찾는다.
+      PATH: /claude-tools/node/bin:/claude-tools/node_modules/.bin:/usr/local/bin:/usr/bin:/bin
+    volumes:
+      # 출력 스키마 — back 이 `provider_options.output_schema` 로 넘기는 경로(/app/ai_schemas/*.json)가 워커에서도 같은 자리여야 한다.
+      - ./app/back:/app:ro
+      # 호스트의 리눅스용 codex 번들(ro). 위치는 .env CODEX_TOOLS_DIR.
+      - ${CODEX_TOOLS_DIR:?.env 에 CODEX_TOOLS_DIR(호스트의 리눅스용 codex 번들 경로)을 설정하라 — .env.example 참고}:/claude-tools:ro
+      # codex 세션 영속 — resume(mode=session)이 워커 재시작을 넘겨 살아남는 조건(DEC-003 §STT).
+      - codex-sessions:/root/.codex
+      # 인증 — 파일 하나만 ro. 세션 디렉터리를 통째로 내주지 않는다(system/README.md §codex 바인드 마운트).
+      - ${CODEX_AUTH_JSON:?.env 에 CODEX_AUTH_JSON(호스트의 codex auth.json 경로)을 설정하라 — .env.example 참고}:/root/.codex/auth.json:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "codex", "--version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
 volumes:
   pgdata:
+  # 녹음 원본 · md 본문(STORAGE_ROOT) — `down` 으로 사라지지 않는다(`down -v` 만 지운다).
   storage:
+  # 워커의 codex 세션 — 회의 하나의 배치 세션이 재시작을 넘겨 살아남아야 한다.
+  codex-sessions:

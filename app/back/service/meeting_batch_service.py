@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -61,6 +62,8 @@ from repository import (
     task_repository,
 )
 from service import meeting_stream_service
+
+logger = logging.getLogger(__name__)
 
 # 배치 출력 스키마 — codex `--output-schema` 와 재검증이 **같은 파일**을 본다. WORK-008 최종 배치도 이 파일이다
 OUTPUT_SCHEMA = Path(__file__).resolve().parents[1] / "ai_schemas" / "meeting_batch.json"
@@ -118,7 +121,18 @@ def schedule(meeting_id: int, cause: str) -> None:
     """요청·스트림 경로에서 부르는 진입점 — **커밋 뒤** 백그라운드 태스크로 `evaluate` 를 돈다."""
     task = asyncio.create_task(evaluate(meeting_id, cause))
     _tasks.add(task)
-    task.add_done_callback(_tasks.discard)
+    task.add_done_callback(_on_batch_task_done)
+
+
+def _on_batch_task_done(task: asyncio.Task) -> None:
+    """배치는 요청 경계 밖이라 500 이 없다 — 설계 밖 예외(`ai_session_id` 없음 · 브로커 도달 불가 · 프로토콜 오류)를
+    **여기서 읽어 스택째 로그로 드러낸다**(BE §8-1 「전파 = 로그에 스택」 · WORK-007 검수 W-2). 삼키지 않는다 — 태스크는 그 예외로 끝난다."""
+    _tasks.discard(task)
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error("회의 배치 태스크가 설계 밖 예외로 끝났습니다", exc_info=exc)
 
 
 def _arm_timer(meeting_id: int) -> None:
@@ -271,7 +285,7 @@ async def _run_once(meeting_id: int) -> None:
         return
 
     # ④ 검증 3단: 화이트리스트 — 그 줄만 강등
-    demoted = [_demote_if_needed(line, batch_input.whitelist) for line in lines]
+    demoted = [_demote_if_needed(line, batch_input.whitelist, meeting_id=meeting_id) for line in lines]
 
     # ⑤ 검증 4단: 적재 — 한 트랜잭션. 커밋 직후 push
     async with session_scope() as session:
@@ -389,13 +403,21 @@ def _parse_output(output: str, batch_input: _BatchInput) -> list[_OutputLine]:
     return lines
 
 
-def _demote_if_needed(line: _OutputLine, whitelist: frozenset[int]) -> _OutputLine:
+def _demote_if_needed(line: _OutputLine, whitelist: frozenset[int], *, meeting_id: int) -> _OutputLine:
     """DEC-003 §7 「없는 업무 참조」 — 화이트리스트 밖 `taskId` · `task` 인데 `taskId` 없음 → **그 줄만** `action`.
 
-    본문·상세·근거는 그대로 산다(M-15). `task` 가 아닌 줄의 `taskId` 는 뜻이 없어 뗀다(강등 아님).
+    본문·상세·근거는 그대로 산다(M-15). `task` 가 아닌 줄의 `taskId` 는 뜻이 없어 뗀다(강등 아님) — 단 **조용히 지나가지 않는다**:
+    SPEC-007 §4 L421 「`taskId` — `kind=task` 일 때만」을 어긴 출력이라 사유를 로그로 남긴다. 폐기(2단)로 볼지 무시로 볼지는
+    문서가 정한다(검수 D-5) — 정해지기 전까지 동작은 그대로, 로그만 더한다(W-4).
     """
     if line.kind != LineKind.TASK.value:
         if line.task_id is not None:
+            logger.warning(
+                "회의 %s 배치 출력 정정: kind=%s 줄에 taskId=%s 가 왔다 — kind=task 일 때만 뜻이 있어 뗀다(SPEC-007 §4 L421)",
+                meeting_id,
+                line.kind,
+                line.task_id,
+            )
             line.task_id = None
         return line
     if line.task_id is None or line.task_id not in whitelist:

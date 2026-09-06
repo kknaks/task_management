@@ -4,7 +4,8 @@
  * - 같은 `AgendaLineTree` 에 사람 트랙·AI 트랙 데이터를 넣어 **분기 없이** 두 탭 모양이 나온다(컴포넌트 안 `track ===` 0 — 정적 검사)
  * - 배지는 호출자가 정한다 — 회의 중 「논의 중」/「완료」/「**대기**」 · AI 신설 안건 「AI 안건」 캡션
  * - `expandable` 일 때만 화살표 · 펼치면 상세 + 「HH:MM – HH:MM」 칩(`recordingStartedAt` 기준 벽시계)
- * - 「업무」 줄은 라벨만(`#5F6470`) — 배지·버튼 없음 · 사람 줄에 편집·삭제 어포던스 없음
+ * - 사람 「업무」 줄은 라벨만(`#5F6470`) — 배지·버튼 없음 · 사람 줄에 편집·삭제 어포던스 없음
+ * - AI 「업무」 줄은 라벨 옆에 `task.workType` 유형 배지(U-4 · 검수 F-1)
  */
 
 import { render, screen, within } from "@testing-library/react";
@@ -53,6 +54,10 @@ const AI: MeetingAgenda[] = [
         detail: "유사 사례가 분량만 늘린다는 지적.", evidence: [{ fromMs: 240_000, toMs: 360_000 }], createdAt: "2026-08-27T00:41:02Z",
       }),
       line({ id: 621, agendaId: 40, track: "ai", kind: "action", content: "분리 초안", createdAt: "2026-08-27T00:41:03Z" }),
+      line({
+        id: 622, agendaId: 40, track: "ai", kind: "task", content: "소개서 v2 문구 정리 기한을 당긴다", taskId: 45, createdAt: "2026-08-27T00:41:04Z",
+        task: { id: 45, title: "소개서 v2 문구 정리", status: "todo", dueDate: null, isDeleted: false, workType: { id: 3, name: "문서·보고", colorToken: "steel", isDeleted: false } },
+      }),
     ],
   },
   { id: 41, track: "ai", title: "경쟁사 요금제 비교", orderIndex: 5, state: null, sourceAgendaId: null, lines: [] },
@@ -88,6 +93,7 @@ describe("회의록 탭 — 사람 트랙", () => {
     expect(taskRow).toHaveAttribute("data-line-kind", "task");
     expect(within(taskRow as HTMLElement).getByText("업무")).toHaveClass("text-muted-foreground");
     expect(within(taskRow as HTMLElement).queryByRole("button")).not.toBeInTheDocument();
+    expect((taskRow as HTMLElement).querySelector("[data-color-token]")).toBeNull();
 
     // 안건 우측 시각 = 첫 줄 09:34 · 줄 시각 09:36
     expect(screen.getAllByText("09:34").length).toBeGreaterThanOrEqual(2);
@@ -120,11 +126,22 @@ describe("AI 탭 — 같은 컴포넌트 · `track='ai'` 데이터", () => {
     expect(screen.getByText("안건 6")).toBeInTheDocument();
   });
 
+  it("AI 「업무」 줄은 라벨 옆에 `task.workType` 유형 배지를 단다(U-4 · 검수 F-1) — 색은 `data-color-token` 으로만", () => {
+    render(<AgendaLineTree agendas={AI} expandable onChipClick={() => true} badgeFor={aiBadge} recordingStartedAt={STARTED} empty={null} />);
+    const taskRow = screen.getByText("소개서 v2 문구 정리 기한을 당긴다").closest("[data-line-kind]") as HTMLElement;
+    expect(taskRow).toHaveAttribute("data-line-kind", "task");
+    const badge = within(taskRow).getByText("문서·보고");
+    expect(badge).toHaveAttribute("data-color-token", "steel");
+    expect(badge).toHaveClass("bg-palette-bg", "text-palette-fg");
+    // 배지는 업무 줄에만 — 결정·액션 줄에는 없다
+    expect(screen.getByText("도입 사례는 3건만 유지").closest("[data-line-kind]")?.querySelector("[data-color-token]")).toBeNull();
+  });
+
   it("줄 화살표를 펼치면 상세 + 「HH:MM – HH:MM」 칩이 `recordingStartedAt` 기준 벽시계로 찍히고, 클릭이 `onChipClick(fromMs,toMs)` 로 간다", async () => {
     const onChipClick = vi.fn(() => true);
     render(<AgendaLineTree agendas={AI} expandable onChipClick={onChipClick} badgeFor={aiBadge} recordingStartedAt={STARTED} empty={null} />);
     const arrows = screen.getAllByRole("button", { name: "펼치기" });
-    expect(arrows).toHaveLength(2);
+    expect(arrows).toHaveLength(3);
     expect(screen.queryByText("유사 사례가 분량만 늘린다는 지적.")).not.toBeInTheDocument();
 
     await userEvent.click(arrows[0]);
@@ -135,8 +152,8 @@ describe("AI 탭 — 같은 컴포넌트 · `track='ai'` 데이터", () => {
     expect(onChipClick).toHaveBeenCalledWith(240_000, 360_000);
     expect(screen.getByText("칩을 누르면 해당 구간 스크립트로 이동합니다")).toBeInTheDocument();
 
-    // 근거 없는 줄은 「근거 없음」
-    await userEvent.click(screen.getByRole("button", { name: "펼치기" }));
+    // 근거 없는 줄은 「근거 없음」(아직 접힌 줄 중 첫째 — 「분리 초안」)
+    await userEvent.click(screen.getAllByRole("button", { name: "펼치기" })[0]);
     expect(screen.getByText("근거 없음")).toBeInTheDocument();
   });
 

@@ -11,12 +11,14 @@
  * - `actions` — WORK-008 통합본 편집 모드의 줄 버튼 슬롯. 회의 중에는 비어 있다
  *
  * **회의 중 사람 줄은 읽기 전용이다** — 클릭 핸들러·삭제·편집 어포던스가 없다(U-2). hover 배경 `#FAFBFC` 만.
- * `kind='task'` 의 업무 유형 배지(U-4)는 상세 응답 `task` 요약에 `workType` 이 없어 **그리지 않는다**(보고).
+ * `kind='task'` 줄이 업무를 가리키면(`task` 요약 — AI 줄) 라벨 옆에 그 업무의 **유형 배지**(공용 `TypeBadge` · `task.workType`)를 단다(U-4 · [09] L671).
+ * 회의 중 사람 업무 줄은 `task=null` 이라 라벨만이다(DEC-003 §1 표). 「업무 갱신」 버튼은 WORK-008 이 같은 자리(`actions`)에 붙인다.
  */
 
 import { useState, type ReactNode } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 
+import { TypeBadge } from "@/components/shared/TypeBadge";
 import { EvidenceChip } from "@/features/meetings/components/EvidenceChip";
 import type { LineKind, MeetingLine } from "@/features/meetings/types";
 import { formatClock } from "@/lib/datetime";
@@ -72,6 +74,9 @@ export function LineRow({
         <span className={cn("w-[34px] shrink-0 pt-0.5 text-row-label", LABEL_CLASS[kind])}>
           {isLineKind(line.kind) ? LINE_KIND_LABEL[line.kind] : line.kind}
         </span>
+        {kind === "task" && line.task ? (
+          <TypeBadge name={line.task.workType.name} colorToken={line.task.workType.colorToken} />
+        ) : null}
         <span className={cn("min-w-0 flex-1 text-body text-foreground", emphasized && "font-semibold")}>
           {line.content}
         </span>

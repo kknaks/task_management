@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import MissingEnvError, get_settings
 from dto.enums import AgendaState, MeetingTrack
+from models.account import WorkType
 from models.meeting import Meeting, MeetingAgenda, MeetingLine
 from tests.fakes.agent import WARM_SESSION_ID, FakeAgentGateway
 from tests.meeting_fixtures import (  # noqa: F401
@@ -27,6 +28,7 @@ from tests.meeting_live_fixtures import (  # noqa: F401
     ScheduleRecorder,
     add_ai_agenda,
     add_block,
+    add_task,
     schedule_calls,
     start_meeting,
 )
@@ -331,6 +333,39 @@ async def test_detail_carries_ai_track_and_latest_batch_seq_from_the_same_builde
     assert [agenda["sourceAgendaId"] for agenda in body["agendas"]["ai"]] == [human_id]
     assert body["agendas"]["ai"][0]["lines"][0]["evidence"] == [{"fromMs": 0, "toMs": 1000}]
     assert all(agenda["track"] == "human" for agenda in body["agendas"]["human"])
+
+
+async def test_ai_task_line_carries_the_work_type_badge_source(
+    client: AsyncClient, owner: MeetingOwner, db_session: AsyncSession
+) -> None:
+    """**검수 F-1** — `kind='task'` 줄의 `task` 요약에 `workType{id,name,kind,colorToken,isDeleted}` 가 실린다(SPEC-007 §4 L378 · U-4).
+
+    화면의 유형 배지 원천이다. 업무의 유형과 같은 모양(`WorkTypeRef`)이라 삭제된 유형도 이름·색을 그대로 싣고 `isDeleted` 로 알린다.
+    """
+    detail = await start_meeting(client, owner, projectId=owner.project_id)
+    human_id = detail["agendas"]["human"][0]["id"]
+    task_id = await add_task(db_session, owner, title="소개서 v2 문구 정리", project_id=owner.project_id)
+    ai_id = await add_ai_agenda(db_session, detail["id"], title="미러", source_agenda_id=human_id)
+    db_session.add(
+        MeetingLine(
+            meeting_id=detail["id"], agenda_id=ai_id, track=MeetingTrack.AI.value, kind="task",
+            content="문구 정리 기한을 당긴다", detail=None, evidence=[], order_index=0, task_id=task_id,
+        )
+    )
+    await db_session.flush()
+
+    line = (await get_detail(client, owner, detail["id"]))["agendas"]["ai"][0]["lines"][0]
+    assert line["taskId"] == task_id and line["task"]["title"] == "소개서 v2 문구 정리"
+    work_type = await db_session.get(WorkType, owner.task_type_id)
+    assert work_type is not None
+    assert line["task"]["workType"] == {
+        "id": work_type.id,
+        "name": work_type.name,
+        "kind": "task",
+        "colorToken": work_type.color_token,
+        "isDeleted": False,
+    }
+    assert set(line["task"]) == {"id", "title", "status", "dueDate", "isDeleted", "workType"}
 
 
 # --- 4-b — `validation_error.field` 규약(회의 · 업무 · 설정 공통) --------------------------------
