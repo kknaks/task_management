@@ -12,13 +12,49 @@
  */
 
 import { useEffect } from "react";
+import { X } from "lucide-react";
 
 import { EmptyState } from "@/components/shared/EmptyState";
 import { TaskDetailBody } from "@/features/tasks/components/TaskDetailBody";
-import { TaskDetailSkeleton, TaskHeaderControls } from "@/features/tasks/components/TaskDetailParts";
+import {
+  TaskDetailSkeleton,
+  TaskDrawerHeader,
+} from "@/features/tasks/components/TaskDetailParts";
+import { HeaderIconButton } from "@/features/tasks/components/TaskDetailHeader";
 import { isTaskNotFound } from "@/features/tasks/errors";
 import { useCompletionCardFocus } from "@/features/tasks/hooks/useCompletionCardFocus";
 import { useTaskDetailQuery } from "@/features/tasks/hooks/useTaskMutations";
+
+/**
+ * 드로어 헤더 — `renderHeader` 는 **여는 시점**에 불리므로 `taskId` 만 안다.
+ * 여기서 같은 쿼리를 다시 읽는다 — **TanStack Query 가 같은 키를 합쳐** 요청이 늘지 않는다.
+ * 로드 전에는 **헤더 자리를 비워 둔다**(빈 껍데기를 먼저 보여주지 않는다 — U-3).
+ */
+export function TaskDrawerHeaderConnected({
+  taskId,
+  fullscreen,
+  expand,
+  onClose,
+}: {
+  taskId: number;
+  fullscreen: boolean;
+  expand: (() => void) | null;
+  onClose: () => void;
+}) {
+  const { data: task } = useTaskDetailQuery(taskId);
+  if (!task) {
+    return (
+      <header className="flex items-center justify-end gap-2 border-b border-divider px-7 pb-[18px] pt-5">
+        <HeaderIconButton size="drawer" label="드로어 닫기" onClick={onClose}>
+          <X className="h-3 w-3" aria-hidden />
+        </HeaderIconButton>
+      </header>
+    );
+  }
+  return (
+    <TaskDrawerHeader task={task} fullscreen={fullscreen} expand={expand} onClose={onClose} />
+  );
+}
 
 export function TaskDetailDrawer({
   taskId,
@@ -58,10 +94,5 @@ export function TaskDetailDrawer({
     );
   }
 
-  return (
-    <>
-      <TaskHeaderControls task={task} />
-      <TaskDetailBody task={task} completion={completion} />
-    </>
-  );
+  return <TaskDetailBody task={task} completion={completion} />;
 }

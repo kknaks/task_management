@@ -19,6 +19,7 @@
 
 import type { ReactNode } from "react";
 
+import { isEnterSubmit } from "@/lib/keyboard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -64,7 +65,7 @@ export function InlineAddRow({
           value={name}
           onChange={(event) => onNameChange(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter") onSubmit();
+            if (isEnterSubmit(event)) onSubmit();
             if (event.key === "Escape") onCancel();
           }}
           className={cn(

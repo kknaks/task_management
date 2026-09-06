@@ -39,10 +39,42 @@ const MENU: readonly MenuItem[] = [
 ];
 
 /**
+ * 항목 규격 — 시안 `업무 화면 정의서.dc.html` 36~43줄: **h35 · r8 · padding 0 14 · 14px**.
+ * 활성만 `#1E1E1E` 배경 + 흰 글씨 **700**이다.
+ *
  * hover 는 **여기 넣지 않는다.** 활성 항목은 `--tm-ink` 위에 흰 글씨라, hover 배경을 함께
  * 걸면 밝은 fill 이 Ink 를 덮어써 글자가 사라진다. hover 는 **비활성 항목에만** 붙인다.
  */
-const ITEM_CLASS = "flex h-todo items-center rounded-control px-3 text-body text-muted-foreground";
+const ITEM_CLASS =
+  "flex h-[35px] items-center rounded-control px-[14px] text-control-label text-fg-meta";
+
+/**
+ * **알림 벨** — 시안 32~34줄. v1 에 알림 도메인이 **없다.**
+ * 시안대로 그리되 **누르는 자리로 만들지 않는다** — 핸들러도 `V2Gate` 도 붙이지 않는다
+ * (「곧」인지 「v2」인지 정한 적이 없어 문구를 발명하게 된다). 정적 표시 하나다.
+ */
+function NotificationBell() {
+  return (
+    <span
+      aria-hidden
+      className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-control border border-divider text-foreground"
+    >
+      <svg
+        width="15"
+        height="15"
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M4 6.6a4 4 0 0 1 8 0c0 2.9 1 4.4 1 4.4H3s1-1.5 1-4.4Z" />
+        <path d="M6.4 13a1.8 1.8 0 0 0 3.2 0" />
+      </svg>
+    </span>
+  );
+}
 
 export function Sidebar({
   account,
@@ -54,28 +86,44 @@ export function Sidebar({
   const pathname = usePathname();
 
   return (
+    /**
+     * 세로 리듬은 시안 좌표 그대로다(27~43줄) — 로고 `top 23.5`(25px) · 프로필 `top 80`(32px) ·
+     * 메뉴 `top 143`. `absolute` 로 박지 않고(FE-C4) 위 여백과 묶음 간격으로 수렴시킨다.
+     *
+     * 두 묶음의 **높이를 못박아야** 안쪽 글자 크기가 리듬을 밀지 않는다:
+     * 23.5 + 25 + 31.5 = **80** · 80 + 32 + 31 = **143**.
+     */
     <nav
       aria-label="주 메뉴"
-      className="flex h-full w-sidebar shrink-0 flex-col gap-6 border-r border-sidebar-border bg-card px-3 py-6"
+      className="flex h-full w-sidebar shrink-0 flex-col border-r border-sidebar-border bg-card px-3 pt-[23.5px]"
     >
-      <BrandMark className="px-3" />
+      <BrandMark size="sm" className="h-[25px] px-[1px]" />
 
-      {/* 사이드바 프로필은 「사람 표기 없음」 규칙의 **유일한 예외**다(09-design-tokens §그 외) */}
-      <div className="flex flex-col gap-0.5 px-3">
-        <span className="text-section text-foreground">{account?.name ?? ""}</span>
-        {/* 소속은 「현재」 경력에서 파생된다 — **없으면 캡션을 비운다**(U-3) */}
-        {account?.department ? (
-          <span className="text-caption text-fg-caption">{account.department}</span>
-        ) : null}
+      {/* 사이드바 프로필은 「사람 표기 없음」 규칙의 **유일한 예외**다(디자인 시스템 [10] RULES) */}
+      <div className="mt-[31.5px] flex h-8 items-center gap-2 px-[1px]">
+        <span aria-hidden className="h-8 w-8 shrink-0 rounded-full bg-avatar" />
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="truncate text-control-label font-bold text-foreground">
+            {account?.name ?? ""}
+          </span>
+          {/* 소속은 「현재」 경력에서 파생된다 — **없으면 캡션을 비운다**(U-3) */}
+          {account?.department ? (
+            <span className="truncate text-[11px] text-fg-caption">{account.department}</span>
+          ) : null}
+        </span>
+        <NotificationBell />
       </div>
 
-      <ul className="flex flex-col gap-1">
+      {/* 항목은 **서로 붙어 있다** — 시안 35줄의 컬럼에 gap 이 없다 */}
+      <ul className="mt-[31px] flex flex-col">
         {MENU.map((item) => {
           if (item.href === null) {
             return (
               <li key={item.label}>
                 <V2Gate reason="soon" className="block w-full">
-                  <span className={cn(ITEM_CLASS, "w-full hover:bg-muted")}>{item.label}</span>
+                  <span className={cn(ITEM_CLASS, "w-full hover:bg-muted hover:text-foreground")}>
+                    {item.label}
+                  </span>
                 </V2Gate>
               </li>
             );
@@ -90,7 +138,9 @@ export function Sidebar({
                 aria-current={active ? "page" : undefined}
                 className={cn(
                   ITEM_CLASS,
-                  active ? "bg-ink font-bold text-primary-foreground" : "hover:bg-muted",
+                  active
+                    ? "bg-ink font-bold text-primary-foreground"
+                    : "hover:bg-muted hover:text-foreground",
                 )}
               >
                 {item.label}

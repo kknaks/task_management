@@ -69,14 +69,31 @@ export interface TaskDetail {
   status: TaskStatus;
   workType: TaskWorkTypeSummary;
   project: TaskRefSummary | null;
+  /**
+   * **계획 시작** — 선택 입력(DEC-002 §「2026-09-06 일정 필드 4개 확정 — A-4 번복」).
+   * 비어 있으면 화면은 「미정」으로 그린다.
+   */
+  startDate: string | null;
+  /** **계획 종료 = 기한.** D-day·지연 판정의 기준이다. 선택 입력. */
   dueDate: string | null;
-  dueStartTime: string | null;
-  dueEndTime: string | null;
+  /**
+   * ── 실적 3종 — **읽기 전용이다.**
+   *
+   * 상태 전이 시각을 서버가 컬럼으로 승격해 내려준다. **입력 UI 를 만들지 않는다**
+   * (REDRAW-05 F-5). 보내면 `extra="forbid"` 로 **422** 다.
+   */
+  startedAt: string | null;
+  completedAt: string | null;
+  cancelledAt: string | null;
   /** **파생값** — 서버가 계산해 내려준다. 화면이 다시 계산하지 않는다(G-7 · FE §3-6). */
   dDay: number | null;
   isOverdue: boolean;
-  background: string | null;
-  goal: string | null;
+  /**
+   * **설명** — `background`·`goal` 두 칸을 합친 하나다(DEC-002, 사용자 확정).
+   * 나뉘어 있을 때 둘 다 채우는 사람이 없었다.
+   */
+  description: string | null;
+  /** 완료 결과 — **설명과 다른 축**이다. 완료 게이트가 이 값을 본다(그대로 둔다). */
   completionResult: string | null;
   cancelReason: string | null;
   todos: TaskTodo[];
@@ -97,11 +114,10 @@ export interface CreateTaskInput {
   title: string;
   workTypeId: number;
   projectId?: number | null;
+  /** 계획 시작·종료. **둘 다 선택**이고 한쪽만 넣어도 된다(§4 Validation). */
+  startDate?: string | null;
   dueDate?: string | null;
-  dueStartTime?: string | null;
-  dueEndTime?: string | null;
-  background?: string | null;
-  goal?: string | null;
+  description?: string | null;
   todos?: { text: string }[];
   attachments?: { role: "reference" | "deliverable"; kind: "link"; url: string; label?: string | null }[];
   relatedTaskIds?: number[];
@@ -113,12 +129,14 @@ export interface CreateTaskInput {
  */
 export type UpdateTaskInput =
   | { title: string }
-  | { background: string | null }
-  | { goal: string | null }
+  | { description: string | null }
   | { completionResult: string | null }
   | { workTypeId: number }
   | { projectId: number | null }
-  | { dueDate: string | null; dueStartTime?: string | null; dueEndTime?: string | null };
+  /** 일정 — **계획 2개만** 보낸다. 실적 3개는 읽기 전용이라 보내면 422 다. */
+  | { startDate: string | null }
+  | { dueDate: string | null }
+  | { startDate: string | null; dueDate: string | null };
 
 // --- SPEC-004 목록 · 상태 전이 -------------------------------------------
 
@@ -135,16 +153,21 @@ export interface TaskListItem {
   status: TaskStatus;
   workType: TaskWorkTypeSummary;
   project: TaskRefSummary | null;
+  startDate: string | null;
   dueDate: string | null;
-  dueStartTime: string | null;
-  dueEndTime: string | null;
+  /**
+   * **실적 3종은 목록 응답에도 실린다**(계약 리비전 0004) — 칸반 「완료」 카드의
+   * 계획 대비 차이와 「취소」 카드의 취소일이 이걸 쓴다. **상세를 따로 부르지 않는다.**
+   */
+  startedAt: string | null;
+  completedAt: string | null;
+  cancelledAt: string | null;
   dDay: number | null;
   isOverdue: boolean;
   overdueDays: number | null;
   memoCount: number;
   todoProgress: { done: number; total: number };
   cancelReason: string | null;
-  cancelledAt: string | null;
 }
 
 /**

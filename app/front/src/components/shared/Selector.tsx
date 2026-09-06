@@ -19,6 +19,7 @@
 import { useState, type ReactNode } from "react";
 import { Check, ChevronDown } from "lucide-react";
 
+import { isEnterSubmit } from "@/lib/keyboard";
 import { ColorDot } from "@/components/shared/ColorDot";
 import { ColorPickerPopover } from "@/components/shared/ColorPickerPopover";
 import { Button } from "@/components/ui/button";
@@ -48,6 +49,7 @@ export function Selector({
   creating = false,
   createLabel = "+ 새 프로젝트",
   trailing,
+  renderTrigger,
 }: {
   value: SelectorOption | null;
   options: readonly SelectorOption[];
@@ -62,6 +64,13 @@ export function Selector({
   createLabel?: string;
   /** 트리거 안 오른쪽에 덧붙일 것(저장 중 표시 등). */
   trailing?: ReactNode;
+  /**
+   * 트리거를 **통째로 갈아끼운다**(REDRAW-03 H-3).
+   *
+   * 상세 헤더는 셀렉터 박스가 아니라 **유형 배지 / 프로젝트 칩**이 목록을 연다(시안 1890줄).
+   * 목록은 그대로 두고 **여는 것만** 바뀌므로 팝오버를 두 벌 만들지 않는다.
+   */
+  renderTrigger?: (state: { open: boolean; value: SelectorOption | null }) => ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const [draftName, setDraftName] = useState("");
@@ -84,6 +93,9 @@ export function Selector({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
+        {renderTrigger ? (
+          renderTrigger({ open, value })
+        ) : (
         <button
           type="button"
           disabled={disabled}
@@ -109,6 +121,7 @@ export function Selector({
           {trailing}
           <ChevronDown className="shrink-0 text-fg-caption" aria-hidden />
         </button>
+        )}
       </PopoverTrigger>
 
       <PopoverContent align="start" className="w-72 rounded-card border-border bg-card p-1 shadow-popover">
@@ -175,7 +188,7 @@ export function Selector({
                 value={draftName}
                 onChange={(event) => setDraftName(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter") void submitCreate();
+                  if (isEnterSubmit(event)) void submitCreate();
                 }}
                 className="h-9 min-w-0 flex-1"
               />

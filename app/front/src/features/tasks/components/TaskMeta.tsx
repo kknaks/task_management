@@ -7,7 +7,7 @@
  * 준 값을 그대로 그린다 — 화면이 다시 세면 자정 근처에서 서버와 다른 답이 나온다.
  */
 
-import { formatDueDate, formatTime } from "@/lib/datetime";
+import { formatDueDate } from "@/lib/datetime";
 import { cn } from "@/lib/utils";
 
 /**
@@ -22,21 +22,20 @@ export function OverdueBadge({ days }: { days: number | null }) {
 }
 
 /**
- * 기한 칸 — 날짜 + D-day, 시간이 있으면 `08.29 14:00–15:00`.
+ * 종료일 칸 — 날짜 **13/600** + D-day(시안 106줄).
  * **기한이 없으면 빈칸**이다(U-1 · T-1-a — 「기한 없음」 문구를 목록에 넣지 않는다).
  * 지연이면 D-day 자리를 **「n일 지남」이 대신한다**.
+ *
+ * **시각이 없다** — `dueStartTime`·`dueEndTime` 은 제거됐다(DEC-002 §「업무의 시간 지정 제거」).
+ * 업무는 날짜 단위이고 시각을 갖는 것은 회의다.
  */
 export function DueCell({
   dueDate,
-  dueStartTime,
-  dueEndTime,
   dDay,
   isOverdue,
   overdueDays,
 }: {
   dueDate: string | null;
-  dueStartTime: string | null;
-  dueEndTime: string | null;
   dDay: number | null;
   isOverdue: boolean;
   overdueDays: number | null;
@@ -44,13 +43,11 @@ export function DueCell({
   if (dueDate === null) {
     return null;
   }
-  const timed = dueStartTime !== null && dueEndTime !== null;
 
   return (
-    <span className="flex min-w-0 items-center gap-1.5">
-      <span className="truncate text-meta text-foreground">
+    <span className="flex min-w-0 items-center justify-center gap-1.5">
+      <span className="truncate text-meta font-semibold text-foreground">
         {formatDueDate(dueDate)}
-        {timed ? ` ${formatTime(dueStartTime)}–${formatTime(dueEndTime)}` : ""}
       </span>
       {isOverdue ? (
         <OverdueBadge days={overdueDays} />

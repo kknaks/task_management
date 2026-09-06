@@ -12,7 +12,7 @@ import { renderHook, waitFor } from "@testing-library/react";
 
 import { useTasksQuery } from "@/features/tasks/hooks/useTasksQuery";
 import { KANBAN_MAX_SIZE, TASKS_PAGE_SIZE } from "@/features/tasks/hooks/useTasksViewParams";
-import { monthRange } from "@/lib/datetime";
+import { monthOf, periodRange } from "@/lib/datetime";
 import { tokenStore } from "@/lib/auth/tokenStore";
 import { API_BASE, server } from "@/test/server";
 
@@ -61,7 +61,7 @@ describe("기간 경계가 그대로 서버로 나간다", () => {
   it("**끝이 다음 달 1일**이고 오프셋이 붙은 UTC ISO 다", async () => {
     const seen: URLSearchParams[] = [];
     recordQuery(seen);
-    const { from, to } = monthRange("2026-09-01");
+    const { from, to } = periodRange(monthOf("2026-09-01"));
 
     renderHook(() => useTasksQuery({ ...base, from, to, size: TASKS_PAGE_SIZE }), { wrapper });
 
@@ -74,7 +74,7 @@ describe("기간 경계가 그대로 서버로 나간다", () => {
   it("값이 없는 조건은 **키 자체를 보내지 않는다** — 서버가 「없음」과 「빈 값」을 구분한다", async () => {
     const seen: URLSearchParams[] = [];
     recordQuery(seen);
-    const { from, to } = monthRange("2026-09-01");
+    const { from, to } = periodRange(monthOf("2026-09-01"));
 
     renderHook(() => useTasksQuery({ ...base, from, to, size: TASKS_PAGE_SIZE }), { wrapper });
 
@@ -89,7 +89,7 @@ describe("칸반은 페이지를 쓰지 않는다(U-2 데이터 범위)", () => 
   it("리스트는 12건, 칸반은 상한 500 을 보낸다 — 13번째 업무가 사라지지 않는다", async () => {
     const seen: URLSearchParams[] = [];
     recordQuery(seen);
-    const { from, to } = monthRange("2026-09-01");
+    const { from, to } = periodRange(monthOf("2026-09-01"));
 
     renderHook(() => useTasksQuery({ ...base, from, to, size: TASKS_PAGE_SIZE }), { wrapper });
     await waitFor(() => expect(seen).toHaveLength(1));

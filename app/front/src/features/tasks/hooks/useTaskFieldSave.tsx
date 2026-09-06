@@ -21,7 +21,11 @@ import {
   AutoSaveFailureNotice,
   type AutoSaveFailure,
 } from "@/components/shared/AutoSaveFailureNotice";
-import { autoSaveErrorToast, taskInlineError } from "@/features/tasks/errors";
+import {
+  autoSaveFailureMessage,
+  isValidationError,
+  taskInlineError,
+} from "@/features/tasks/errors";
 import { useTaskMutations } from "@/features/tasks/hooks/useTaskMutations";
 import { useRowFailures } from "@/features/settings/useRowFailures";
 import type { TaskDetail, UpdateTaskInput } from "@/features/tasks/types";
@@ -32,11 +36,12 @@ import type { TaskDetail, UpdateTaskInput } from "@/features/tasks/types";
  */
 export const TASK_FIELD_LABEL = {
   title: "제목",
-  due: "기한",
+  /** 계획 시작·종료 두 칸을 한 축으로 묶는다 — 저장도 함께 나간다(F-1②). */
+  due: "일정",
   workType: "유형",
   project: "프로젝트",
-  background: "배경",
-  goal: "목표",
+  /** `background`·`goal` 을 합친 하나(DEC-002 · F-1b). */
+  description: "설명",
   completionResult: "완료 결과",
 } as const;
 
@@ -68,12 +73,17 @@ export function useTaskFieldSave(task: TaskDetail) {
         clearFailed(task.id, field);
       } catch (error) {
         const inline = taskInlineError(error);
-        if (inline && !inline.toast && onInlineError) {
+        /**
+         * **422 는 컨트롤 옆 인라인으로 새지 않는다**(G-0c) — 서버 문구가
+         * 「입력값을 확인해 주세요」 하나라 그 자리에 붙여 봐야 무엇이 틀렸는지 알 수 없다.
+         * 아래 U-7 경로로 내려가 **필드 이름을 짚고** 「다시 저장」을 함께 준다.
+         */
+        if (inline && !inline.toast && !isValidationError(error) && onInlineError) {
           // 삭제된 유형·프로젝트처럼 **그 컨트롤 옆에 붙는** 사유는 자동 저장 실패와 다른 축이다.
           onInlineError(field, inline.message);
           return;
         }
-        toast.error(inline?.message ?? autoSaveErrorToast(TASK_FIELD_LABEL[field]));
+        toast.error(autoSaveFailureMessage(error, TASK_FIELD_LABEL[field]));
         markFailed(task.id, field, {
           retry: () => save(field, input, onInlineError),
         });
@@ -165,7 +175,7 @@ export function useCollectionSave(taskId: number, label: string, busy: boolean) 
           clearFailed(taskId, field);
           return true;
         }
-        toast.error(autoSaveErrorToast(label));
+        toast.error(autoSaveFailureMessage(error, label));
         markFailed(taskId, field, {
           retry: async () => {
             await run(field, request, options);

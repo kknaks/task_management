@@ -25,16 +25,17 @@ const TASK: TaskListItem = {
   status: "in_progress",
   workType: { id: 3, name: "문서·보고", kind: "task", colorToken: "steel", isDeleted: false },
   project: null,
+  startDate: null,
   dueDate: null,
-  dueStartTime: null,
-  dueEndTime: null,
+  startedAt: null,
+  completedAt: null,
+  cancelledAt: null,
   dDay: null,
   isOverdue: false,
   overdueDays: null,
   memoCount: 0,
   todoProgress: { done: 0, total: 0 },
   cancelReason: null,
-  cancelledAt: null,
 };
 
 function setup() {

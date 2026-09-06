@@ -29,13 +29,14 @@ const TASK: TaskDetail = {
   status: "todo",
   workType: { id: 3, name: "문서·보고", kind: "task", colorToken: "steel", isDeleted: false },
   project: null,
+  startDate: null,
   dueDate: null,
-  dueStartTime: null,
-  dueEndTime: null,
+  startedAt: null,
+  completedAt: null,
+  cancelledAt: null,
   dDay: null,
   isOverdue: false,
-  background: null,
-  goal: null,
+  description: null,
   completionResult: null,
   cancelReason: null,
   todos: [{ id: 11, text: "체크 대상", done: false, dueDate: null }],
@@ -158,7 +159,7 @@ describe("§5 낙관적 표 — 「하지 않는다」 쪽", () => {
       void result.current.update
         .mutateAsync({
           id: TASK.id,
-          input: { dueDate: "2026-09-10", dueStartTime: "14:00", dueEndTime: "15:00" },
+          input: { startDate: "2026-09-08", dueDate: "2026-09-10" },
         })
         .catch(() => undefined);
     });
@@ -174,16 +175,16 @@ describe("§5 낙관적 표 — 「하지 않는다」 쪽", () => {
     server.use(
       http.patch(`${API_BASE}/api/tasks/${TASK.id}`, async () => {
         await gate;
-        return HttpResponse.json({ ...TASK, background: "왜 하는가" });
+        return HttpResponse.json({ ...TASK, description: "왜 하는가" });
       }),
     );
     const { result, read } = setup();
 
     act(() => {
-      void result.current.update.mutateAsync({ id: TASK.id, input: { background: "왜 하는가" } });
+      void result.current.update.mutateAsync({ id: TASK.id, input: { description: "왜 하는가" } });
     });
 
-    await waitFor(() => expect(read()?.background).toBe("왜 하는가"));
+    await waitFor(() => expect(read()?.description).toBe("왜 하는가"));
     release();
   });
 });

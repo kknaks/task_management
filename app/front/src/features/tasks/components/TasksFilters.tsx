@@ -38,13 +38,20 @@ const Trigger = forwardRef<
       ref={ref}
       type="button"
       {...props}
+      /**
+       * **h34 · r8 · border `#D9D9D9` · 흰 배경 · 13px `#757575` · padding 0 14 · gap 8**
+       * (시안 67~74줄 · REDRAW-05 F-6). 툴바에서 스테퍼 3개만 30 이고 나머지는 전부 34 다.
+       */
       className={cn(
-        "flex h-8 items-center gap-1 rounded-control border px-3 text-meta",
-        active ? "border-primary bg-secondary text-secondary-foreground" : "border-border text-muted-foreground hover:bg-muted",
+        "flex h-[34px] items-center gap-2 rounded-control border bg-card px-3.5 text-meta",
+        active
+          ? "border-primary bg-secondary text-secondary-foreground"
+          : "border-border text-fg-meta hover:bg-muted",
       )}
     >
       {label}
-      <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+      {/* chevron 11×7 — 시안 73줄 */}
+      <ChevronDown className="h-[7px] w-[11px]" strokeWidth={1.6} aria-hidden />
     </button>
   );
 });

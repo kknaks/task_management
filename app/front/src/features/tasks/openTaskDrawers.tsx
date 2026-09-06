@@ -8,7 +8,10 @@
  */
 
 import { TaskCreateDrawer } from "@/features/tasks/components/TaskCreateDrawer";
-import { TaskDetailDrawer } from "@/features/tasks/components/TaskDetailDrawer";
+import {
+  TaskDetailDrawer,
+  TaskDrawerHeaderConnected,
+} from "@/features/tasks/components/TaskDetailDrawer";
 import type { TaskDetail } from "@/features/tasks/types";
 import type { useOverlay } from "@/lib/overlay/OverlayProvider";
 
@@ -49,13 +52,22 @@ export function openTaskDetailDrawer(
   overlay.openDrawer({
     key: `task-detail-${taskId}`,
     /**
-     * 프레임 헤더는 **화면 이름**만 든다 — 여는 시점에는 id 만 알고 제목은 로드 후에 온다.
-     * **업무 제목은 본문 최상단**에서 `InlineEditText` 로 그린다(검수 F-1) —
-     * 전체 페이지와 **같은 컴포넌트**라 두 표면이 다른 규격을 갖지 않는다(U-4).
+     * 프레임 타이틀은 **접근성 이름**으로만 남는다 — 시안 헤더에 「업무 상세」 텍스트가 없고
+     * 그 자리는 유형 배지 + 프로젝트 칩이다(REDRAW-03 H-1). 헤더 자체는 `TaskDetailDrawer` 가
+     * `renderHeader` 로 그린다.
      */
     title: "업무 상세",
     // **⤢ 는 전체 페이지로 승격**된다(F-5 · U-4). 드로어가 닫히고 이 라우트로 간다.
     expandTo: `/tasks/detail/?id=${taskId}`,
+    /** 시안 헤더는 3겹이라 프레임 타이틀 바를 쓰지 않는다(REDRAW-03 §2-1). */
+    renderHeader: ({ fullscreen, expand, onClose }) => (
+      <TaskDrawerHeaderConnected
+        taskId={taskId}
+        fullscreen={fullscreen}
+        expand={expand}
+        onClose={onClose}
+      />
+    ),
     content: <TaskDetailDrawer taskId={taskId} focusCompletion={options.focusCompletion} />,
   });
 }

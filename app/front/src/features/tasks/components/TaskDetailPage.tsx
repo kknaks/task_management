@@ -1,20 +1,32 @@
 "use client";
 
 /**
- * **U-4 전체 페이지 승격**(SPEC-003 · P-23).
+ * **U-4 전체 페이지 승격**(SPEC-003 · P-23 · REDRAW-03 §3).
  *
- * 좌(유동) 본문 + 우(528) 메모·로그 2단. 1280~1439 에서는 **우 400**(U-11).
- * breadcrumb 「홈 › 내 업무 › <제목>」. **드로어로 되돌리는 버튼은 없다** — 승격은 한 방향(F-5).
+ * 좌 **1080**(설명·할일·메모) + 우 **528**(참고자료·결과자료·연관업무·로그) 2단.
+ * 1280~1439 에서는 우 400(U-11). breadcrumb 「홈 › 내 업무 › <제목>」.
+ * **드로어로 되돌리는 버튼은 없다** — 승격은 한 방향(F-5).
  *
- * 본문은 `TaskDetailBody` 가 내보내는 **같은 블록**이다 — 드로어와 다른 규격을 갖지 않는다(U-4).
+ * ## 모드가 둘이다(§1 사용자 확정)
+ *
+ * | | 읽기 | 수정 |
+ * |---|---|---|
+ * | 값 | **텍스트로 보기만** | 전부 입력 |
+ * | 상태·완료 | **바로 동작** | **없다**(전용 엔드포인트라 일반 저장에 못 싣는다) |
+ * | 헤더 우측 | `⋮`(수정·삭제) | **[취소] [저장]** |
+ *
+ * **수정 모드는 전부 초안이다** — [저장] 이면 한 번에, **[취소] 면 제목도 할일도 전부 버린다.**
+ * 블록 배치는 드로어와 다르지만 **블록 내부 규격은 같다**(폭만 다르다).
  */
 
 import Link from "next/link";
 
 import { EmptyState } from "@/components/shared/EmptyState";
 import { Button } from "@/components/ui/button";
-import { TaskAsideBlocks, TaskMainBlocks } from "@/features/tasks/components/TaskDetailBody";
-import { TaskDetailSkeleton, TaskHeaderControls } from "@/features/tasks/components/TaskDetailParts";
+import { TaskPageBlocks } from "@/features/tasks/components/TaskDetailBody";
+import { TaskDetailSkeleton } from "@/features/tasks/components/TaskDetailParts";
+import { TaskPageHeader } from "@/features/tasks/components/TaskPageHeader";
+import { useTaskEditDraft } from "@/features/tasks/hooks/useTaskEditDraft";
 import { isTaskNotFound } from "@/features/tasks/errors";
 import { useTaskDetailQuery } from "@/features/tasks/hooks/useTaskMutations";
 import { useTasksViewParams } from "@/features/tasks/hooks/useTasksViewParams";
@@ -37,9 +49,15 @@ export function TaskDetailPage() {
     );
   }
 
+  return <PageBody task={task} />;
+}
+
+function PageBody({ task }: { task: import("@/features/tasks/types").TaskDetail }) {
+  const draft = useTaskEditDraft(task);
+
   return (
-    <div className="flex flex-col gap-5">
-      <nav aria-label="breadcrumb" className="flex items-center gap-1.5 text-meta text-fg-caption">
+    <div className="flex flex-col">
+      <nav aria-label="breadcrumb" className="flex items-center gap-[7px] text-meta text-fg-caption">
         <span>홈</span>
         <span aria-hidden>›</span>
         <Link href="/tasks/" className="hover:underline">
@@ -49,20 +67,14 @@ export function TaskDetailPage() {
         <span className="truncate text-fg-meta">{task.title}</span>
       </nav>
 
-      {/*
-        제목은 **헤더 컴포넌트가 편집 가능하게** 그린다 — 드로어와 같은 컨트롤이다.
-        여기 정적 `<h1>` 을 따로 두면 두 표면이 다른 규격을 갖는다(U-4).
-      */}
-      <TaskHeaderControls task={task} />
+      {/* 헤더 — 시안 1536~1571. `top 66` 이라 breadcrumb 아래 20 이 남는다 */}
+      <div className="mt-5">
+        <TaskPageHeader task={task} draft={draft} />
+      </div>
 
-      {/* 좌(유동) + 우(≥1440 은 528 · 1280~1439 는 400) 2단(U-11) */}
-      <div className="flex flex-col gap-5 desk:flex-row">
-        <div className="flex min-w-0 flex-1 flex-col gap-6">
-          <TaskMainBlocks task={task} />
-        </div>
-        <aside className="flex w-full shrink-0 flex-col gap-6 desk:w-[400px] wide:w-detail-aside">
-          <TaskAsideBlocks task={task} />
-        </aside>
+      {/* 좌 1080 / 우 528 — 시안 1574·1657줄. 둘 다 `top 180 · gap 24` */}
+      <div className="mt-6 flex flex-col gap-6 desk:flex-row">
+        <TaskPageBlocks task={task} draft={draft} />
       </div>
     </div>
   );

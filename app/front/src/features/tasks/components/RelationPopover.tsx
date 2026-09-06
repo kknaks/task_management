@@ -34,6 +34,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { fetchRelationCandidates, type RelationScope } from "@/features/tasks/api";
+import type { TaskRelation } from "@/features/tasks/types";
 import { queryKeys } from "@/lib/api/queryKeys";
 import { formatDueDate } from "@/lib/datetime";
 import { cn } from "@/lib/utils";
@@ -64,7 +65,15 @@ export function RelationPopover({
    */
   hasBaseProject: boolean;
   selectedIds: readonly number[];
-  onChange: (next: number[]) => void;
+  /**
+   * 고른 결과. **두 번째 인자는 고른 항목 자체**다 — 생성 드로어는 아직 서버에 저장하기
+   * 전이라 제목·상태를 알 길이 없는데, 시안이 연관업무를 **제목이 보이는 행 카드**로 그린다
+   * (646~654줄 · REDRAW-06 G-0b). 저장에 나가는 것은 여전히 `next`(id 목록)뿐이다.
+   *
+   * 이 화면에 후보로 실려 있지 않은 id(이미 연결돼 있던 것)는 `picked` 에 없을 수 있다 —
+   * 호출부가 그 경우를 감당한다.
+   */
+  onChange: (next: number[], picked: readonly TaskRelation[]) => void;
   trigger: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -212,7 +221,10 @@ export function RelationPopover({
             type="button"
             className="h-9 px-3 text-meta"
             onClick={() => {
-              onChange(draft);
+              onChange(
+                draft,
+                candidates.filter((candidate) => draft.includes(candidate.id)),
+              );
               setOpen(false);
             }}
           >

@@ -20,6 +20,12 @@ export interface DrawerRequest {
   badge?: ReactNode;
   /** 헤더 우측 컨트롤(상태 드롭다운·기한·`⋯`). 화면이 자리를 채운다. */
   headerActions?: ReactNode;
+  /** 헤더를 통째로 그린다 — 상세 드로어처럼 시안 헤더가 3겹인 경우(REDRAW-03 §2-1). */
+  renderHeader?: (state: {
+    fullscreen: boolean;
+    expand: (() => void) | null;
+    onClose: () => void;
+  }) => ReactNode;
   /** ⤢ 로 승격될 전체 페이지 라우트(F-5). 예) `/tasks/detail?id=12` */
   expandTo?: string;
   content: ReactNode;

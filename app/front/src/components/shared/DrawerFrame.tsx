@@ -59,6 +59,21 @@ export interface DrawerFrameProps {
   badge?: ReactNode;
   /** 헤더 우측 — 상태 드롭다운·기한·`⋯` 같은 화면별 컨트롤. */
   headerActions?: ReactNode;
+  /**
+   * 헤더를 **통째로 갈아끼운다**(REDRAW-03 §2-1).
+   *
+   * 상세 드로어의 시안 헤더는 한 줄짜리 타이틀 바가 아니라 **배지 줄 / 제목 / 칩 줄** 세 겹이고
+   * `⋮ ⤢ ✕` 가 첫 줄 우측에 붙는다(1888~1912). 프레임이 그 구조를 알 이유가 없으므로
+   * **닫기·승격·전체화면 여부만 넘겨주고** 그리기는 화면이 한다.
+   *
+   * 전체 화면(1280~1439)에서 **스크림이 사라지고 `←` 가 닫는 길**이라는 규칙은 그대로
+   * 프레임이 든다 — `fullscreen` 을 받아서 화면이 `←` 를 그린다.
+   */
+  renderHeader?: (state: {
+    fullscreen: boolean;
+    expand: (() => void) | null;
+    onClose: () => void;
+  }) => ReactNode;
   /** ⤢ 로 승격될 전체 페이지 라우트(F-5). 없으면 ⤢ 를 그리지 않는다(생성 드로어). */
   expandTo?: string;
   children: ReactNode;
@@ -69,6 +84,7 @@ export function DrawerFrame({
   title,
   badge,
   headerActions,
+  renderHeader,
   expandTo,
   children,
   onClose,
@@ -117,6 +133,11 @@ export function DrawerFrame({
         // 전체 화면 구간에서는 뒤 화면이 보일 이유가 없다 — 스크림을 지운다.
         overlayClassName={fullscreen ? "bg-transparent" : undefined}
       >
+        {renderHeader ? (
+          <div className="shrink-0">
+            {renderHeader({ fullscreen, expand: expandTo ? expand : null, onClose })}
+          </div>
+        ) : (
         <header
           className={cn(
             "flex shrink-0 items-center gap-3 border-b border-divider px-6",
@@ -167,6 +188,7 @@ export function DrawerFrame({
             </button>
           )}
         </header>
+        )}
 
         <DrawerFooterSlot.Provider value={footerEl}>
           <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">{children}</div>

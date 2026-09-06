@@ -23,11 +23,17 @@ export function LogRow({
   now?: Date;
 }) {
   return (
-    <li className="flex items-center gap-2 py-1.5">
+    /**
+     * 시안 L2012·L2015 — **h40 · `padding 0 16` · `gap 10` · `border-bottom 1px #F1F2F5`**.
+     * 전에는 좌우 padding 도 구분선도 없어 텍스트가 카드 끝에 붙었다(REDRAW-07 B-4).
+     * **마지막 행은 구분선이 없다**(시안 L2014).
+     */
+    <li className="flex h-10 items-center gap-2.5 border-b border-row-divider px-4 last:border-b-0">
       <span
         aria-hidden
         className={cn(
-          "h-1.5 w-1.5 shrink-0 rounded-full",
+          // dot **7×7** — 최신만 primary, 나머지는 `#D9D9D9`
+          "h-[7px] w-[7px] shrink-0 rounded-full",
           latest ? "bg-primary" : "bg-border",
         )}
       />

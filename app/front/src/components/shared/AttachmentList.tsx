@@ -10,6 +10,7 @@
 import { ExternalLink, FileText } from "lucide-react";
 
 import { EmptyState } from "@/components/shared/EmptyState";
+import { ItemRow, ItemRows } from "@/components/shared/ItemRow";
 import { Button } from "@/components/ui/button";
 import type { TaskAttachment } from "@/features/tasks/types";
 
@@ -36,53 +37,60 @@ export function AttachmentList({
   }
 
   return (
-    <ul className="flex flex-col">
+    /* 행 카드 — 흰 배경 · border `#D9D9D9` · r8 · h40 · 좌측 타일 22px r5(시안 631줄 · G-0b) */
+    <ItemRows>
       {attachments.map((attachment) => (
-        <li
+        <ItemRow
           key={attachment.id}
-          className="group flex h-todo items-center gap-2 border-b border-row-divider px-1 last:border-b-0 hover:bg-row-hover"
-        >
-          <span
-            aria-hidden
-            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-chip bg-background text-fg-meta"
-          >
-            {attachment.kind === "doc" ? <FileText aria-hidden /> : <ExternalLink aria-hidden />}
-          </span>
-
-          <span className="min-w-0 flex-1">
-            {attachment.kind === "link" && attachment.url ? (
-              // 링크는 **기본 브라우저로 연다**(U-7 기대 결과).
-              <a
-                href={attachment.url}
-                target="_blank"
-                rel="noreferrer"
-                className="block truncate text-body text-foreground hover:underline"
-              >
-                {attachment.name}
-              </a>
-            ) : (
-              <span className="block truncate text-body text-foreground">{attachment.name}</span>
-            )}
-            <span className="block truncate text-caption text-fg-caption">
-              {attachment.kind === "doc"
-                ? (attachment.folderPath ?? "")
-                : attachment.url
-                  ? domainOf(attachment.url)
-                  : ""}
+          leading={
+            <span
+              aria-hidden
+              className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md bg-secondary text-secondary-foreground [&_svg]:h-3 [&_svg]:w-3"
+            >
+              {attachment.kind === "doc" ? <FileText aria-hidden /> : <ExternalLink aria-hidden />}
             </span>
-          </span>
-
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-destructive"
-            onClick={() => onRemove(attachment)}
-          >
-            제거
-          </Button>
-        </li>
+          }
+          trailing={
+            <>
+              {/**
+                * 폴더 경로 / 도메인 — **U-7 이 요구하는 정보**다. 시안 행 카드는 h40 한 줄이라
+                * 두 줄로 쌓을 자리가 없어 **같은 줄 우측에 붙인다**(REDRAW-06 보고 참조).
+                */}
+              <span className="hidden shrink-0 truncate text-caption text-fg-caption wide:block">
+                {attachment.kind === "doc"
+                  ? (attachment.folderPath ?? "")
+                  : attachment.url
+                    ? domainOf(attachment.url)
+                    : ""}
+              </span>
+                <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 shrink-0 px-2 text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-destructive"
+                onClick={() => onRemove(attachment)}
+              >
+                제거
+              </Button>
+            </>
+          }
+        >
+          {attachment.kind === "link" && attachment.url ? (
+            // 링크는 **기본 브라우저로 연다**(U-7 기대 결과).
+            <a
+              href={attachment.url}
+              target="_blank"
+              rel="noreferrer"
+              className="truncate hover:underline"
+              onClick={(event) => event.stopPropagation()}
+            >
+              {attachment.name}
+            </a>
+          ) : (
+            attachment.name
+          )}
+        </ItemRow>
       ))}
-    </ul>
+    </ItemRows>
   );
 }

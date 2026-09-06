@@ -14,6 +14,7 @@
 
 import { useState, type ReactNode } from "react";
 
+import { isEnterSubmit } from "@/lib/keyboard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -122,7 +123,7 @@ export function AttachmentPopover({
               value={url}
               onChange={(event) => setUrl(event.target.value)}
               onKeyDown={(event) => {
-                if (event.key === "Enter") void submit();
+                if (isEnterSubmit(event)) void submit();
               }}
               className="h-9"
             />
@@ -132,7 +133,7 @@ export function AttachmentPopover({
               value={label}
               onChange={(event) => setLabel(event.target.value)}
               onKeyDown={(event) => {
-                if (event.key === "Enter") void submit();
+                if (isEnterSubmit(event)) void submit();
               }}
               className="h-9"
             />

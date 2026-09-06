@@ -15,7 +15,7 @@
 import { useCallback, useMemo } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
-import { currentMonth } from "@/lib/datetime";
+import { currentPeriod, isDateKey, type Period } from "@/lib/datetime";
 import type { TaskSort, TaskStatus, TasksView } from "@/features/tasks/types";
 
 /** 한 페이지에 12건 — **리스트** 하단 페이지네이션의 단위다(§4 응답 예시). */
@@ -33,12 +33,24 @@ export const KANBAN_MAX_SIZE = 500;
 const SORTS: readonly TaskSort[] = ["due_asc", "due_desc", "created_desc"];
 const STATUSES: readonly TaskStatus[] = ["todo", "in_progress", "done", "cancelled"];
 
+/**
+ * **URL 쿼리 키** — 화면이 갈아 끼울 수 있는 것들.
+ * `period` 는 값이 하나가 아니라 `from`·`to` 두 키로 나가므로 여기서 갈린다.
+ */
+type QueryKey = Exclude<keyof TasksViewParams, "period"> | "from" | "to";
+
 export interface TasksViewParams {
   /** 상세 `?id=` — WORK-004 가 쓰던 그대로다. */
   id: number | null;
   view: TasksView;
-  /** 기준 달의 **첫날**(`YYYY-MM-01`). 기간 스테퍼가 이 값 하나만 움직인다. */
-  month: string;
+  /**
+   * 보고 있는 **기간**(`?from=`·`?to=`, 둘 다 `YYYY-MM-DD` 이고 **끝날 포함**).
+   *
+   * 전에는 `?month=` 하나였다. 사용자가 시작일–종료일을 직접 고를 수 있게 되면서
+   * **범위가 1급**이 됐고 달은 「범위가 마침 달 경계와 같은 경우」다(E-3).
+   * 둘 중 하나라도 없거나 이상하면 **이번 달**로 떨어진다.
+   */
+  period: Period;
   workTypeId: number | null;
   status: TaskStatus | null;
   projectId: number | null;
@@ -47,14 +59,17 @@ export interface TasksViewParams {
 }
 
 /**
- * `?month=` 이 없거나 이상하면 **이번 달**이다(§4 「기본은 이번 달」).
+ * `?from=`·`?to=` 가 없거나 이상하면 **이번 달**이다(§4 「기본은 이번 달」).
  * 「이번 달」 판정은 **KST 기준**이고 `lib/datetime.ts` 가 든다(§3-6 · 검수 W-7).
+ *
+ * 뒤집힌 범위(`from > to`)도 기본으로 떨어뜨린다 — 고쳐서 쓰면 사용자가 손댄 적 없는
+ * 기간을 보게 된다.
  */
-function parseMonth(raw: string | null): string {
-  if (raw !== null && /^\d{4}-\d{2}-01$/.test(raw)) {
-    return raw;
+function parsePeriod(rawFrom: string | null, rawTo: string | null): Period {
+  if (isDateKey(rawFrom) && isDateKey(rawTo) && rawFrom <= rawTo) {
+    return { from: rawFrom, to: rawTo };
   }
-  return currentMonth();
+  return currentPeriod();
 }
 
 function parseId(raw: string | null): number | null {
@@ -63,8 +78,13 @@ function parseId(raw: string | null): number | null {
 }
 
 export function useTasksViewParams(): TasksViewParams & {
-  /** 조건 하나를 갈아 끼운다. **`null` 은 그 조건을 지운다**(쿼리에서 키가 빠진다). */
-  setParams: (next: Partial<Record<keyof TasksViewParams, string | number | null>>) => void;
+  /**
+   * 조건 하나를 갈아 끼운다. **`null` 은 그 조건을 지운다**(쿼리에서 키가 빠진다).
+   * 기간은 값이 둘이라 이걸로 못 넣는다 — `setPeriod` 를 쓴다.
+   */
+  setParams: (next: Partial<Record<QueryKey, string | number | null>>) => void;
+  /** 기간을 통째로 바꾼다 — `?from=`·`?to=` 를 함께 쓴다(둘이 늘 짝이라 따로 두지 않는다). */
+  setPeriod: (period: Period) => void;
   /** 유형·상태·프로젝트를 한꺼번에 지운다 — 빈 상태의 「필터 지우기」. */
   clearFilters: () => void;
   /** 활성 필터 수 — 타이틀 옆 「필터 n ✕」. **기간·정렬·뷰는 세지 않는다**(항상 값이 있다). */
@@ -77,19 +97,21 @@ export function useTasksViewParams(): TasksViewParams & {
   const rawStatus = params.get("status");
   const rawSort = params.get("sort");
   const rawPage = Number(params.get("page"));
+  const rawFrom = params.get("from");
+  const rawTo = params.get("to");
 
   const parsed = useMemo<TasksViewParams>(
     () => ({
       id: parseId(params.get("id")),
       view: params.get("view") === "board" ? "board" : "list",
-      month: parseMonth(params.get("month")),
+      period: parsePeriod(rawFrom, rawTo),
       workTypeId: parseId(params.get("workTypeId")),
       status: STATUSES.includes(rawStatus as TaskStatus) ? (rawStatus as TaskStatus) : null,
       projectId: parseId(params.get("projectId")),
       sort: SORTS.includes(rawSort as TaskSort) ? (rawSort as TaskSort) : "due_asc",
       page: Number.isInteger(rawPage) && rawPage > 0 ? rawPage : 1,
     }),
-    [params, rawPage, rawSort, rawStatus],
+    [params, rawFrom, rawPage, rawSort, rawStatus, rawTo],
   );
 
   /**
@@ -100,7 +122,7 @@ export function useTasksViewParams(): TasksViewParams & {
    * 그래서 **축을 가른다**: 뷰는 「어디를 보고 있나」라 되돌아갈 자리이고, 나머지는 그 안의 조건이다.
    */
   const setParams = useCallback(
-    (next: Partial<Record<keyof TasksViewParams, string | number | null>>) => {
+    (next: Partial<Record<QueryKey, string | number | null>>) => {
       const search = new URLSearchParams(params.toString());
       for (const [key, value] of Object.entries(next)) {
         if (value === null || value === "") {
@@ -123,6 +145,11 @@ export function useTasksViewParams(): TasksViewParams & {
     [params, pathname, router],
   );
 
+  const setPeriod = useCallback(
+    (period: Period) => setParams({ from: period.from, to: period.to }),
+    [setParams],
+  );
+
   const clearFilters = useCallback(
     () => setParams({ workTypeId: null, status: null, projectId: null }),
     [setParams],
@@ -133,7 +160,7 @@ export function useTasksViewParams(): TasksViewParams & {
     (parsed.status === null ? 0 : 1) +
     (parsed.projectId === null ? 0 : 1);
 
-  return { ...parsed, setParams, clearFilters, activeFilterCount };
+  return { ...parsed, setParams, setPeriod, clearFilters, activeFilterCount };
 }
 
 /**

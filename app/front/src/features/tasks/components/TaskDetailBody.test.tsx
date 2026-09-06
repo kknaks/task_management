@@ -26,13 +26,14 @@ const TASK: TaskDetail = {
   status: "todo",
   workType: { id: 3, name: "문서·보고", kind: "task", colorToken: "steel", isDeleted: false },
   project: null,
+  startDate: null,
   dueDate: null,
-  dueStartTime: null,
-  dueEndTime: null,
+  startedAt: null,
+  completedAt: null,
+  cancelledAt: null,
   dDay: null,
   isOverdue: false,
-  background: "",
-  goal: "",
+  description: "",
   completionResult: null,
   cancelReason: null,
   todos: [],
@@ -46,8 +47,8 @@ const TASK: TaskDetail = {
   updatedAt: "2026-09-06T00:00:00Z",
 };
 
-const TOAST = "저장하지 못했습니다 · 배경";
-const NOTICE = "배경이 저장되지 않았습니다";
+const TOAST = "저장하지 못했습니다 · 설명";
+const NOTICE = "설명이 저장되지 않았습니다";
 
 function renderBody() {
   const client = new QueryClient({
@@ -82,18 +83,18 @@ afterEach(async () => {
 });
 
 describe("U-7 — 상세의 자동 저장 실패도 같은 규격이다", () => {
-  it("배경 저장이 실패하면 토스트와 인라인 표시가 **함께** 뜬다", async () => {
+  it("설명 저장이 실패하면 토스트와 인라인 표시가 **함께** 뜬다", async () => {
     const calls = blockPatch();
     renderBody();
 
-    const field = screen.getByLabelText("배경");
+    const field = screen.getByLabelText("설명");
     await userEvent.type(field, "왜 하는가");
     await userEvent.tab();
 
     expect(await screen.findByText(TOAST)).toBeInTheDocument();
     expect(await screen.findByText(NOTICE)).toBeInTheDocument();
     // 실패한 컨트롤 자신에 테두리 실패색(U-7)
-    expect(screen.getByLabelText("배경")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByLabelText("설명")).toHaveAttribute("aria-invalid", "true");
     expect(calls).toHaveLength(1);
   });
 
@@ -101,9 +102,10 @@ describe("U-7 — 상세의 자동 저장 실패도 같은 규격이다", () => 
     const calls = blockPatch();
     renderBody();
 
-    await userEvent.type(screen.getByLabelText("목표"), "무엇이 되면 끝인가");
+    // 배경·목표가 **설명 한 칸**으로 합쳐졌다(DEC-002) — 같은 필드로 재시도 없음을 본다
+    await userEvent.type(screen.getByLabelText("설명"), "무엇이 되면 끝인가");
     await userEvent.tab();
-    expect(await screen.findByText("목표가 저장되지 않았습니다")).toBeInTheDocument();
+    expect(await screen.findByText(NOTICE)).toBeInTheDocument();
 
     await new Promise((resolve) => setTimeout(resolve, 300));
     expect(calls).toHaveLength(1);
@@ -113,7 +115,7 @@ describe("U-7 — 상세의 자동 저장 실패도 같은 규격이다", () => 
     const calls = blockPatch();
     renderBody();
 
-    await userEvent.type(screen.getByLabelText("배경"), "왜 하는가");
+    await userEvent.type(screen.getByLabelText("설명"), "왜 하는가");
     await userEvent.tab();
     expect(await screen.findByText(NOTICE)).toBeInTheDocument();
     expect(calls).toHaveLength(1);
@@ -122,7 +124,7 @@ describe("U-7 — 상세의 자동 저장 실패도 같은 규격이다", () => 
     server.use(
       http.patch(`${API_BASE}/api/tasks/${TASK.id}`, async ({ request }) => {
         calls.push(await request.json());
-        return HttpResponse.json({ ...TASK, background: "왜 하는가" });
+        return HttpResponse.json({ ...TASK, description: "왜 하는가" });
       }),
     );
 
@@ -131,7 +133,7 @@ describe("U-7 — 상세의 자동 저장 실패도 같은 규격이다", () => 
     await waitFor(() => expect(screen.queryByText(NOTICE)).not.toBeInTheDocument());
     // 처음 1건 + 「다시 저장」 1건. **누른 만큼만** 나갔다.
     expect(calls).toHaveLength(2);
-    expect(calls[1]).toEqual({ background: "왜 하는가" });
+    expect(calls[1]).toEqual({ description: "왜 하는가" });
   });
 
   it("상태를 바꾸는 컨트롤이 **본문에 없다** — 전이는 WORK-005 몫이다", () => {

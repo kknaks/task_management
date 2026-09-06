@@ -50,12 +50,14 @@ function invalidateTask(client: QueryClient, dueChanged = false): Promise<unknow
 }
 
 /**
- * **기한이 바뀌었나** — 날짜만 보는 판정은 좁다. 날짜를 그대로 두고 시각만 보내면
- * `schedule` 행이 **종일 → 시간 일정**으로 바뀌는데 무효화가 안 나간다(검수 W-8).
- * 캘린더 work 가 이 판정을 그대로 물려받는다.
+ * **일정이 바뀌었나** — `schedule` 파생 행을 다시 읽어야 하는지 가른다.
+ *
+ * 일정이 4필드로 돌아오면서 **계획 시작도 축이 됐다**(A-4 번복 · DEC-002) — `startDate` 만
+ * 바꿔도 기간이 달라지므로 무효화가 나가야 한다. 시각(`dueStartTime`·`dueEndTime`)은
+ * **제거됐다** — 업무는 날짜 단위다. 캘린더 work 가 이 판정을 그대로 물려받는다.
  */
 function touchesDue(input: UpdateTaskInput): boolean {
-  return "dueDate" in input || "dueStartTime" in input || "dueEndTime" in input;
+  return "dueDate" in input || "startDate" in input;
 }
 
 /**

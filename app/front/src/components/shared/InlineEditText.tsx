@@ -21,6 +21,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { isEnterSubmit } from "@/lib/keyboard";
 import { cn } from "@/lib/utils";
 
 export interface InlineEditTextProps {
@@ -147,7 +148,11 @@ export function InlineEditText({
               event.currentTarget.blur();
             }
           }}
-          className={cn(fieldClass, "min-h-[96px] resize-y py-1.5")}
+          /**
+           * **크기 손잡이를 두지 않는다**(REDRAW-05 F-1b 와 같은 규칙) — 시안에 없다.
+           * 높이는 내용에 맞추지 않고 고정이다.
+           */
+          className={cn(fieldClass, "min-h-20 resize-none py-1.5")}
         />
         {errorMessage ? <p className="text-caption text-destructive">{errorMessage}</p> : null}
       </div>
@@ -168,7 +173,8 @@ export function InlineEditText({
         // **포커스 해제 = 저장 시점**(DEC-001 §5)
         onBlur={(event) => void commit(event.target.value.trim())}
         onKeyDown={(event) => {
-          if (event.key === "Enter") {
+          // **조합 확정 Enter 로 저장하지 않는다**(B-1) — 조합 중에 blur 하면 절반만 저장된다
+          if (isEnterSubmit(event)) {
             event.currentTarget.blur();
           }
           if (event.key === "Escape") {

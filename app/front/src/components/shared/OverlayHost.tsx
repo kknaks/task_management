@@ -30,6 +30,7 @@ export function OverlayHost() {
             title={entry.title}
             badge={entry.badge}
             headerActions={entry.headerActions}
+            renderHeader={entry.renderHeader}
             expandTo={entry.expandTo}
             onClose={closeDrawer}
           >

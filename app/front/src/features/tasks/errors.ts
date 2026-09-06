@@ -54,3 +54,27 @@ export function isTaskNotFound(error: unknown): boolean {
 export function autoSaveErrorToast(fieldLabel: string): string {
   return `저장하지 못했습니다 · ${fieldLabel}`;
 }
+
+/**
+ * **자동 저장이 실패했을 때 띄울 문구**(SPEC-002 U-7 · REDRAW-06 G-0c).
+ *
+ * `validation_error`(422)의 서버 문구는 「입력값을 확인해 주세요」 하나뿐이라 **어느 칸을
+ * 고쳐야 하는지 말하지 않는다.** 자동 저장은 **필드 단위로 나가므로 화면이 그 필드를 안다** —
+ * 서버 문구를 그대로 뿌리지 않고 U-7 규격으로 필드를 짚는다.
+ *
+ * 사유 고유의 문구가 더 구체적인 것(`schedule_overlap` 「그 시간에 다른 일정이 있습니다」)은
+ * **그대로 쓴다** — 필드 이름보다 그쪽이 많이 말해 준다.
+ *
+ * 생성 드로어는 이 경로를 타지 않는다 — 거기서는 서버 문구를 제목 아래 인라인으로 붙인다.
+ */
+export function autoSaveFailureMessage(error: unknown, fieldLabel: string): string {
+  if (isApiError(error) && error.code === API_ERROR_CODE.VALIDATION_ERROR) {
+    return autoSaveErrorToast(fieldLabel);
+  }
+  return taskInlineError(error)?.message ?? autoSaveErrorToast(fieldLabel);
+}
+
+/** 422 인가 — 자동 저장 경로에서 **컨트롤 옆 인라인으로 새지 않게** 가른다(G-0c). */
+export function isValidationError(error: unknown): boolean {
+  return isApiError(error) && error.code === API_ERROR_CODE.VALIDATION_ERROR;
+}
