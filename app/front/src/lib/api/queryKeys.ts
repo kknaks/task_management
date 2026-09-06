@@ -41,9 +41,14 @@ export const queryKeys = {
   }) => ["tasks", "relationCandidates", params] as const,
 
   /**
-   * **아직 아무도 읽지 않는 키.** 회의 화면이 생기면 그 work 가 붙인다.
-   * 기한이 바뀌면 `['schedules']` 도 무효화한다(§3-3 표) — 캘린더 work 가 읽는다.
+   * 회의록 — `['meetings', 'list', {…}]` · `['meetings', 'detail', id]`(§3-3 · WORK-006).
+   * 생성·수정·삭제·시작 → `['meetings']` 전부 + **일시가 바뀌었으면 `['schedules']`**.
+   * 미리보기 패널과 상세 페이지가 **같은 detail 키**를 본다(SPEC-006 U-8 기대 결과).
    */
   meetings: () => ["meetings"] as const,
+  meetingsList: (query: Record<string, string | number | null>) =>
+    ["meetings", "list", query] as const,
+  meetingDetail: (id: number) => ["meetings", "detail", id] as const,
+  /** 캘린더 work 가 읽는다. 여기서는 **무효화로만** 건드린다(§3-3 「직접 쓰지 않는다」). */
   schedules: () => ["schedules"] as const,
 } as const;

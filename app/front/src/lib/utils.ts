@@ -64,6 +64,8 @@ const twMerge = extendTailwindMerge({
              */
             "kanban-active",
             "toast",
+            /* 「기록 중」 dot 광륜 — `shadow-focus` 와 같은 요소에서 다투지 않지만 같은 축이라 등록한다 */
+            "halo",
           ],
         },
       ],

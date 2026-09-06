@@ -100,6 +100,18 @@ const config: Config = {
         /* 검색어 하이라이트 — 검색 결과의 일치 구간(§색 · SPEC-003 U-8) */
         "search-highlight": "var(--tm-search-highlight)",
 
+        /* 회의록 표면 — 필터 칩·상태 바 테두리 · 탭 dot · AI 한 줄 요약 바(SPEC-006 · [09]) */
+        "chip-border": "var(--tm-chip-border)",
+        "dot-idle": "var(--tm-dot-idle)",
+        "dot-fixed": "var(--tm-dot-fixed)",
+        "ai-bar": {
+          DEFAULT: "var(--tm-ai-bar-bg)",
+          border: "var(--tm-ai-bar-border)",
+          foreground: "var(--tm-ai-bar-fg)",
+          badge: "var(--tm-ai-bar-badge-fg)",
+        },
+        "agenda-badge": "var(--tm-agenda-badge-bg)",
+
         /* 동적 유형 색 — `data-color-token` 이 고른 팔레트 쌍(§5-3) */
         palette: { bg: "var(--tm-palette-bg)", fg: "var(--tm-palette-fg)" },
       },
@@ -136,6 +148,8 @@ const config: Config = {
          * (`09-design-tokens.md` §색: 「이름을 일반화해 한 토큰을 재사용한다」).
          */
         focus: "var(--tm-focus-ring)",
+        /* 「기록 중」 dot 광륜 — 회의록 목록 상태 표기([09] L723) */
+        halo: "var(--tm-recording-halo)",
       },
 
       fontFamily: {

@@ -88,6 +88,25 @@
   /* 행 선택 — 시안 [01] COLOR 「Row Selected」 */
   --tm-row-selected: #f8faff;
 
+  /* ── 색 · 회의록 표면(SPEC-006 · 디자인 시스템 [09]) ───────────────────
+     시안 `회의록.dc.html` 과 [09] MEETING NOTE 에서 뽑은 값. 컴포넌트에 hex 를 두지 않기 위해
+     여기서만 정의한다(§11 금지 목록 4). 팔레트(indigo)와 값이 겹치는 것이 있지만 **축이 다르다** —
+     이쪽은 사용자가 고르는 색이 아니라 AI 요약 바·필터 칩의 고정 서피스다. */
+  /* 필터 칩 · 상태 바 테두리(회의록 L56 · L587) */
+  --tm-chip-border: #e1e3e8;
+  /* 탭 dot — 시작 전·완료 `#B3B3B3`, 첨부 파일 탭은 항상 `#D9D9D9`([09] L704~721) */
+  --tm-dot-idle: #b3b3b3;
+  --tm-dot-fixed: #d9d9d9;
+  /* 「기록 중」 dot 의 3px 광륜(rgba 0.2 — [09] L723). 포커스 글로우(0.16)와 값이 달라 따로 둔다 */
+  --tm-recording-halo: 0 0 0 3px rgba(113, 129, 248, 0.2);
+  /* AI 한 줄 요약 바([09] L727~733) — 배경 · 테두리 · 문장 · 배지 글자 */
+  --tm-ai-bar-bg: #eef1fe;
+  --tm-ai-bar-border: #c9d1fb;
+  --tm-ai-bar-fg: #3d46a6;
+  --tm-ai-bar-badge-fg: #4a55b8;
+  /* 안건 상태 배지 배경(회의록 L164 — `#F1F2F5`, 행 구분선과 값이 같지만 축이 다르다) */
+  --tm-agenda-badge-bg: #f1f2f5;
+
   /* ── 색 · 상태 dot 5색 ────────────────────────────────────────────── */
   --tm-status-todo: #9ea2ae;
   --tm-status-progress: #33aaff;

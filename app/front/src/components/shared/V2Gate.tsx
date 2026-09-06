@@ -57,6 +57,16 @@ export function V2Gate({ reason, children, className }: V2GateProps) {
       onClickCapture={block}
       onPointerDownCapture={block}
       onSubmitCapture={block}
+      /**
+       * **드롭도 조작이다**(SPEC-006 U-3·U-7 — 로컬 파일 업로드는 v2). `dragover` 를 막아야
+       * 브라우저가 `drop` 을 이 요소에 주고, 그 `drop` 을 여기서 삼켜 **파일이 열리거나 요청이
+       * 나가는 일이 없다.** 드롭 영역마다 핸들러를 흩뿌리지 않는다 — 게이트 하나가 한다(FE §9).
+       */
+      onDragOverCapture={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      onDropCapture={block}
       onKeyDownCapture={(event) => {
         if (event.key === "Enter" || event.key === " " || event.key === "Spacebar") {
           block(event);

@@ -88,6 +88,43 @@ describe("⑦ v2 게이트 — 조작해도 요청이 나가지 않는다", () =
     expect(await screen.findAllByText("v2에서 제공됩니다")).toHaveLength(1);
   });
 
+  it("파일을 **드롭**해도 요청이 나가지 않고 토스트만 뜬다 — 로컬 업로드는 v2(SPEC-006 U-3·U-7)", async () => {
+    const serverHandler = vi.fn();
+    const onDrop = vi.fn();
+    server.use(
+      http.post(`${API_BASE}/api/uploads`, () => {
+        serverHandler();
+        return HttpResponse.json({});
+      }),
+    );
+
+    render(
+      <>
+        <V2Gate reason="v2">
+          <div
+            data-testid="drop-zone"
+            onDrop={() => {
+              onDrop();
+              void apiFetch("/api/uploads", { method: "POST", publicSurface: true });
+            }}
+          >
+            끌어다 놓아도 첨부됩니다 · 최대 50MB
+          </div>
+        </V2Gate>
+        <Toaster />
+      </>,
+    );
+
+    const zone = screen.getByTestId("drop-zone");
+    // `dragover` 를 막아야 `drop` 이 이 요소에 온다 — 게이트가 둘 다 잡는다.
+    zone.dispatchEvent(new Event("dragover", { bubbles: true, cancelable: true }));
+    zone.dispatchEvent(new Event("drop", { bubbles: true, cancelable: true }));
+
+    expect(onDrop).not.toHaveBeenCalled();
+    expect(serverHandler).not.toHaveBeenCalled();
+    expect(await screen.findByText("v2에서 제공됩니다")).toBeInTheDocument();
+  });
+
   it("문구는 둘뿐이다 — 홈·채팅은 「곧 제공됩니다」", async () => {
     render(
       <>

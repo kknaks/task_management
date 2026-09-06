@@ -279,3 +279,139 @@ export function formatPeriodShort(period: Period): string {
   }
   return `${formatDueDate(period.from)}–${formatDueDate(period.to)}`;
 }
+
+/* ── 회의 일시(SPEC-006) ─────────────────────────────────────────────────
+ *
+ * 회의는 **시각을 갖는 유일한 도메인**이다(`meeting.start_at`·`end_at`, UTC ISO — M-1).
+ * 화면은 KST 로 보여주고 KST 로 입력받는다. 변환은 전부 여기다 — 컴포넌트가
+ * `new Date()` 로 포맷하지 않는다(§3-6 · §11 금지 목록 8).
+ */
+
+/** `HH:MM`(24시간) — 회의 일시 입력의 시각 값. */
+export type TimeKey = string;
+
+const WEEKDAY_KO = ["일", "월", "화", "수", "목", "금", "토"] as const;
+const TIME_KEY = /^([01]\d|2[0-3]):([0-5]\d)$/;
+
+export function isTimeKey(raw: string | null): raw is TimeKey {
+  return raw !== null && TIME_KEY.test(raw);
+}
+
+/** UTC 순간을 **KST 달력 날짜 + 시각**으로 가른다. */
+export function splitDateTime(isoString: string): { date: DateKey; time: TimeKey } {
+  const shifted = new Date(new Date(isoString).getTime() + KST_OFFSET_MS);
+  return {
+    date: toKey(shifted),
+    time: `${String(shifted.getUTCHours()).padStart(2, "0")}:${String(
+      shifted.getUTCMinutes(),
+    ).padStart(2, "0")}`,
+  };
+}
+
+/** KST 날짜 + 시각 → 서버로 보낼 **UTC ISO**. */
+export function toDateTimeIso(date: DateKey, time: TimeKey): string {
+  const [hh, mm] = time.split(":").map(Number);
+  const local = fromKey(date);
+  return new Date(
+    Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate(), hh, mm) -
+      KST_OFFSET_MS,
+  ).toISOString();
+}
+
+/** 두 시각 사이의 분. `endAt ≤ startAt` 이면 0 이하다 — 호출자가 그걸로 거른다. */
+export function minutesBetween(startIso: string, endIso: string): number {
+  return Math.round((new Date(endIso).getTime() - new Date(startIso).getTime()) / 60_000);
+}
+
+/** `HH:MM` 두 개 사이의 분(같은 날). */
+export function minutesBetweenTimes(start: TimeKey, end: TimeKey): number {
+  const [sh, sm] = start.split(":").map(Number);
+  const [eh, em] = end.split(":").map(Number);
+  return eh * 60 + em - (sh * 60 + sm);
+}
+
+function weekdayOf(date: DateKey): string {
+  return WEEKDAY_KO[fromKey(date).getUTCDay()];
+}
+
+/** 「08월 27일 (목) 09:30」 — 목록 행 첫 줄 · 시작 전 헤더(SPEC-006 U-2 · U-4). */
+export function formatMeetingDateTime(isoString: string): string {
+  const { date, time } = splitDateTime(isoString);
+  const [, month, day] = date.split("-");
+  return `${month}월 ${day}일 (${weekdayOf(date)}) ${time}`;
+}
+
+/** 「08월 27일 (목) 09:30 – 10:30」 — 미리보기 헤더(U-8). 날짜가 갈리면 뒤쪽 날짜도 적는다. */
+export function formatMeetingTimeRange(startIso: string, endIso: string): string {
+  const start = splitDateTime(startIso);
+  const end = splitDateTime(endIso);
+  const head = formatMeetingDateTime(startIso);
+  if (start.date === end.date) {
+    return `${head} – ${end.time}`;
+  }
+  return `${head} – ${formatMeetingDateTime(endIso)}`;
+}
+
+/** 「2026.08.27 (목)」 — 드로어 날짜 칸(회의록 L473). */
+export function formatMeetingDate(date: DateKey): string {
+  return `${date.replaceAll("-", ".")} (${weekdayOf(date)})`;
+}
+
+/**
+ * 드로어 **기본 일시** — 오늘 · 현재 시각을 **30분 단위로 올림** · 종료는 시작 + 1시간(U-3).
+ *
+ * 하루 끝에 닿으면(시작이 23:00 이후) 시작을 22:30 으로 내려 종료가 같은 날에 남게 한다 —
+ * 날짜 칸이 하나라 자정을 넘는 기본값은 만들 수 없다.
+ */
+export function defaultMeetingSlot(now: Date = new Date()): {
+  date: DateKey;
+  start: TimeKey;
+  end: TimeKey;
+} {
+  const shifted = new Date(now.getTime() + KST_OFFSET_MS);
+  const minutes = shifted.getUTCHours() * 60 + shifted.getUTCMinutes();
+  let startMinutes = Math.ceil(minutes / 30) * 30;
+  let date = toKey(shifted);
+  if (startMinutes >= 24 * 60) {
+    // 23:31 이후 — 다음 날 00:00 이 「다음 30분 경계」다.
+    date = shiftDate(date, 1);
+    startMinutes = 0;
+  }
+  if (startMinutes + 60 > 23 * 60 + 30) {
+    startMinutes = 22 * 60 + 30;
+  }
+  return { date, start: minutesToTime(startMinutes), end: minutesToTime(startMinutes + 60) };
+}
+
+function minutesToTime(total: number): TimeKey {
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
+
+/** 30분 간격 시각 목록 — `00:00` … `23:30`([07] Selector 「30분 간격 + 직접 입력」). */
+export const HALF_HOUR_TIMES: readonly TimeKey[] = Array.from({ length: 48 }, (_, i) =>
+  minutesToTime(i * 30),
+);
+
+/** `?month=YYYY-MM` 판독. 이상하면 `null` — 호출자가 이번 달로 떨어뜨린다. */
+const MONTH_KEY = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+export type MonthKey = string;
+
+export function isMonthKey(raw: string | null): raw is MonthKey {
+  return raw !== null && MONTH_KEY.test(raw);
+}
+
+/** 달 키 → 그 달 전체 기간. */
+export function periodOfMonth(month: MonthKey): Period {
+  return monthOf(`${month}-01`);
+}
+
+/** 기간(달 경계) → `YYYY-MM`. */
+export function monthKeyOf(period: Period): MonthKey {
+  return period.from.slice(0, 7);
+}
+
+/** 이번 달(KST). */
+export function currentMonthKey(now: Date = new Date()): MonthKey {
+  return currentDate(now).slice(0, 7);
+}

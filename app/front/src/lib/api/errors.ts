@@ -70,6 +70,13 @@ export const API_ERROR_CODE = {
   INVALID_STATUS_TRANSITION: "invalid_status_transition",
   /** 실행취소 조건 3개(마지막 로그가 전이 · 그 뒤 변경 없음 · 4초 이내)를 못 채웠다(409). */
   UNDO_NOT_AVAILABLE: "undo_not_available",
+
+  /**
+   * **회의 상태 가드**(409 · SPEC-006 §4 상태별 허용 표) — 지금 `status` 에서 허용되지 않는 쓰기.
+   * 화면 처리는 하나다: **토스트 + 상세 재조회**(화면이 낡은 것이 원인). 정상 경로에서는
+   * 버튼·메뉴가 비활성이라 닿지 않는다. SPEC-007 의 `meeting_not_recording` 은 **이 코드로 합쳐졌다**.
+   */
+  INVALID_MEETING_STATUS: "invalid_meeting_status",
 } as const;
 
 /**

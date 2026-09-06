@@ -37,6 +37,7 @@ import { RelationPopover } from "@/features/tasks/components/RelationPopover";
 import { taskInlineError } from "@/features/tasks/errors";
 import { useTaskMutations } from "@/features/tasks/hooks/useTaskMutations";
 import type { TaskDetail, TaskRelation } from "@/features/tasks/types";
+import { inlineErrorMessage } from "@/features/settings/errors";
 import { useProjectMutations, useProjectsQuery, useWorkTypesQuery } from "@/features/settings/hooks/useWorkSettings";
 import { cn } from "@/lib/utils";
 
@@ -183,6 +184,8 @@ export function TaskCreateDrawer({
               const created = await projectMutations.create.mutateAsync(input);
               return { id: created.id, name: created.name, colorToken: created.colorToken };
             }}
+            /* 거절 사유는 **행 아래 인라인**(SPEC-006 U-3 — 전 영역 공통 규격). 문구는 SPEC-002 §4 그대로 */
+            createErrorMessage={(error) => inlineErrorMessage(error, "project")}
           />
           </Field>
           <Field label="일정" className="min-w-[240px] flex-1">

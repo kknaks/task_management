@@ -53,6 +53,8 @@ export function Breadcrumb({ trail }: { trail: readonly string[] }) {
  */
 const TRAIL: Readonly<Record<string, readonly string[]>> = {
   "/tasks/": ["홈", "내 업무"],
+  /* 회의록 목록(SPEC-006 U-1 · 시안 L47~51). 상세는 상태에 따라 갈려 화면이 직접 그린다 */
+  "/meetings/": ["홈", "회의록"],
 };
 
 export function AppShell({
