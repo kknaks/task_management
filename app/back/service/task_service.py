@@ -4,7 +4,7 @@
 
 **로그를 쓰는 곳은 이 파일 하나다**(T-8 · WP Internal Interface Contract).
 대상은 **생성·할일 완료·첨부·연관 연결**뿐이고,
-**제목·배경·목표·완료 결과 인라인 편집은 대상이 아니다**(04-task-detail).
+**제목·설명·완료 결과 인라인 편집은 대상이 아니다**(04-task-detail).
 """
 
 from __future__ import annotations
@@ -18,18 +18,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_settings
 from core.exceptions import (
+    CancelUndoNotAllowedError,
     InvalidStatusTransitionError,
     NotFoundError,
     TaskCompletionBlockedError,
     UndoNotAvailableError,
     ValidationError,
 )
-from dto.enums import (
-    AttachmentKind,
-    RelationCandidateScope,
-    ScheduleSourceType,
-    TaskStatus,
-)
+from dto.enums import AttachmentKind, RelationCandidateScope, TaskStatus
 from dto.task import (
     AttachmentCreateDTO,
     StatusChangeDTO,
@@ -214,36 +210,44 @@ async def _resolve_relation_targets(
 
 
 @dataclass(frozen=True)
-class _Due:
-    date: date | None
-    start: time | None
-    end: time | None
+class _Plan:
+    """업무의 **계획 기간**. 계획 2필드가 전부다.
+
+    실적(`started_at`·`completed_at`)은 여기 없다 — 사용자가 보내는 값이 아니다(T-1-c).
+    **시각도 없다** — 2026-09-06 확정으로 업무의 시간 지정이 사라졌다(시간은 회의만 갖는다).
+    """
+
+    start_date: date | None
+    due_date: date | None
 
 
-def _validate_due(due: _Due) -> None:
-    """T-1-b — 시각 두 개는 함께 있거나 함께 없고, 있으면 기한 날짜가 있어야 하며 `end > start`.
+def _validate_plan(plan: _Plan) -> None:
+    """T-1 — 둘 다 있으면 `start_date <= due_date`. **한쪽만 있어도 된다.**
 
     DB CHECK 가 최종 방어선이지만 **여기서 먼저 잡아 계약대로 `422`** 로 낸다.
     """
-    if (due.start is None) != (due.end is None):
-        raise _invalid_input()
-    if due.start is not None and due.date is None:
-        raise _invalid_input()
-    if due.start is not None and due.end is not None and due.end <= due.start:
+    if (
+        plan.start_date is not None
+        and plan.due_date is not None
+        and plan.start_date > plan.due_date
+    ):
         raise _invalid_input()
 
 
-async def _apply_due(
-    session: AsyncSession, *, account_id: int, task_id: int, due: _Due
+async def _apply_plan(
+    session: AsyncSession, *, account_id: int, task_id: int, plan: _Plan
 ) -> None:
-    """기한 → `schedule` 파생. **원본 쓰기와 같은 트랜잭션**이다(C-2 · §3-4)."""
+    """계획 기간 → `schedule` 파생. **원본 쓰기와 같은 트랜잭션**이다(C-2 · §3-4).
+
+    **겹침 검사를 부르지 않는다** — 업무의 배치는 항상 종일이라 검사 대상이 아니다(C-6).
+    검사 자체는 `schedule_service` 에 그대로 있고 회의가 쓴다.
+    """
     await schedule_service.sync_from_task(
         session,
         account_id=account_id,
         task_id=task_id,
-        due_date=due.date,
-        due_start_time=due.start,
-        due_end_time=due.end,
+        start_date=plan.start_date,
+        due_date=plan.due_date,
     )
 
 
@@ -255,7 +259,7 @@ async def create_task(
 ) -> TaskDetailDTO:
     """생성은 **한 트랜잭션**이다 — 자식이 절반만 남는 상태를 만들지 않는다(§5).
 
-    순서: 검증 → **겹침 검사(원본 쓰기 전)** → 본체 → 자식 → 로그 → 일정 파생.
+    순서: 검증 → 본체 → 자식 → 로그 → 일정 파생.
     """
     await _require_usable_work_type(
         session, account_id=account_id, work_type_id=command.work_type_id
@@ -264,19 +268,12 @@ async def create_task(
         session, account_id=account_id, project_id=command.project_id
     )
 
-    due = _Due(command.due_date, command.due_start_time, command.due_end_time)
-    _validate_due(due)
+    plan = _Plan(command.start_date, command.due_date)
+    _validate_plan(plan)
     for attachment in command.attachments:
         _validate_attachment(attachment)
     relation_ids = await _resolve_relation_targets(
         session, account_id=account_id, task_id=None, target_ids=command.related_task_ids
-    )
-
-    # C-9 — 걸리면 원본도 만들어지지 않는다
-    await schedule_service.check_overlap(
-        session,
-        account_id=account_id,
-        placement=schedule_service.build_placement(due.date, due.start, due.end),
     )
 
     task_id = await task_repository.create(
@@ -285,11 +282,9 @@ async def create_task(
         work_type_id=command.work_type_id,
         title=command.title,
         project_id=command.project_id,
-        due_date=due.date,
-        due_start_time=due.start,
-        due_end_time=due.end,
-        background=command.background,
-        goal=command.goal,
+        start_date=plan.start_date,
+        due_date=plan.due_date,
+        description=command.description,
     )
 
     for order_index, todo in enumerate(command.todos):
@@ -318,7 +313,7 @@ async def create_task(
         )
 
     await task_child_repository.create_log(session, task_id=task_id, text="업무 생성")
-    await _apply_due(session, account_id=account_id, task_id=task_id, due=due)
+    await _apply_plan(session, account_id=account_id, task_id=task_id, plan=plan)
 
     task = await task_repository.find_active(
         session, account_id=account_id, task_id=task_id
@@ -336,7 +331,7 @@ async def update_task(
     """보낸 필드만 바꾼다(§5).
 
     **인라인 편집은 로그에 남지 않는다**(04-task-detail) — 이 함수는 로그를 쓰지 않는다.
-    기한이 바뀌면 겹침 검사가 **원본을 쓰기 전에** 돌고, 걸리면 원본도 바뀌지 않는다(C-9).
+    계획 기간이 바뀌면 `schedule` 파생이 **같은 트랜잭션**에서 따라간다(C-2).
     """
     current = await _require_task(session, account_id=account_id, task_id=task_id)
 
@@ -349,77 +344,40 @@ async def update_task(
             session, account_id=account_id, project_id=command.project_id
         )
 
-    _reject_times_without_a_date(current, command)
-    due = _resolve_due(current, command)
-    _validate_due(due)
+    plan = _resolve_plan(current, command)
+    _validate_plan(plan)
 
-    due_changed = (due.date, due.start, due.end) != (
+    plan_changed = (plan.start_date, plan.due_date) != (
+        current.start_date,
         current.due_date,
-        current.due_start_time,
-        current.due_end_time,
     )
-    if due_changed:
-        await schedule_service.check_overlap(
-            session,
-            account_id=account_id,
-            placement=schedule_service.build_placement(due.date, due.start, due.end),
-            exclude_source_type=ScheduleSourceType.TASK.value,
-            exclude_source_id=task_id,
-        )
 
-    values = _changed_columns(command, due, due_changed)
+    values = _changed_columns(command, plan, plan_changed)
     if values:
         await task_repository.update_fields(
             session, account_id=account_id, task_id=task_id, values=values
         )
-    if due_changed:
-        await _apply_due(session, account_id=account_id, task_id=task_id, due=due)
+    if plan_changed:
+        await _apply_plan(session, account_id=account_id, task_id=task_id, plan=plan)
 
     task = await _require_task(session, account_id=account_id, task_id=task_id)
     return await _build_detail(session, task)
 
 
-def _reject_times_without_a_date(current: TaskDTO, command: TaskUpdateDTO) -> None:
-    """**요청 자체**를 본다 — 시각을 보냈는데 최종 기한 날짜가 없으면 `422`(§4 Validation · T-1-b).
+def _resolve_plan(current: TaskDTO, command: TaskUpdateDTO) -> _Plan:
+    """현재 값 위에 보낸 필드만 얹어 **최종 계획 기간**을 만든다.
 
-    `_resolve_due` 는 기한 날짜가 없으면 `_Due(None, None, None)` 으로 **접어 버리기** 때문에,
-    그 뒤에 오는 `_validate_due` 는 **접힌 결과**를 보고 통과시킨다 → 아무것도 안 바뀐 채 200.
-    「실패가 안 보이는」 종류라 접기 **전에** 잡는다(WORK-004 검수 W-1).
-
-    보낸 시각이 `null` 인 것은 **시각만 지우는 정상 경로**라 여기 걸리지 않는다.
+    `startDate` 와 `dueDate` 는 **서로 독립이다** — 한쪽을 지워도 다른 쪽은 남는다
+    (T-1 「한쪽만 있어도 된다」). 기한만 지운 업무는 시작일 하루의 종일 일정이 된다.
     """
-    sent_times = [
-        value
-        for value in (command.due_start_time, command.due_end_time)
-        if value is not UNSET and value is not None
-    ]
-    if not sent_times:
-        return
-
-    final_due_date = current.due_date if command.due_date is UNSET else command.due_date
-    if final_due_date is None:
-        raise _invalid_input()
-
-
-def _resolve_due(current: TaskDTO, command: TaskUpdateDTO) -> _Due:
-    """현재 값 위에 보낸 필드만 얹어 **최종 기한**을 만든다.
-
-    `dueDate: null` 은 기한 삭제다 — **시각도 함께 사라진다**(T-1-b 가 시각만 남는 상태를
-    허용하지 않는다). 시각을 따로 지우려면 `dueStartTime`/`dueEndTime` 을 `null` 로 보낸다.
-    """
-    due_date = current.due_date if command.due_date is UNSET else command.due_date
-    if due_date is None:
-        return _Due(None, None, None)
-
-    return _Due(
-        due_date,
-        current.due_start_time if command.due_start_time is UNSET else command.due_start_time,
-        current.due_end_time if command.due_end_time is UNSET else command.due_end_time,
+    return _Plan(
+        current.start_date if command.start_date is UNSET else command.start_date,
+        current.due_date if command.due_date is UNSET else command.due_date,
     )
 
 
 def _changed_columns(
-    command: TaskUpdateDTO, due: _Due, due_changed: bool
+    command: TaskUpdateDTO, plan: _Plan, plan_changed: bool
 ) -> dict[str, object]:
     values: dict[str, object] = {}
 
@@ -427,18 +385,16 @@ def _changed_columns(
         ("title", "title"),
         ("work_type_id", "work_type_id"),
         ("project_id", "project_id"),
-        ("background", "background"),
-        ("goal", "goal"),
+        ("description", "description"),
         ("completion_result", "completion_result"),
     ):
         value = getattr(command, field_name)
         if value is not UNSET:
             values[column] = value
 
-    if due_changed:
-        values["due_date"] = due.date
-        values["due_start_time"] = due.start
-        values["due_end_time"] = due.end
+    if plan_changed:
+        values["start_date"] = plan.start_date
+        values["due_date"] = plan.due_date
 
     return values
 
@@ -736,6 +692,8 @@ _STATUS_LABELS = {
 _COMPLETION_BLOCKED = "완료하려면 결과자료 1건 또는 완료 결과가 필요합니다"
 _INVALID_TRANSITION = "이 상태로는 바꿀 수 없습니다"
 _UNDO_NOT_AVAILABLE = "되돌릴 수 있는 시간이 지났습니다"
+# 취소 거부는 **시간과 무관**하다 — 만료와 문구를 나눈다(Case Matrix, 2026-09-06 신설)
+_CANCEL_UNDO_NOT_ALLOWED = "취소는 실행취소로 되돌릴 수 없습니다"
 
 _CANCEL_REASON_MAX = 500
 # 완료 토스트 수명과 맞춘 spec 값이다(SPEC-004 §4 · BE §8-2)
@@ -800,6 +758,11 @@ async def change_status(
         from_status=task.status,
         to_status=target,
     )
+    # T-1-c — **실적 컬럼은 전이 로그와 같은 트랜잭션에서** 쓰인다. 로그를 쓴 **직후**에 부른다:
+    # 컬럼이 로그의 파생이라 순서가 뒤집히면 방금 생긴 전이가 빠진 값을 쓰게 된다.
+    await task_repository.sync_actuals(
+        session, account_id=account_id, task_id=task_id
+    )
 
     # DEC-002 §6 — 기본 켜짐. 이 줄이 마지막 로그가 되므로 **취소는 실행취소 대상이 아니게 된다**
     # (취소는 모달을 지나는 신중한 조작이고, 완료는 한 번의 클릭이라 되돌릴 자리를 준다).
@@ -816,13 +779,41 @@ async def undo_last_status(
 ) -> TaskListItemDTO:
     """마지막 전이를 되돌리고 **그 로그를 지운다**(한 트랜잭션).
 
-    조건 셋 — ① 마지막 로그가 상태 전이이고 ② 그 뒤 다른 (로그를 남기는) 변경이 없으며
-    ③ **4초 이내**다(SPEC-004 §4). 하나라도 어긋나면 `undo_not_available`.
+    조건 넷 — ① 마지막 로그가 상태 전이이고 ② 그 뒤 다른 (로그를 남기는) 변경이 없으며
+    ③ **4초 이내**이고 ④ **취소 전이가 아니다.** 하나라도 어긋나면 `undo_not_available`.
 
     **게이트를 다시 태우지 않는다** — 이미 판정을 지난 상태로 되돌리는 것이라
     「완료 → 진행중」 복원에 결과자료를 요구할 이유가 없다.
+
+    ④ **실행취소는 완료 전용이다**(SPEC-004 — 완료 토스트에만 「실행취소」가 붙고,
+    시안에 「취소 직후 토스트」 화면이 없다). 취소는 모달 + 사유를 지나는 신중한 조작이라
+    되돌릴 자리를 주지 않았다. 되살리려면 **상태 팝오버에서 직접 고른다**(SPEC-004 L309).
+    ④만 `cancel_undo_not_allowed` 이고 ①~③은 `undo_not_available` 이다 — **사유가 다르다.**
+
+    **왜 「마지막 전이가 취소인가」가 아니라 「지금 취소 상태인가」로 보나** —
+    전자로 짜면 `log_cancel_reason` 이 참일 때 **④에 닿지 못한다.** 사유 로그가 전이 로그
+    뒤에 붙어 `find_last_transition` 이 먼저 `None` 을 주고, ①이 `undo_not_available` 을
+    던져 버린다. 그러면 「사유를 남겼는지」가 **이번엔 에러 코드를 가르게** 되어
+    없애려던 비일관이 자리만 옮긴다. 상태는 로그 순서와 무관하다.
+
+    **두 판정은 같은 것을 가리킨다** — 상태를 바꾸는 경로가 전이뿐이라(`update_status` 를
+    부르는 곳이 전이·실행취소 둘뿐이다) 「마지막 전이가 취소로 갔다」와 「지금 취소다」는
+    같은 집합이다. 로그 순서에 흔들리지 않는 쪽을 골랐을 뿐이다.
+
+    되살림(`cancelled → todo`)의 실행취소는 **막지 않는다** — 그 전이는 취소로 *가는* 것이
+    아니고, 그 시점의 상태도 취소가 아니다.
+
+    **이 규칙을 로그 순서에 기대지 않고 여기서 명시적으로 판정한다**(2026-09-06 코디 확정).
+    전에는 부작용이었다 — `log_cancel_reason` 이 참이면 사유 로그가 전이 로그 **뒤에** 붙어
+    ①에 걸려 막혔고, 끄면 통과했다. 「사유를 남겼는지」가 「되돌릴 수 있는지」를 정하는 것은
+    **화면에서 설명할 수 없는 동작**이고, 로그 순서를 건드리는 날 조용히 뒤집힌다.
     """
-    await _require_task(session, account_id=account_id, task_id=task_id)
+    task = await _require_task(session, account_id=account_id, task_id=task_id)
+
+    # ④ — **로그를 보기 전에 상태로 판정한다.** 이유는 아래 docstring 「왜 상태로 보나」 참조.
+    # 만료(`undo_not_available`)와 **코드를 나눈다** — 시간이 지난 게 아니라 금지다.
+    if task.status == TaskStatus.CANCELLED.value:
+        raise CancelUndoNotAllowedError(_CANCEL_UNDO_NOT_ALLOWED)
 
     transition = await task_child_repository.find_last_transition(session, task_id)
     if transition is None:
@@ -841,6 +832,12 @@ async def undo_last_status(
     )
     await task_child_repository.delete_log(
         session, task_id=task_id, log_id=transition.log_id
+    )
+    # **실적도 함께 되돌린다** — 로그만 지우고 컬럼을 남기면 「완료 취소했는데 완료 시각이 남은」
+    # 업무가 생기고, R-4 가 그 값으로 거르므로 **오늘 완료 칸에 그대로 붙어 있게 된다.**
+    # 지운 뒤의 로그를 다시 읽으므로 이전 완료 이력이 있으면 **그 시각이 정확히 살아난다.**
+    await task_repository.sync_actuals(
+        session, account_id=account_id, task_id=task_id
     )
 
     return await _require_list_item(session, account_id=account_id, task_id=task_id)
@@ -871,15 +868,17 @@ async def _require_list_item(
 # --- 목록 (SPEC-004 §4) --------------------------------------------------
 
 
-def current_month_bounds() -> tuple[datetime, datetime]:
-    """기본 기간은 **이번 달**이다. 경계는 앱 타임존(KST)의 달 경계를 UTC 순간으로 준다(G-2)."""
+def default_period_bounds() -> tuple[datetime, datetime]:
+    """**기본 기간은 「오늘 하루」다**(DEC-002 §「조회 단위 전환 — 월 → 일」, 2026-09-06 확정).
+
+    「내 업무」는 오늘 업무다 — 들어가면 이번 달이 아니라 오늘 기준으로 뜬다.
+    두 값이 **같은 순간**인 것이 정상이다: 조회 규칙은 이 둘을 KST 날짜로 떨어뜨려 쓰고
+    **끝 경계가 닫혀 있어**(`<= to`) `from = to = 오늘` 이 오늘 하루를 뜻한다.
+    """
     tz = ZoneInfo(get_settings().app_timezone)
     today = datetime.now(tz).date()
-    start = datetime(today.year, today.month, 1, tzinfo=tz)
-    end = datetime(
-        today.year + (today.month // 12), (today.month % 12) + 1, 1, tzinfo=tz
-    )
-    return start.astimezone(UTC), end.astimezone(UTC)
+    start_of_today = datetime.combine(today, time.min, tzinfo=tz).astimezone(UTC)
+    return start_of_today, start_of_today
 
 
 async def list_tasks(
@@ -891,14 +890,17 @@ async def list_tasks(
     탭에 붙는 수가 탭을 누를 때마다 흔들리면 안 된다.
     """
     tz = ZoneInfo(get_settings().app_timezone)
-    # 기한은 달력 날짜라 KST 로, 생성일은 순간이라 UTC 로 비교한다(G-2 · G-2-e)
+    # **`from`·`to` 는 순간으로 오지만 뜻은 날짜다**(G-2-e — 계획은 달력 개념이다).
+    # 앱 타임존으로 떨어뜨린 뒤 **양끝을 포함**해서 쓴다.
     from_date = command.period_from.astimezone(tz).date()
     to_date = command.period_to.astimezone(tz).date()
     bounds = {
         "from_date": from_date,
         "to_date": to_date,
-        "period_from": command.period_from,
-        "period_to": command.period_to,
+        # 같은 날짜 범위를 **순간**으로 옮긴 것 — R-4(실적 시각)가 쓴다.
+        # 끝은 `to_date` **다음 날 `00:00`**(KST)이라 반열림이지만 날짜로는 닫혀 있다.
+        "moment_from": datetime.combine(from_date, time.min, tzinfo=tz),
+        "moment_to": datetime.combine(to_date + timedelta(days=1), time.min, tzinfo=tz),
     }
 
     items = await task_repository.list_tasks(

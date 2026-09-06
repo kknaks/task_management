@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, datetime, time
 
+from dto.enums import UNFINISHED_STATUSES
 from dto.unset import UNSET, Unset
 
 
@@ -17,17 +18,26 @@ def derive_overdue(
 ) -> tuple[bool, int | None]:
     """T-4 「지연」 파생 — **저장하지 않는다.** 조회 시 계산해 `(isOverdue, overdueDays)` 로 낸다.
 
-    기한 경과 **+ 완료·취소 아님**이다. 완료로 보내면 `False` 가 된다.
+    기한 경과 **+ 미완료**다. 완료·취소로 보내면 `False` 가 된다.
 
     목록과 상세가 **같은 규칙**을 써야 해서(SPEC-004 U-10 — 상세 헤더도 같은 문구를 그린다)
     계산을 여기 한 번만 둔다. dto 층에 두는 이유는 **service 와 repository 가 둘 다 부르는**
     유일한 공통 지점이고, 순수 함수라 어느 쪽 규약도 어기지 않기 때문이다.
+
+    **조회 규칙 R-3(「지연은 범위 밖이어도 포함」)도 이 판정을 쓴다** — 다만 SQL 이라
+    파이썬 값을 넣을 수 없어, 규칙을 나누는 축인 `UNFINISHED_STATUSES` 를 공유한다.
+    지연의 **두 번째 정의를 만들지 않는다**(`is_overdue()` 가 그 축의 유일한 술어다).
     """
     if due_date is None or due_date >= today:
         return False, None
-    if status in ("done", "cancelled"):
+    if not is_unfinished(status):
         return False, None
     return True, (today - due_date).days
+
+
+def is_unfinished(status: str) -> bool:
+    """「미완료」 판정의 유일한 진입점 — 값의 정본은 `dto.enums.UNFINISHED_STATUSES` 다."""
+    return status in UNFINISHED_STATUSES
 
 
 @dataclass(frozen=True)
@@ -110,18 +120,26 @@ class TodoProgressDTO:
 
 @dataclass(frozen=True)
 class TaskDTO:
-    """업무 본체 한 건. 자식은 담지 않는다."""
+    """업무 본체 한 건. 자식은 담지 않는다.
+
+    **일정은 4필드다**(T-1 · 2026-09-06 — §A-4 번복) — 계획 2개는 사용자가 채우고
+    실적 2개는 **상태 전이 시점에 서비스가** 채운다. 요청으로 받지 않는다(SPEC-003 §4 Validation).
+    """
 
     id: int
     title: str
     status: str
     work_type: WorkTypeRefDTO
     project: ProjectRefDTO | None
+    # 계획 — 사용자가 채운다
+    start_date: date | None
     due_date: date | None
-    due_start_time: time | None
-    due_end_time: time | None
-    background: str | None
-    goal: str | None
+    # 실적 3 — 시스템이 채운다(T-1-c). 전이 로그의 파생이고 전이와 **같은 트랜잭션**에서 쓰인다.
+    # **상태가 바뀌어도 지우지 않는다** — 「마지막으로 그 상태에 들어간 시각」이다.
+    started_at: datetime | None
+    completed_at: datetime | None
+    cancelled_at: datetime | None
+    description: str | None
     completion_result: str | None
     cancel_reason: str | None
     created_at: datetime
@@ -176,11 +194,9 @@ class TaskCreateDTO:
     title: str
     work_type_id: int
     project_id: int | None = None
+    start_date: date | None = None
     due_date: date | None = None
-    due_start_time: time | None = None
-    due_end_time: time | None = None
-    background: str | None = None
-    goal: str | None = None
+    description: str | None = None
     todos: list[TodoCreateDTO] = field(default_factory=list)
     attachments: list[AttachmentCreateDTO] = field(default_factory=list)
     related_task_ids: list[int] = field(default_factory=list)
@@ -190,6 +206,9 @@ class TaskCreateDTO:
 class TaskUpdateDTO:
     """**`status` 가 없다** — 상태 전이는 전용 엔드포인트이고 WORK-005 가 갖는다(§4).
 
+    **`started_at`·`completed_at` 도 없다** — 실적은 요청으로 받지 않는다(SPEC-003 §4 Validation ·
+    BE §10). `status` 와 **같은 방식으로** 막는다: 필드가 없으니 일반 PATCH 로 보내면 `422` 다.
+
     `due_date=None`(보냄)은 **기한 삭제**이고 파생 일정도 사라진다.
     `UNSET` 은 「보내지 않음」이라 그대로 둔다.
     """
@@ -197,11 +216,9 @@ class TaskUpdateDTO:
     title: str | Unset = UNSET
     work_type_id: int | Unset = UNSET
     project_id: int | None | Unset = UNSET
+    start_date: date | None | Unset = UNSET
     due_date: date | None | Unset = UNSET
-    due_start_time: time | None | Unset = UNSET
-    due_end_time: time | None | Unset = UNSET
-    background: str | None | Unset = UNSET
-    goal: str | None | Unset = UNSET
+    description: str | None | Unset = UNSET
     completion_result: str | None | Unset = UNSET
 
 
@@ -253,9 +270,10 @@ class TaskListItemDTO:
     status: str
     work_type: WorkTypeRefDTO
     project: ProjectRefDTO | None
+    start_date: date | None
     due_date: date | None
-    due_start_time: time | None
-    due_end_time: time | None
+    started_at: datetime | None
+    completed_at: datetime | None
     d_day: int | None
     is_overdue: bool
     overdue_days: int | None

@@ -36,32 +36,37 @@ def _app_timezone() -> ZoneInfo:
 
 
 def build_placement(
-    due_date: date | None,
-    due_start_time: time | None,
-    due_end_time: time | None,
+    start_date: date | None, due_date: date | None
 ) -> SchedulePlacementDTO | None:
-    """기한 → 시간축 배치. 기한이 없으면 **일정이 없다**(SCH-4).
+    """**계획 기간** → 시간축 배치(T-1-d · `database/README` §3-1, 2026-09-06 개정).
 
-    C-5-a — 기한만 있으면 **종일**(그 날짜 `00:00`~다음 날 `00:00` KST),
-    시각까지 있으면 **시간 일정**이다.
+    **업무는 항상 종일/기간이다**(2026-09-06 사용자 확정 — 업무의 시간 지정을 없앴다).
+    시안 어디에도 업무에 시간을 받는 UI 가 없고, **시간이 있는 것은 회의뿐**이다
+    (회의 일시는 `meeting.start_at`·`end_at` 이 소유한다).
+
+    **실적(`started_at`·`completed_at`)은 캘린더에 쓰지 않는다** — 캘린더는 계획만 그린다.
+    그래서 이 함수는 실적을 인자로 받지도 않는다.
+
+    | 업무가 가진 것 | 배치 |
+    |---|---|
+    | `start_date` + `due_date` | **기간 일정** — 시작일 `00:00` ~ 종료일 **다음 날** `00:00` |
+    | `due_date` 만 | 그 날의 **종일 일정 하루** |
+    | `start_date` 만 | 시작일 하루의 종일 일정. 끝이 없어 무한 바를 그릴 수 없다 |
+    | 둘 다 없음 | **행이 없다**(SCH-4) — 「내 업무」 오늘 화면에만 매일 뜬다 |
+
+    계획이 하나라도 있으면 그것이 시작이자 끝이 된다(하루짜리 밴드).
     """
-    if due_date is None:
+    band_start = start_date or due_date
+    band_end = due_date or start_date
+    if band_start is None or band_end is None:
         return None
 
     tz = _app_timezone()
-
-    if due_start_time is None or due_end_time is None:
-        start_at = datetime.combine(due_date, time.min, tzinfo=tz)
-        return SchedulePlacementDTO(
-            start_at=start_at,
-            end_at=datetime.combine(due_date + timedelta(days=1), time.min, tzinfo=tz),
-            is_all_day=True,
-        )
-
     return SchedulePlacementDTO(
-        start_at=datetime.combine(due_date, due_start_time, tzinfo=tz),
-        end_at=datetime.combine(due_date, due_end_time, tzinfo=tz),
-        is_all_day=False,
+        start_at=datetime.combine(band_start, time.min, tzinfo=tz),
+        # 종일의 끝은 **다음 날 `00:00`**(KST)이다(§3-3) — 기간이면 마지막 날을 통째로 덮는다
+        end_at=datetime.combine(band_end + timedelta(days=1), time.min, tzinfo=tz),
+        is_all_day=True,
     )
 
 
@@ -77,6 +82,11 @@ async def check_overlap(
 
     **원본을 쓰기 전에** 파생될 배치로 검사한다. 걸리면 원본도 바뀌지 않는다.
     종일·무일정은 검사 대상이 아니다(C-6).
+
+    **지금 이 검사에 걸리는 업무는 없다** — 2026-09-06 확정으로 업무의 시간 지정이 사라져
+    업무의 배치는 항상 종일이다. 그래도 함수를 지우지 않는다: 겹침 규칙(DEC-005 §7)의
+    **단일 구현**이고 회의가 붙는 순간(WORK-006 `sync_from_meeting`) 그대로 쓰인다.
+    두 번째 구현을 만들지 않기 위해 여기 남는다.
     """
     if placement is None or placement.is_all_day:
         return
@@ -98,15 +108,14 @@ async def sync_from_task(
     *,
     account_id: int,
     task_id: int,
+    start_date: date | None,
     due_date: date | None,
-    due_start_time: time | None,
-    due_end_time: time | None,
 ) -> None:
-    """업무의 기한을 `schedule` 로 내린다. **원본 쓰기와 같은 트랜잭션**이다(§3-4).
+    """업무의 **계획 기간**을 `schedule` 로 내린다. **원본 쓰기와 같은 트랜잭션**이다(§3-4).
 
-    기한이 없어지면 행을 **삭제**한다(§3-3).
+    계획이 둘 다 없어지면 행을 **삭제**한다(§3-3 · T-1-d 마지막 줄).
     """
-    placement = build_placement(due_date, due_start_time, due_end_time)
+    placement = build_placement(start_date, due_date)
     source_type = ScheduleSourceType.TASK.value
 
     if placement is None:

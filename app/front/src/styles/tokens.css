@@ -1,0 +1,239 @@
+/**
+ * 원시 디자인 토큰 — `00-design/09-design-tokens.md` 의 값을 그대로 옮긴 곳.
+ *
+ * **여기가 색·형태 값의 정본이다.** 값을 바꿀 자리는 이 파일 하나뿐이고,
+ * 컴포넌트는 `--tm-*` 를 직접 쓰지 않는다 — `globals.css` 가 shadcn 시맨틱 변수로
+ * 한 번 감싸고, 컴포넌트는 Tailwind 유틸만 쓴다(frontend/README.md §5-1).
+ *
+ * 이 파일과 `globals.css` 밖에서 hex 리터럴을 쓰면 리뷰 반려다(§11 금지 목록 4).
+ */
+
+:root {
+  /* ── 색 · 액션/완료 ────────────────────────────────────────────────── */
+  --tm-primary: #7181f8;
+  --tm-primary-hover: #5f71f5;
+  --tm-primary-fg: #ffffff;
+
+  /* ── 색 · 위치 ────────────────────────────────────────────────────────
+     「검정은 위치, 보라는 선택」. **화면당 Ink 는 하나**다(§5-2).
+
+     FE §5-2 는 이 변수를 쓰는 컴포넌트를 셋으로 적었지만(Sidebar pill · 뷰 토글 ·
+     UnderlineTabs 밑줄) **SPEC-004 §2 가 뷰 토글을 뺐다**(S004-OQ-2): 내 업무 화면에는
+     유형 탭 밑줄과 뷰 토글이 함께 있어 둘 다 Ink 면 「화면당 하나」가 깨진다.
+     위치를 나타내는 축 하나(**유형 탭**)만 Ink 를 쓰고 **뷰 토글은 현재 값 배경**
+     (`--tm-current-bg` + `--tm-select-fg`)으로 그린다. 토스트 배경은 오버레이 서피스라 예외. */
+  --tm-ink: #1e1e1e;
+
+  /* ── 색 · 본문 계열 ───────────────────────────────────────────────── */
+  --tm-fg: #1e1e1e;
+  --tm-fg-muted: #5f6470;
+  --tm-fg-meta: #757575;
+  --tm-fg-caption: #9ea2ae;
+
+  /* ── 색 · 선택 ────────────────────────────────────────────────────── */
+  --tm-select-bg: #f1f2fe;
+  --tm-select-fg: #4b52a8;
+  /**
+   * **「현재 값」 배경** — 선택 칩(`--tm-select-bg`)과 **다른 축**이다.
+   * 고르는 목록에서 *지금 그 값인 항목*을 표시한다: 상태 팝오버의 현재 상태(SPEC-004 U-3),
+   * 뷰 토글의 현재 뷰(§2), 시각·색 목록의 현재 값(디자인 시스템 [02]).
+   * 값은 디자인 원본 `#F4F5FF` 그대로다.
+   */
+  --tm-current-bg: #f4f5ff;
+
+  /* ── 칸반 DnD(SPEC-004 U-4) ───────────────────────────────────────────
+     **새 색을 만들지 않는다** — 선택 색과 행 구분색 계열에서만 고른 값이다([10]).
+     원래 자리에 남는 점선 플레이스홀더의 테두리·배경. */
+  --tm-drop-placeholder-border: #c9d1fb;
+  --tm-drop-placeholder-bg: #f8faff;
+
+  /* ── 색 · 면과 선 ─────────────────────────────────────────────────── */
+  --tm-surface: #ffffff;
+  --tm-hover: #f5f6f8;
+  --tm-row-hover: #fafbfc;
+  /**
+   * 인라인 **추가/편집 행** 배경 — SPEC-002 U-2 가 값을 직접 적었다(`#FBFCFF`).
+   * `09-design-tokens.md` §색에는 아직 자리가 없다(문서공백 G-11) — 그래서 값이 SPEC 에만
+   * 있고, 행 hover(`#FAFBFC`)로 대체하면 **추가 행과 hover 행이 같은 색**이 된다(검수 W-2).
+   */
+  --tm-row-add-bg: #fbfcff;
+  --tm-border: #d9d9d9;
+  --tm-divider: #ebebeb;
+  --tm-row-divider: #f1f2f5;
+  --tm-sidebar-border: #e5e7ea;
+  --tm-canvas: #f4f5f7;
+  --tm-column: #f9fafb;
+
+  /* ── 색 · 상태 dot 5색 ────────────────────────────────────────────── */
+  --tm-status-todo: #9ea2ae;
+  --tm-status-progress: #33aaff;
+  --tm-status-done: #7181f8;
+  --tm-status-cancelled: #b3b3b3;
+  --tm-status-overdue: #e2685b;
+
+  /**
+   * ── 브랜드 그라디언트 ─────────────────────────────────────────────
+   * `11-auth-profile.md §로그인` 원본 값. **그라디언트는 홈 상단과 로그인 좌측 패널에만**
+   * 쓴다(`09-design-tokens.md` §그 외 규칙 · [10] RULES). hex 가 컴포넌트에 들어가지
+   * 않도록 여기서 변수로 묶는다(§11 금지 목록 4).
+   */
+  --tm-brand-gradient:
+    radial-gradient(60% 48% at 18% 12%, rgba(255, 255, 255, 0.72), transparent 70%),
+    radial-gradient(52% 42% at 82% 88%, rgba(113, 129, 248, 0.16), transparent 72%),
+    linear-gradient(160deg, #dce6fb, #e7edfc 34%, #f5f8fe 68%, #ffffff);
+
+  /* ── 형태 · radius ────────────────────────────────────────────────── */
+  /**
+   * 카드 radius. `09-design-tokens.md` §형태는 「카드 12~16」 **범위**지만
+   * **SPEC-001 U-4 가 「radius 16」으로 더 좁게 못박았다** — 좁은 쪽이 계약이다(검수 W-2).
+   * 12 였을 때 `ConfirmModal` 주석의 「radius 16」과 실제 값이 어긋나 있었다.
+   */
+  --tm-radius-card: 16px;
+  --tm-radius-control: 8px;
+  --tm-radius-chip: 4px;
+
+  /* ── 형태 · 그림자 ────────────────────────────────────────────────── */
+  --tm-shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 8px 20px rgba(16, 24, 40, 0.06);
+  --tm-shadow-drawer: -24px 0 60px rgba(0, 0, 0, 0.18);
+  --tm-shadow-modal: 0 32px 80px rgba(0, 0, 0, 0.28);
+  --tm-shadow-popover: 0 16px 40px rgba(0, 0, 0, 0.16);
+
+  /* ── 오버레이 3종 규격 ─────────────────────────────────────────────
+     폭·스크림을 여기서 한 번만 정한다. 화면이 각자 정하지 않는다(§6). */
+  --tm-drawer-width: 840px;
+  --tm-modal-width: 600px;
+  --tm-popover-min-width: 200px;
+  --tm-popover-max-width: 400px;
+  /* 첨부 360 · 연관업무 382 — 둘 다 팝오버 200–400 범위 안이다(SPEC-003 U-7·U-8) */
+  --tm-popover-attach-width: 360px;
+  --tm-popover-relation-width: 382px;
+  --tm-scrim-drawer: rgba(30, 30, 30, 0.32);
+  --tm-scrim-modal: rgba(30, 30, 30, 0.36);
+
+  /* ── 타입 ─────────────────────────────────────────────────────────── */
+  --tm-font-sans: "Pretendard Variable", Pretendard, system-ui, -apple-system,
+    "Segoe UI", "Malgun Gothic", sans-serif;
+  --tm-tracking: -0.02em;
+
+  /* ── 레이아웃 상수(§7-1) ──────────────────────────────────────────── */
+  --tm-min-width: 1280px;
+  --tm-sidebar-width: 200px;
+
+  /**
+   * 본문 좌우 여백 — `08-responsive.md` 표는 **1280→48 · 1440→80 · 1920→240** 이고,
+   * FE §7-1 은 「1280~1439 는 48 · ≥1440 은 80→240 연속 보간」이다.
+   *
+   * **두 구간이라 단일 `clamp` 로 만들 수 없다.** 하나로 이으면 1440 에서 80 을 지나지 않는다
+   * (WORK-001 검수 W-2 — 1440 에서 96px 이 나왔다). 그래서 기본값 48 을 두고
+   * 아래 미디어 쿼리가 ≥1440 구간만 보간으로 덮는다.
+   */
+  --tm-gutter: 48px;
+}
+
+/* ≥1440 — 1440 에서 80, 1920 에서 240(= 80 + 480/3). 그 위는 240 에서 멈춘다. */
+@media (min-width: 1440px) {
+  :root {
+    --tm-gutter: clamp(80px, calc(80px + (100vw - 1440px) / 3), 240px);
+  }
+}
+
+/**
+ * 동적 유형 색 — 팔레트 자리(§5-3).
+ *
+ * 유형·프로젝트 색은 사용자가 고른 값이라 빌드 타임 토큰이 아니지만,
+ * **자유 색상이 아니라 「허용 팔레트 중 선택」**이다. DB 가 드는 것은 hex 가 아니라
+ * 팔레트 토큰명(`work_type.color_token`)이고, 배지·칩은 `data-color-token="<name>"`
+ * 속성만 받는다 — 인라인 `style={{ background: hex }}` 를 쓰지 않는다.
+ *
+ * **팔레트 8종의 값은 여기가 프론트의 유일한 정의처다**(SPEC-002 §4 Data Contract 가 정본).
+ * 서버 쪽 정의처는 `app/back/dto/enums.py` 의 `ColorToken` 하나 — 합쳐서 **두 곳뿐**이다
+ * (WORK-003 Done Criteria 「중복 정의 없음」). 값이 바뀌어도 토큰명이 그대로면
+ * 고칠 파일이 이 둘로 끝난다(S002-OQ-5).
+ *
+ * **레시피는 하나다** — 배경은 매우 옅은 틴트, 전경은 같은 색상의 어두운 값.
+ * 상태 5색·채널 3색의 hex 를 재사용하지 않는다. 축이 섞이면 배지 색으로 상태를 읽게 된다
+ * (SPEC-002 §4 규칙 2). **팔레트를 화면에서 늘리지 않는다**(규칙 4).
+ */
+:root {
+  /* 기본 유형 시드 3종 — 디자인 시스템 [02] 배지 값 그대로 */
+  --tm-palette-indigo-bg: #eef1fe;
+  --tm-palette-indigo-fg: #4a55b8;
+  --tm-palette-violet-bg: #f1f2fe;
+  --tm-palette-violet-fg: #4b52a8;
+  --tm-palette-steel-bg: #f4f7ff;
+  --tm-palette-steel-fg: #3f5f94;
+
+  /* 같은 레시피로 확장한 5종 */
+  --tm-palette-mint-bg: #eaf7f0;
+  --tm-palette-mint-fg: #2f7f5b;
+  --tm-palette-sky-bg: #e9f3fd;
+  --tm-palette-sky-fg: #2e6fa8;
+  --tm-palette-amber-bg: #fbf2dc;
+  --tm-palette-amber-fg: #8a6714;
+  --tm-palette-rose-bg: #fceeec;
+  --tm-palette-rose-fg: #a34a3f;
+  --tm-palette-graphite-bg: #f1f2f5;
+  --tm-palette-graphite-fg: #4a4e58;
+
+  /* 팔레트 밖 토큰명이 왔을 때의 폴백 */
+  --tm-palette-neutral-bg: #f4f5f7;
+  --tm-palette-neutral-fg: #5f6470;
+
+  /**
+   * **입력 포커스 글로우**(`09-design-tokens.md` §색, 2026-09-06 등재) —
+   * 테두리 `--tm-primary` + 3px 글로우.
+   *
+   * 색 선택 스와치의 「현재 값」 표시와 **같은 값·같은 규격**이라 이름을 일반화해
+   * **한 토큰을 재사용**한다(같은 절). `--tm-primary` 의 알파 변형이라 Tailwind 불투명도
+   * 수정자로는 못 만든다(변수는 합성이 안 된다).
+   */
+  --tm-focus-ring: 0 0 0 3px rgba(113, 129, 248, 0.16);
+
+  /**
+   * **검색어 하이라이트**(`09-design-tokens.md` §색, 2026-09-06 등재) —
+   * 검색 결과에서 일치 구간을 감싼다. 연관업무 후보가 첫 사용처다(SPEC-003 U-8).
+   */
+  --tm-search-highlight: #fff3b0;
+}
+
+/**
+ * **중립이 기본값이다.** 아래 8개 규칙 중 하나도 맞지 않으면(삭제된 유형의 옛 토큰명 등)
+ * 이 선언이 남아 중립 색으로 그려진다 — **항목을 숨기지 않는다**(§5-3 규칙 4).
+ */
+[data-color-token] {
+  --tm-palette-bg: var(--tm-palette-neutral-bg);
+  --tm-palette-fg: var(--tm-palette-neutral-fg);
+}
+
+[data-color-token="indigo"] {
+  --tm-palette-bg: var(--tm-palette-indigo-bg);
+  --tm-palette-fg: var(--tm-palette-indigo-fg);
+}
+[data-color-token="violet"] {
+  --tm-palette-bg: var(--tm-palette-violet-bg);
+  --tm-palette-fg: var(--tm-palette-violet-fg);
+}
+[data-color-token="steel"] {
+  --tm-palette-bg: var(--tm-palette-steel-bg);
+  --tm-palette-fg: var(--tm-palette-steel-fg);
+}
+[data-color-token="mint"] {
+  --tm-palette-bg: var(--tm-palette-mint-bg);
+  --tm-palette-fg: var(--tm-palette-mint-fg);
+}
+[data-color-token="sky"] {
+  --tm-palette-bg: var(--tm-palette-sky-bg);
+  --tm-palette-fg: var(--tm-palette-sky-fg);
+}
+[data-color-token="amber"] {
+  --tm-palette-bg: var(--tm-palette-amber-bg);
+  --tm-palette-fg: var(--tm-palette-amber-fg);
+}
+[data-color-token="rose"] {
+  --tm-palette-bg: var(--tm-palette-rose-bg);
+  --tm-palette-fg: var(--tm-palette-rose-fg);
+}
+[data-color-token="graphite"] {
+  --tm-palette-bg: var(--tm-palette-graphite-bg);
+  --tm-palette-fg: var(--tm-palette-graphite-fg);
+}

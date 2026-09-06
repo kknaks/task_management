@@ -86,9 +86,26 @@ class UndoNotAvailableError(ConflictError):
 
     ① 마지막 로그가 상태 전이가 아니거나 ② 그 뒤 다른 변경이 있거나 ③ **4초가 지났다**.
     4초는 완료 토스트 수명과 맞춘 spec 값이다.
+
+    **취소 전이는 이것이 아니다** — 아래 `CancelUndoNotAllowedError` 가 따로 있다.
     """
 
     code = "undo_not_available"
+
+
+class CancelUndoNotAllowedError(ConflictError):
+    """**실행취소는 완료 전용이다** — 취소 전이는 되돌릴 수 없다(SPEC-004 §4 Case Matrix, 2026-09-06 신설).
+
+    조건 미충족(`undo_not_available`)과 **코드를 나눈 이유는 사유가 다르기 때문**이다.
+    저쪽은 「기다렸다 놓쳤다」라 시간을 말해 주는 편이 낫고, 이쪽은 **시간과 무관한 금지**다.
+    합쳐 두면 4초가 지나지 않았는데 「시간이 지났습니다」를 내보내게 된다 —
+    도달 경로가 낡은 클라이언트·API 직접·회의록(WORK-008)이라 **사람이 디버깅하는 자리**이고,
+    틀린 사유를 읽으면 엉뚱한 데를 판다.
+
+    화면 안내의 둘째 줄(「상태에서 직접 되돌릴 수 있습니다」)은 두 코드가 **공유한다.**
+    """
+
+    code = "cancel_undo_not_allowed"
 
 
 class DatabaseUnavailableError(AppError):

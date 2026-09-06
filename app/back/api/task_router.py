@@ -112,7 +112,7 @@ async def list_tasks(
     project_id: int | None = Query(default=None, alias="projectId"),
     sort: TaskSort = Query(default=TaskSort.DUE_ASC, alias="sort"),
     page: int = Query(default=1, ge=1, alias="page"),
-    # 칸반은 페이지를 쓰지 않고 **그 달 전체를 한 번에** 받는다(U-2 데이터 범위).
+    # 칸반은 페이지를 쓰지 않고 **고른 범위 전체를 한 번에** 받는다(U-2 데이터 범위).
     # 상한 500 은 선이다 — 없애지 않는다(넘으면 컬럼이 무한히 길어진다).
     size: int = Query(default=12, ge=1, le=500, alias="size"),
     account_id: int = Depends(require_account),
@@ -120,9 +120,10 @@ async def list_tasks(
 ) -> TaskListResponse:
     """**리스트와 칸반이 같은 응답을 본다** — 칸반은 이 목록을 상태로 나눠 그릴 뿐이다.
 
-    기간을 안 보내면 **이번 달**이다. 경계는 UTC 로 주고받는다(G-2).
+    **기간을 안 보내면 「오늘 하루」다**(DEC-002 2026-09-06 — 조회 단위가 월에서 일로 바뀌었다).
+    경계는 UTC 로 주고받고 **양끝을 포함한다** — `from = to = 오늘` 이 오늘 업무를 낸다.
     """
-    default_from, default_to = task_service.current_month_bounds()
+    default_from, default_to = task_service.default_period_bounds()
     return TaskListResponse.from_dto(
         await task_service.list_tasks(
             session,

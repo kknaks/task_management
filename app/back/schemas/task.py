@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, time
+from datetime import date, datetime
 from typing import Annotated, Literal
 
 from pydantic import ConfigDict, StringConstraints, field_validator, model_validator
@@ -60,6 +60,12 @@ class _TaskRequest(CamelModel):
     특히 `status` 가 그렇다. **상태 전이는 전용 엔드포인트**이고 WORK-005 가 갖는다(§4) —
     일반 PATCH 로 보내면 `422 validation_error` 다. 무시하면 「바뀐 줄 알았는데 안 바뀐」
     상태가 조용히 성립한다.
+
+    **`startedAt`·`completedAt` 도 같은 방식으로 막힌다**(SPEC-003 §4 Validation 「읽기 전용」) —
+    필드를 두지 않으니 보내면 `422` 다. 상태 전이 시점에 서버가 쓰는 값이라 요청에 자리가 없다.
+
+    **없어진 `background`·`goal` 도 마찬가지로 `422`** 다(2026-09-06 — `description` 하나로 합쳤다).
+    조용히 무시하면 낡은 화면이 배경을 계속 보내면서 저장된 줄 아는 상태가 성립한다.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -133,11 +139,9 @@ class TaskCreate(_TaskRequest):
     title: Title
     work_type_id: int
     project_id: int | None = None
+    start_date: date | None = None
     due_date: date | None = None
-    due_start_time: time | None = None
-    due_end_time: time | None = None
-    background: LongText | None = None
-    goal: LongText | None = None
+    description: LongText | None = None
     todos: list[TodoCreate] = []
     attachments: list[AttachmentCreate] = []
     related_task_ids: list[int] = []
@@ -149,11 +153,9 @@ class TaskCreate(_TaskRequest):
             title=self.title,
             work_type_id=self.work_type_id,
             project_id=self.project_id,
+            start_date=self.start_date,
             due_date=self.due_date,
-            due_start_time=self.due_start_time,
-            due_end_time=self.due_end_time,
-            background=self.background,
-            goal=self.goal,
+            description=self.description,
             todos=[todo.to_dto() for todo in self.todos],
             attachments=[attachment.to_dto() for attachment in self.attachments],
             related_task_ids=list(self.related_task_ids),
@@ -170,11 +172,9 @@ class TaskUpdate(_TaskRequest):
     title: Title | None = None
     work_type_id: int | None = None
     project_id: int | None = None
+    start_date: date | None = None
     due_date: date | None = None
-    due_start_time: time | None = None
-    due_end_time: time | None = None
-    background: LongText | None = None
-    goal: LongText | None = None
+    description: LongText | None = None
     completion_result: LongText | None = None
 
     _no_newline = field_validator("title")(_reject_newlines)
@@ -196,11 +196,9 @@ class TaskUpdate(_TaskRequest):
             title=value("title"),  # type: ignore[arg-type]
             work_type_id=value("work_type_id"),  # type: ignore[arg-type]
             project_id=value("project_id"),  # type: ignore[arg-type]
+            start_date=value("start_date"),  # type: ignore[arg-type]
             due_date=value("due_date"),  # type: ignore[arg-type]
-            due_start_time=value("due_start_time"),  # type: ignore[arg-type]
-            due_end_time=value("due_end_time"),  # type: ignore[arg-type]
-            background=value("background"),  # type: ignore[arg-type]
-            goal=value("goal"),  # type: ignore[arg-type]
+            description=value("description"),  # type: ignore[arg-type]
             completion_result=value("completion_result"),  # type: ignore[arg-type]
         )
 
@@ -312,15 +310,19 @@ class TaskDetail(CamelModel):
     status: Status
     work_type: WorkTypeRef
     project: ProjectRef | None
+    # 계획 2 — 사용자가 채운다
+    start_date: date | None
     due_date: date | None
-    due_start_time: time | None
-    due_end_time: time | None
+    # 실적 3 — **읽기 전용**이다(SPEC-003 §4 Validation). 요청으로 받지 않는다.
+    # **상태가 바뀌어도 남는다** — 「마지막으로 그 상태에 들어간 시각」이다(2026-09-06 확정)
+    started_at: datetime | None
+    completed_at: datetime | None
+    cancelled_at: datetime | None
     d_day: int | None
     is_overdue: bool
     # SPEC-003 §4(2026-09-06) — 상세 헤더가 「n일 지남」을 그린다. 목록과 같은 파생 규칙이다
     overdue_days: int | None
-    background: str | None
-    goal: str | None
+    description: str | None
     completion_result: str | None
     cancel_reason: str | None
     todos: list[TodoItem]
@@ -357,14 +359,15 @@ class TaskDetail(CamelModel):
                     is_deleted=task.project.is_deleted,
                 )
             ),
+            start_date=task.start_date,
             due_date=task.due_date,
-            due_start_time=task.due_start_time,
-            due_end_time=task.due_end_time,
+            started_at=task.started_at,
+            completed_at=task.completed_at,
+            cancelled_at=task.cancelled_at,
             d_day=detail.d_day,
             is_overdue=detail.is_overdue,
             overdue_days=detail.overdue_days,
-            background=task.background,
-            goal=task.goal,
+            description=task.description,
             completion_result=task.completion_result,
             cancel_reason=task.cancel_reason,
             todos=[TodoItem.from_dto(todo) for todo in detail.todos],
@@ -436,9 +439,14 @@ class TaskListItem(CamelModel):
     status: Status
     work_type: WorkTypeRef
     project: ProjectRef | None
+    # 리스트에 **시작일 컬럼**이 있다(SPEC-004 U-3 · P-29 — 1280 에서만 숨긴다)
+    start_date: date | None
     due_date: date | None
-    due_start_time: time | None
-    due_end_time: time | None
+    # 실적 3 — 「오늘 완료」 칸이 어떤 시각으로 걸렸는지 화면이 그대로 읽고(R-4),
+    # 칸반 완료 카드가 **계획 대비 차이**(`dueDate` ↔ `completedAt`)를 그린다(DEC-002).
+    # `cancelledAt` 은 아래 `cancelReason` 옆이 아니라 **여기 셋 중 하나**로 읽어야 한다.
+    started_at: datetime | None
+    completed_at: datetime | None
     d_day: int | None
     is_overdue: bool
     overdue_days: int | None
@@ -470,9 +478,10 @@ class TaskListItem(CamelModel):
                     is_deleted=dto.project.is_deleted,
                 )
             ),
+            start_date=dto.start_date,
             due_date=dto.due_date,
-            due_start_time=dto.due_start_time,
-            due_end_time=dto.due_end_time,
+            started_at=dto.started_at,
+            completed_at=dto.completed_at,
             d_day=dto.d_day,
             is_overdue=dto.is_overdue,
             overdue_days=dto.overdue_days,

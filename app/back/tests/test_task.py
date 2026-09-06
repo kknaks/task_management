@@ -23,8 +23,12 @@ BASE = "/api/tasks"
 DAY = "2026-09-10"
 
 
+def _tz() -> ZoneInfo:
+    return ZoneInfo(get_settings().app_timezone)
+
+
 def _today() -> date:
-    return datetime.now(ZoneInfo(get_settings().app_timezone)).date()
+    return datetime.now(_tz()).date()
 
 
 async def _create(client: AsyncClient, owner: TaskOwner, **overrides: object) -> dict:
@@ -204,23 +208,17 @@ async def test_a_bad_child_prevents_the_whole_task(
         {"title": "   ", "workTypeId": 1},
         {"title": "가" * 201, "workTypeId": 1},
         {"title": "줄\n바꿈", "workTypeId": 1},
-        # T-1-b — 시각 하나만
-        {"title": "시각 하나", "workTypeId": 1, "dueDate": DAY, "dueStartTime": "14:00"},
-        # T-1-b — 기한 없이 시각만
-        {
-            "title": "기한 없는 시각",
-            "workTypeId": 1,
-            "dueStartTime": "14:00",
-            "dueEndTime": "15:00",
-        },
-        # end <= start
+        # T-1 — 계획 기간이 뒤집혔다
         {
             "title": "거꾸로",
             "workTypeId": 1,
+            "startDate": "2026-09-11",
             "dueDate": DAY,
-            "dueStartTime": "15:00",
-            "dueEndTime": "14:00",
         },
+        # 2026-09-06 확정 — 업무에 시각은 없다(모르는 필드는 조용히 무시하지 않는다)
+        {"title": "시각 지정", "workTypeId": 1, "dueDate": DAY, "dueStartTime": "14:00"},
+        # 2026-09-06 확정 — `background`·`goal` 은 `description` 하나로 합쳐졌다
+        {"title": "옛 배경", "workTypeId": 1, "background": "배경"},
     ],
 )
 async def test_invalid_create_body_is_422(
@@ -234,7 +232,7 @@ async def test_invalid_create_body_is_422(
     assert response.json()["code"] == "validation_error"
 
 
-# --- 기한 → 일정 파생 ----------------------------------------------------
+# --- 계획 기간 → 일정 파생 ------------------------------------------------
 
 
 async def test_a_due_date_derives_an_all_day_schedule(
@@ -249,38 +247,92 @@ async def test_a_due_date_derives_an_all_day_schedule(
     assert placement.is_all_day is True
 
 
-async def test_times_derive_a_timed_schedule(
+async def test_a_plan_period_derives_a_multi_day_band(
     client: AsyncClient, db_session: AsyncSession, owner: TaskOwner
 ) -> None:
-    created = await _create(
-        client, owner, dueDate=DAY, dueStartTime="14:00", dueEndTime="15:00"
-    )
+    """T-1-d — `start_date` + `due_date` 는 **기간 일정**(종일 밴드)이다.
 
-    assert created["dueStartTime"] == "14:00:00"
+    끝은 종료일 **다음 날 `00:00`**(KST) — 마지막 날을 통째로 덮는다(§3-3).
+    """
+    created = await _create(client, owner, startDate="2026-09-08", dueDate=DAY)
+
     placement = await schedule_service.find_task_placement(
         db_session, task_id=created["id"]
     )
     assert placement is not None
-    assert placement.is_all_day is False
+    assert placement.is_all_day is True
+    assert placement.start_at.astimezone(_tz()).date() == date(2026, 9, 8)
+    assert placement.end_at.astimezone(_tz()).date() == date(2026, 9, 11)
 
 
-async def test_clearing_the_due_date_removes_the_schedule(
+async def test_a_start_date_alone_derives_a_single_all_day(
     client: AsyncClient, db_session: AsyncSession, owner: TaskOwner
 ) -> None:
-    """`{"dueDate": null}` 은 기한 삭제이고 **파생 일정도 사라진다**(§4)."""
-    created = await _create(
-        client, owner, dueDate=DAY, dueStartTime="14:00", dueEndTime="15:00"
-    )
+    """T-1-d — 시작일만 있으면 **그 하루**다. 끝이 없어 무한 바를 그릴 수 없다."""
+    created = await _create(client, owner, startDate=DAY)
 
-    patched = await client.patch(
+    placement = await schedule_service.find_task_placement(
+        db_session, task_id=created["id"]
+    )
+    assert placement is not None
+    assert placement.is_all_day is True
+    assert placement.start_at.astimezone(_tz()).date() == date(2026, 9, 10)
+    assert placement.end_at.astimezone(_tz()).date() == date(2026, 9, 11)
+
+
+async def test_a_task_is_never_a_timed_schedule(
+    client: AsyncClient, db_session: AsyncSession, owner: TaskOwner
+) -> None:
+    """**업무에 시각은 없다**(2026-09-06 확정) — 보내면 `422` 이고, 파생은 항상 종일이다.
+
+    캘린더 시간 그리드에 뜨는 것은 회의뿐이다.
+    """
+    refused = await client.post(
+        BASE,
+        json={
+            "title": "시각 지정",
+            "workTypeId": owner.work_type_id,
+            "dueDate": DAY,
+            "dueStartTime": "14:00",
+            "dueEndTime": "15:00",
+        },
+        headers=owner.headers,
+    )
+    assert refused.status_code == 422
+    assert refused.json()["code"] == "validation_error"
+
+    created = await _create(client, owner, dueDate=DAY)
+    placement = await schedule_service.find_task_placement(
+        db_session, task_id=created["id"]
+    )
+    assert placement is not None
+    assert placement.is_all_day is True
+
+
+async def test_clearing_both_plan_dates_removes_the_schedule(
+    client: AsyncClient, db_session: AsyncSession, owner: TaskOwner
+) -> None:
+    """계획이 **둘 다** 없어져야 파생 행이 사라진다(SCH-4).
+
+    기한만 지우면 시작일 하루의 종일 일정으로 **남는다** — 계획이 아직 있기 때문이다.
+    """
+    created = await _create(client, owner, startDate="2026-09-08", dueDate=DAY)
+
+    kept = await client.patch(
         f"{BASE}/{created['id']}", json={"dueDate": None}, headers=owner.headers
     )
+    assert kept.status_code == 200
+    assert kept.json()["dueDate"] is None
+    assert kept.json()["startDate"] == "2026-09-08"
+    assert (
+        await schedule_service.find_task_placement(db_session, task_id=created["id"])
+        is not None
+    )
 
-    assert patched.status_code == 200
-    assert patched.json()["dueDate"] is None
-    # T-1-b — 시각만 남는 상태를 만들지 않는다
-    assert patched.json()["dueStartTime"] is None
-    assert patched.json()["dueEndTime"] is None
+    cleared = await client.patch(
+        f"{BASE}/{created['id']}", json={"startDate": None}, headers=owner.headers
+    )
+    assert cleared.status_code == 200
     assert (
         await schedule_service.find_task_placement(db_session, task_id=created["id"])
         is None
@@ -288,98 +340,11 @@ async def test_clearing_the_due_date_removes_the_schedule(
 
 
 # --- 겹침 ---------------------------------------------------------------
-
-
-async def test_an_overlapping_due_time_is_409_and_nothing_is_written(
-    client: AsyncClient, db_session: AsyncSession, owner: TaskOwner
-) -> None:
-    """C-9 — 겹치면 거부하고 **`task` 행의 기한이 그대로**다(원본도 안 바뀐다)."""
-    await _create(
-        client, owner, title="선점", dueDate=DAY, dueStartTime="14:00", dueEndTime="15:00"
-    )
-    target = await _create(client, owner, title="나중")
-
-    response = await client.patch(
-        f"{BASE}/{target['id']}",
-        json={"dueDate": DAY, "dueStartTime": "14:30", "dueEndTime": "15:30"},
-        headers=owner.headers,
-    )
-
-    assert response.status_code == 409
-    assert response.json() == {
-        "detail": "그 시간에 다른 일정이 있습니다",
-        "code": "schedule_overlap",
-    }
-
-    row = (
-        await db_session.scalars(select(Task).where(Task.id == target["id"]))
-    ).one()
-    assert row.due_date is None
-    assert row.due_start_time is None
-
-
-async def test_a_touching_boundary_is_saved(
-    client: AsyncClient, owner: TaskOwner
-) -> None:
-    """C-8 — 14–15 다음 15–16 은 **저장된다.**"""
-    await _create(
-        client, owner, title="선점", dueDate=DAY, dueStartTime="14:00", dueEndTime="15:00"
-    )
-    target = await _create(client, owner, title="경계")
-
-    response = await client.patch(
-        f"{BASE}/{target['id']}",
-        json={"dueDate": DAY, "dueStartTime": "15:00", "dueEndTime": "16:00"},
-        headers=owner.headers,
-    )
-
-    assert response.status_code == 200
-    assert response.json()["dueStartTime"] == "15:00:00"
-
-
-async def test_creating_with_an_overlapping_time_is_rejected(
-    client: AsyncClient, db_session: AsyncSession, owner: TaskOwner
-) -> None:
-    """생성에서도 **원본을 쓰기 전에** 검사한다 — 업무가 만들어지지 않는다."""
-    await _create(
-        client, owner, title="선점", dueDate=DAY, dueStartTime="14:00", dueEndTime="15:00"
-    )
-
-    response = await client.post(
-        BASE,
-        json={
-            "title": "겹치는 생성",
-            "workTypeId": owner.work_type_id,
-            "dueDate": DAY,
-            "dueStartTime": "14:30",
-            "dueEndTime": "15:30",
-        },
-        headers=owner.headers,
-    )
-
-    assert response.status_code == 409
-    assert response.json()["code"] == "schedule_overlap"
-    rows = (
-        await db_session.scalars(select(Task).where(Task.title == "겹치는 생성"))
-    ).all()
-    assert rows == []
-
-
-async def test_moving_a_task_within_its_own_slot_is_allowed(
-    client: AsyncClient, owner: TaskOwner
-) -> None:
-    """자기 옛 일정과는 겹치지 않는다 — 같은 업무의 기한을 옮기는 경우다."""
-    created = await _create(
-        client, owner, dueDate=DAY, dueStartTime="14:00", dueEndTime="15:00"
-    )
-
-    response = await client.patch(
-        f"{BASE}/{created['id']}",
-        json={"dueStartTime": "14:30", "dueEndTime": "15:30"},
-        headers=owner.headers,
-    )
-
-    assert response.status_code == 200
+#
+# **업무의 겹침 테스트가 없다.** 2026-09-06 확정으로 업무의 시간 지정이 사라져
+# 업무의 배치는 항상 종일이고, 겹침 검사는 **시간 일정끼리만** 본다(C-6 · DEC-005 §7).
+# 검사 자체는 `schedule_service.check_overlap` 에 그대로 있고 회의(WORK-006)가 쓴다 —
+# 규칙은 `test_schedule_derive.py` 가 계속 지킨다.
 
 
 # --- 부분 수정 -----------------------------------------------------------
@@ -389,16 +354,15 @@ async def test_patch_changes_only_what_was_sent_and_writes_no_log(
     client: AsyncClient, owner: TaskOwner
 ) -> None:
     """인라인 편집은 **로그에 남지 않는다**(04-task-detail · U-10)."""
-    created = await _create(client, owner, background="이전 배경", goal="이전 목표")
+    created = await _create(client, owner, description="이전 설명")
 
     patched = await client.patch(
-        f"{BASE}/{created['id']}", json={"background": "새 배경"}, headers=owner.headers
+        f"{BASE}/{created['id']}", json={"description": "새 설명"}, headers=owner.headers
     )
 
     assert patched.status_code == 200
     body = patched.json()
-    assert body["background"] == "새 배경"
-    assert body["goal"] == "이전 목표"
+    assert body["description"] == "새 설명"
     assert body["title"] == created["title"]
     # 로그가 늘지 않았다
     assert [log["text"] for log in body["logs"]] == ["업무 생성"]

@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
@@ -938,15 +938,16 @@ async def test_every_child_write_surface_returns_the_task_detail(
         assert "relationTotal" in body
 
 
-async def test_sending_only_times_without_any_due_date_is_422(
+async def test_the_removed_time_fields_are_422(
     client: AsyncClient, db_session: AsyncSession, owner: TaskOwner
 ) -> None:
-    """W-1 — 기한 없는 업무에 **시각만** 보내면 422 다(§4 Validation · T-1-b).
+    """**업무에 시각은 없다**(2026-09-06 확정) — 보내면 `422` 이고 행은 그대로다.
 
-    고치기 전에는 `_resolve_due` 가 `_Due(None,None,None)` 으로 접어 버려
-    `_validate_due` 가 그 접힌 결과를 보고 통과시켰다 → 아무것도 안 바뀐 채 **200**.
+    이 자리에는 W-1(「기한 없이 시각만 보내면 조용히 200」)을 막던 테스트가 있었다.
+    시각 자체가 사라져 그 위반이 성립하지 않는다 — 대신 **필드가 거부되는지**를 지킨다.
+    조용히 무시하면 낡은 화면이 시각을 계속 보내면서 저장된 줄 아는 상태가 성립한다.
     """
-    task = await _create(client, owner)
+    task = await _create(client, owner, dueDate="2026-09-10")
 
     response = await client.patch(
         f"{BASE}/{task['id']}",
@@ -961,59 +962,22 @@ async def test_sending_only_times_without_any_due_date_is_422(
     }
 
     row = (await db_session.scalars(select(Task).where(Task.id == task["id"]))).one()
-    assert row.due_start_time is None
+    assert row.due_date == date(2026, 9, 10)
 
 
-async def test_clearing_the_date_while_sending_times_is_422(
+async def test_clearing_the_due_date_keeps_the_start_date(
     client: AsyncClient, owner: TaskOwner
 ) -> None:
-    """날짜를 지우면서 시각을 보내는 것도 같은 위반이다."""
-    task = await _create(
-        client, owner, dueDate="2026-09-10", dueStartTime="14:00", dueEndTime="15:00"
-    )
+    """계획 두 날짜는 **서로 독립이다**(T-1) — 기한만 지우면 시작일은 남는다."""
+    task = await _create(client, owner, startDate="2026-09-08", dueDate="2026-09-10")
 
     response = await client.patch(
-        f"{BASE}/{task['id']}",
-        json={"dueDate": None, "dueStartTime": "16:00", "dueEndTime": "17:00"},
-        headers=owner.headers,
-    )
-
-    assert response.status_code == 422
-
-
-async def test_sending_date_and_times_together_still_works(
-    client: AsyncClient, owner: TaskOwner
-) -> None:
-    """정상 경로를 막지 않았는지 — 날짜와 시각을 **함께** 보내면 200 이다."""
-    task = await _create(client, owner)
-
-    response = await client.patch(
-        f"{BASE}/{task['id']}",
-        json={"dueDate": "2026-09-10", "dueStartTime": "14:00", "dueEndTime": "15:00"},
-        headers=owner.headers,
+        f"{BASE}/{task['id']}", json={"dueDate": None}, headers=owner.headers
     )
 
     assert response.status_code == 200
-    assert response.json()["dueStartTime"] == "14:00:00"
-
-
-async def test_clearing_only_the_times_still_works(
-    client: AsyncClient, owner: TaskOwner
-) -> None:
-    """시각만 `null` 로 지우는 것은 **정상 경로**라 걸리지 않는다(날짜는 남는다)."""
-    task = await _create(
-        client, owner, dueDate="2026-09-10", dueStartTime="14:00", dueEndTime="15:00"
-    )
-
-    response = await client.patch(
-        f"{BASE}/{task['id']}",
-        json={"dueStartTime": None, "dueEndTime": None},
-        headers=owner.headers,
-    )
-
-    assert response.status_code == 200
-    assert response.json()["dueDate"] == "2026-09-10"
-    assert response.json()["dueStartTime"] is None
+    assert response.json()["dueDate"] is None
+    assert response.json()["startDate"] == "2026-09-08"
 
 
 async def test_unlinking_a_relation_that_does_not_exist_is_404(

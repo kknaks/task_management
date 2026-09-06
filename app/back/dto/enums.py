@@ -45,6 +45,15 @@ class TaskStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+# 「미완료」의 정본이다(SPEC-004 §4 「미완료는 todo·in_progress 다. 정의를 코드 한 곳에 둔다」).
+#
+# **문자열을 흩지 않는다** — 조회 규칙 R-2·R-3 와 지연 파생(`derive_overdue`)이 같은 뜻의
+# 「아직 안 끝났다」를 각자 적으면 한쪽만 고쳐지는 날이 온다. 여기가 그 한 곳이다.
+UNFINISHED_STATUSES = frozenset({TaskStatus.TODO.value, TaskStatus.IN_PROGRESS.value})
+# 종결 2종 — R-4 가 이것들만 **실적 시각**으로 거른다(`due_date` 로 거르지 않는다).
+FINISHED_STATUSES = frozenset({TaskStatus.DONE.value, TaskStatus.CANCELLED.value})
+
+
 class AttachmentRole(StrEnum):
     """첨부의 쓰임 축 — 참고자료 / 결과자료(T-9).
 

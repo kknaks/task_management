@@ -3,13 +3,14 @@
 정본은 `40-architecture/database/README.md` §1 ERD · §4 인덱스 와
 `domains/task.md` 의 불변식(T-1~T-11)이다.
 
-**시간은 여기 없다** — 기한(`due_date`·`due_*_time`)은 업무가 소유하고,
+**시간은 여기 없다** — 업무는 **계획 기간**(`start_date`·`due_date`)을 소유하고,
 시간축 배치는 `schedule` 이 **파생**으로 갖는다(T-1 · C-1).
+**업무에 시각은 없다**(2026-09-06 확정) — 시간을 갖는 것은 회의뿐이다.
 """
 
 from __future__ import annotations
 
-from datetime import date, datetime, time
+from datetime import date, datetime
 
 from sqlalchemy import (
     BigInteger,
@@ -22,7 +23,6 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
-    Time,
     UniqueConstraint,
     text,
 )
@@ -37,7 +37,7 @@ _KIND_VALUES = ", ".join(f"'{value}'" for value in AttachmentKind)
 
 
 class Task(Base, TimestampMixin):
-    """업무 본체. **기한을 소유한다**(T-1).
+    """업무 본체. **일정 4필드를 소유한다**(T-1).
 
     T-2 — `work_type_id` 필수 / T-3 — `project_id` 는 0..1(무소속 허용)
     T-4 — `status` 4종만. 「지연」은 컬럼이 아니다 / T-11 — 소프트 딜리트
@@ -64,13 +64,33 @@ class Task(Base, TimestampMixin):
         String(20), nullable=False, server_default=text(f"'{TaskStatus.TODO.value}'")
     )
 
-    # G-2-e — 기한은 **달력 개념**이라 `date`/`time` 그대로 둔다(전역 timestamptz 규약의 예외).
+    # --- 일정 4필드(T-1 · 2026-09-06 개정 — §A-4 번복) ---
+    #
+    # G-2-e — **계획**은 달력 개념이라 `date`/`time` 그대로 둔다(전역 timestamptz 규약의 예외).
+    # **실적**은 순간이라 `timestamptz` 다 — 두 축의 타입이 다르다.
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
-    due_start_time: Mapped[time | None] = mapped_column(Time, nullable=True)
-    due_end_time: Mapped[time | None] = mapped_column(Time, nullable=True)
 
-    background: Mapped[str | None] = mapped_column(Text, nullable=True)
-    goal: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # T-1-c — 전이 로그(T-8-a)의 **파생을 컬럼으로 승격**한 셋이다. 사용자가 채우지 않는다.
+    # **상태가 바뀌어도 지우지 않는다** — 「마지막으로 그 상태에 들어간 시각」이고,
+    # 되살아난 업무를 조회에서 거르는 것은 R-4 의 `status` 게이트다(2026-09-06 확정).
+    # 전이·실행취소가 로그를 쓰거나 지운 **같은 트랜잭션**에서 다시 계산된다
+    # (`task_repository.sync_actuals`) — 로그와 갈릴 수 없다.
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # T-8-a 번복(2026-09-06) — 「어긋날 수 있는 두 번째 사실」이라는 전제가 `sync_actuals` 로 깨졌다.
+    # 실적 셋이 전부 로그의 materialization 이라 비대칭을 남길 이유가 없다.
+    cancelled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    # 2026-09-06 사용자 확정 — **배경·목표를 나눠 받지 않는다.** 설명 하나면 된다.
+    # `completion_result` 와는 성격이 다르다: 저건 완료 게이트가 보는 값이다(T-5).
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     # T-5 — 완료 게이트의 한 축(판정은 WORK-005).
     completion_result: Mapped[str | None] = mapped_column(Text, nullable=True)
     # T-7 — `status='cancelled'` 일 때만 값이 있다.
@@ -83,20 +103,10 @@ class Task(Base, TimestampMixin):
     __table_args__ = (
         # G-3 — enum 은 varchar + CHECK
         CheckConstraint(f"status IN ({_STATUS_VALUES})", name="ck_task_status"),
-        # T-1-b — 시각 두 개는 **함께 있거나 함께 없다**
+        # T-1 — 계획 기간은 뒤집히지 않는다. **한쪽만 있어도 된다**(SPEC-003 §4 Validation)
         CheckConstraint(
-            "(due_start_time IS NULL) = (due_end_time IS NULL)",
-            name="ck_task_due_time_pair",
-        ),
-        # T-1-b — 시간만 있고 기한 날짜가 없는 상태를 만들지 않는다
-        CheckConstraint(
-            "due_start_time IS NULL OR due_date IS NOT NULL",
-            name="ck_task_due_time_needs_date",
-        ),
-        # SPEC-003 §4 Validation — 있으면 `end > start`
-        CheckConstraint(
-            "due_start_time IS NULL OR due_end_time > due_start_time",
-            name="ck_task_due_time_order",
+            "start_date IS NULL OR due_date IS NULL OR start_date <= due_date",
+            name="ck_task_plan_period_order",
         ),
         # T-7 — 취소 사유는 취소 상태에서만
         CheckConstraint(

@@ -6,7 +6,7 @@ BE §12 필수 테스트 **5-a**(기한 정렬에 조인이 없다)가 여기 �
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -27,14 +27,24 @@ def _today() -> date:
     return datetime.now(ZoneInfo(get_settings().app_timezone)).date()
 
 
-def _month_bounds(anchor: date) -> tuple[str, str]:
-    """그 달의 KST 경계를 **UTC ISO** 로 준다(G-2 — 기간은 UTC 로 오간다)."""
+def _day(anchor: date) -> str:
+    """그 날의 KST `00:00` 을 **UTC ISO** 로 준다(G-2 — 기간은 UTC 로 오간다)."""
     tz = ZoneInfo(get_settings().app_timezone)
-    start = datetime(anchor.year, anchor.month, 1, tzinfo=tz)
-    end = datetime(
-        anchor.year + (anchor.month // 12), (anchor.month % 12) + 1, 1, tzinfo=tz
-    )
-    return start.astimezone(UTC).isoformat(), end.astimezone(UTC).isoformat()
+    return datetime.combine(anchor, time.min, tzinfo=tz).astimezone(UTC).isoformat()
+
+
+def _range(first: date, last: date) -> dict[str, str]:
+    """`from`·`to` 한 쌍. **양끝을 포함한다** — 끝 경계가 닫혀 있다(SPEC-004 §4).
+
+    조회 단위가 월에서 일로 바뀌어(DEC-002 2026-09-06) 이 파일의 기본 범위도 하루다.
+    범위를 넓혀야 하는 테스트만 `first != last` 를 준다.
+    """
+    return {"from": _day(first), "to": _day(last)}
+
+
+def _wide(anchor: date) -> dict[str, str]:
+    """그 날을 품는 **넉넉한 범위** — 「기간이 아니라 다른 축」을 보는 테스트가 쓴다."""
+    return _range(anchor - timedelta(days=15), anchor + timedelta(days=15))
 
 
 async def _create(client: AsyncClient, owner: TaskOwner, **overrides: object) -> dict:
@@ -43,6 +53,19 @@ async def _create(client: AsyncClient, owner: TaskOwner, **overrides: object) ->
     response = await client.post(BASE, json=body, headers=owner.headers)
     assert response.status_code == 201, response.text
     return response.json()
+
+
+async def _complete(client: AsyncClient, owner: TaskOwner, task_id: int) -> None:
+    """완료 게이트를 지나 실제로 완료시킨다(T-5)."""
+    await client.post(
+        f"{BASE}/{task_id}/attachments",
+        json={"role": "deliverable", "kind": "link", "url": "https://example.test/o"},
+        headers=owner.headers,
+    )
+    response = await client.patch(
+        f"{BASE}/{task_id}/status", json={"status": "done"}, headers=owner.headers
+    )
+    assert response.status_code == 200, response.text
 
 
 async def _list(client: AsyncClient, owner: TaskOwner, **params: object) -> dict:
@@ -54,45 +77,43 @@ async def _list(client: AsyncClient, owner: TaskOwner, **params: object) -> dict
 # --- 기간 ---------------------------------------------------------------
 
 
-async def test_the_default_call_returns_this_month(
+async def test_the_default_call_returns_today(
     client: AsyncClient, owner: TaskOwner
 ) -> None:
-    """기간을 안 보내면 **이번 달**이다."""
-    this_month = await _create(
-        client, owner, title="이번 달", dueDate=_today().replace(day=15).isoformat()
-    )
+    """기간을 안 보내면 **오늘 하루**다(DEC-002 2026-09-06 — 이전 「이번 달」을 대체한다)."""
+    todays = await _create(client, owner, title="오늘", dueDate=_today().isoformat())
 
     body = await _list(client, owner)
 
-    assert this_month["id"] in [item["id"] for item in body["items"]]
+    assert todays["id"] in [item["id"] for item in body["items"]]
     assert body["page"] == 1
     assert body["size"] == 12
 
 
-async def test_an_explicit_period_selects_only_that_month(
+async def test_an_explicit_period_selects_only_that_range(
     client: AsyncClient, owner: TaskOwner
 ) -> None:
     today = _today()
-    last_month_day = today.replace(day=1) - timedelta(days=5)
-    this_month = await _create(
-        client, owner, title="이번 달", dueDate=today.replace(day=15).isoformat()
-    )
-    last_month = await _create(
-        client, owner, title="지난 달", dueDate=last_month_day.isoformat()
-    )
+    far = today - timedelta(days=40)
+    near = await _create(client, owner, title="오늘", dueDate=today.isoformat())
+    old = await _create(client, owner, title="옛날", dueDate=far.isoformat())
+    # **완료시킨다** — 미완료면 R-3(지연)이 오늘 범위로도 끌어온다
+    await _complete(client, owner, old["id"])
 
-    period_from, period_to = _month_bounds(last_month_day)
-    body = await _list(client, owner, **{"from": period_from, "to": period_to})
+    body = await _list(client, owner, **_range(far, far))
 
     ids = [item["id"] for item in body["items"]]
-    assert last_month["id"] in ids
-    assert this_month["id"] not in ids
+    assert near["id"] not in ids
 
 
-async def test_a_task_without_a_due_date_belongs_to_its_creation_month(
+async def test_a_task_without_a_due_date_shows_every_day(
     client: AsyncClient, owner: TaskOwner
 ) -> None:
-    """T-1-a — 기한 없는 업무는 **생성일 기준 달**에 속한다."""
+    """R-2 — 기한 없는 미완료 업무는 **범위와 무관하게 항상** 나온다.
+
+    ~~T-1-a 「생성일 기준 달에 속한다」~~ 는 폐기됐다(DEC-002 2026-09-06).
+    규칙 전체는 `test_task_period.py` 가 지킨다.
+    """
     undated = await _create(client, owner, title="기한 없음")
 
     body = await _list(client, owner)
@@ -110,13 +131,13 @@ async def test_due_asc_puts_tasks_without_a_due_date_last(
     today = _today()
     undated = await _create(client, owner, title="기한 없음")
     later = await _create(
-        client, owner, title="늦은 기한", dueDate=today.replace(day=28).isoformat()
+        client, owner, title="늦은 기한", dueDate=(today + timedelta(days=3)).isoformat()
     )
     earlier = await _create(
-        client, owner, title="이른 기한", dueDate=today.replace(day=2).isoformat()
+        client, owner, title="이른 기한", dueDate=(today - timedelta(days=3)).isoformat()
     )
 
-    body = await _list(client, owner)
+    body = await _list(client, owner, **_wide(today))
 
     ids = [item["id"] for item in body["items"]]
     assert ids.index(earlier["id"]) < ids.index(later["id"])
@@ -130,13 +151,13 @@ async def test_due_desc_also_puts_undated_last(
     today = _today()
     undated = await _create(client, owner, title="기한 없음")
     earlier = await _create(
-        client, owner, title="이른 기한", dueDate=today.replace(day=2).isoformat()
+        client, owner, title="이른 기한", dueDate=(today - timedelta(days=3)).isoformat()
     )
     later = await _create(
-        client, owner, title="늦은 기한", dueDate=today.replace(day=28).isoformat()
+        client, owner, title="늦은 기한", dueDate=(today + timedelta(days=3)).isoformat()
     )
 
-    body = await _list(client, owner, sort="due_desc")
+    body = await _list(client, owner, sort="due_desc", **_wide(today))
 
     ids = [item["id"] for item in body["items"]]
     assert ids.index(later["id"]) < ids.index(earlier["id"])
@@ -359,10 +380,21 @@ async def test_memo_count_and_todo_progress_come_with_the_list(
     assert item["todoProgress"] == {"done": 1, "total": 2}
 
 
-async def test_cancelled_at_is_carried_only_while_cancelled(
+async def test_cancelled_at_survives_a_revival(
     client: AsyncClient, owner: TaskOwner
 ) -> None:
-    """취소 시각은 **취소 전이 로그에서 파생**한다 — 되살아나면 사라진다."""
+    """**취소 시각은 되살아나도 남는다**(2026-09-06 코디 확정 — 이전 마스킹 규칙을 뒤집는다).
+
+    실적 셋(`startedAt`·`completedAt`·`cancelledAt`)은 전부 「**마지막으로 그 상태에 들어간
+    시각**」이고 상태가 바뀌어도 지우지 않는다 — 셋 다 전이 로그의 materialization 이라
+    응답에서만 지우면 컬럼과 응답이 갈린다(T-1-c).
+
+    `cancelReason` 은 **반대로 사라진다** — 저건 사용자 입력이라 떠날 때 비우는 게 맞고(T-7),
+    취소 시각은 시스템 이력이라 남는 게 맞다. 이 테스트가 그 둘의 차이를 고정한다.
+
+    (승격 전에는 「되살아나면 `cancelledAt` 이 null」이었다. 그때는 컬럼이 없어
+    파생 서브쿼리를 응답에서 가리는 것이 유일한 규칙이었다.)
+    """
     task = await _create(client, owner, title="취소 대상")
     await client.patch(
         f"{BASE}/{task['id']}/status",
@@ -382,7 +414,9 @@ async def test_cancelled_at_is_carried_only_while_cancelled(
     revived = next(
         row for row in (await _list(client, owner))["items"] if row["id"] == task["id"]
     )
-    assert revived["cancelledAt"] is None
+
+    assert revived["cancelledAt"] == cancelled["cancelledAt"]
+    # 사용자 입력은 떠날 때 비워진다 — T-7 이 그것을 DB 로도 강제한다
     assert revived["cancelReason"] is None
 
 
@@ -453,21 +487,31 @@ async def test_the_list_query_never_joins_schedule(
 async def test_the_period_filter_never_touches_schedule(
     db_session: AsyncSession, owner: TaskOwner
 ) -> None:
-    """기간 조건도 `task` 안에서 끝난다 — 기한은 `task` 가 소유한다(T-1)."""
+    """기간 조건도 `task` 안에서 끝난다 — 일정 4필드는 `task` 가 소유한다(T-1).
+
+    R-4 의 실적 시각까지 `task` 컬럼이라 **취소분을 뺀 조회 규칙 전체가 `task` 한 테이블**이다
+    (취소 시각만 `task_log` 를 본다 — 그것도 `schedule` 이 아니다).
+    """
+    today = _today()
     plan = (
         await db_session.execute(
             text(
                 "EXPLAIN SELECT id FROM task"
                 " WHERE account_id = :account_id AND deleted_at IS NULL"
-                " AND ((due_date IS NOT NULL AND due_date >= :f AND due_date < :t)"
-                "   OR (due_date IS NULL AND created_at >= :cf AND created_at < :ct))"
+                " AND ((status IN ('todo', 'in_progress')"
+                "       AND (   (COALESCE(start_date, due_date) <= :t"
+                "                AND COALESCE(due_date, start_date) >= :f)"
+                "            OR due_date IS NULL"
+                "            OR due_date < :f))"
+                "   OR (status = 'done'"
+                "       AND completed_at >= :mf AND completed_at < :mt))"
             ),
             {
                 "account_id": owner.id,
-                "f": _today().replace(day=1),
-                "t": _today().replace(day=28),
-                "cf": datetime.now(UTC) - timedelta(days=30),
-                "ct": datetime.now(UTC),
+                "f": today,
+                "t": today,
+                "mf": datetime.now(UTC) - timedelta(days=1),
+                "mt": datetime.now(UTC),
             },
         )
     ).scalars().all()
@@ -620,13 +664,11 @@ async def test_unfiltered_total_ignores_every_filter_but_follows_the_period(
     assert filtered["total"] == 0
     assert with_project["total"] == 1
 
-    # 기간을 바꾸면 바뀐다
-    last_month_day = today.replace(day=1) - timedelta(days=5)
-    period_from, period_to = _month_bounds(last_month_day)
-    last_month = await _list(
-        client, owner, **{"from": period_from, "to": period_to}
-    )
-    assert last_month["unfilteredTotal"] == 0
+    # 기간을 바꿔도 **R-2 가 태우는 기한 없는 업무 3건은 그대로 따라온다** —
+    # 「기한 없는 미완료는 어떤 범위로 조회해도 나온다」가 그 뜻이다.
+    far = today - timedelta(days=40)
+    elsewhere = await _list(client, owner, **_range(far, far))
+    assert elsewhere["unfilteredTotal"] == 3
 
 
 async def test_the_size_cap_is_five_hundred(

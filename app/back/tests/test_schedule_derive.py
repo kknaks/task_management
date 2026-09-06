@@ -16,9 +16,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_settings
 from core.exceptions import ConflictError
+from dto.calendar import SchedulePlacementDTO
 from dto.enums import ScheduleSourceType, TaskStatus
 from models.calendar import Schedule
 from models.task import Task, TaskAttachment, TaskRelation
+from repository import schedule_repository
 from service import schedule_service
 from tests.task_fixtures import TaskOwner, create_owner  # noqa: F401
 from tests.task_fixtures import owner  # noqa: F401
@@ -31,9 +33,8 @@ async def _task(
     owner: TaskOwner,
     *,
     title: str = "업무",
+    start_date: date | None = None,
     due_date: date | None = None,
-    start: time | None = None,
-    end: time | None = None,
     status: str = TaskStatus.TODO.value,
 ) -> Task:
     row = Task(
@@ -41,9 +42,8 @@ async def _task(
         work_type_id=owner.work_type_id,
         title=title,
         status=status,
+        start_date=start_date,
         due_date=due_date,
-        due_start_time=start,
-        due_end_time=end,
     )
     session.add(row)
     await session.flush()
@@ -55,42 +55,44 @@ async def _derive(session: AsyncSession, owner: TaskOwner, task: Task) -> None:
         session,
         account_id=owner.id,
         task_id=task.id,
+        start_date=task.start_date,
         due_date=task.due_date,
-        due_start_time=task.due_start_time,
-        due_end_time=task.due_end_time,
+    )
+
+
+def _timed(start: time, end: time) -> SchedulePlacementDTO:
+    """**시간 일정** 하나를 손으로 만든다.
+
+    2026-09-06 확정으로 **업무는 시간 일정을 만들지 못한다**(항상 종일/기간이다).
+    그래도 겹침 규칙 자체는 살아 있어야 한다 — 회의(WORK-006)가 그대로 쓸 구현이고,
+    `schedule` 은 원본 종류를 가리지 않는 테이블이기 때문이다(§3-4 · SCH-5).
+    그래서 배치를 파생이 아니라 **직접** 만들어 규칙만 시험한다.
+    """
+    tz = ZoneInfo(get_settings().app_timezone)
+    return SchedulePlacementDTO(
+        start_at=datetime.combine(DAY, start, tzinfo=tz),
+        end_at=datetime.combine(DAY, end, tzinfo=tz),
+        is_all_day=False,
     )
 
 
 # --- DB 제약 (Phase 1 검증) ---------------------------------------------
 
 
-async def test_a_single_time_is_rejected_by_the_database(
+async def test_a_reversed_plan_period_is_rejected_by_the_database(
     db_session: AsyncSession, owner: TaskOwner
 ) -> None:
-    """T-1-b — 시각 두 개는 **함께 있거나 함께 없다.** 서비스가 아니라 DB 가 막는다."""
+    """T-1 — `start_date <= due_date`. 서비스가 아니라 **DB 가 최종 방어선**이다.
+
+    이 자리에는 `due_*_time` CHECK 3종을 지키던 테스트가 있었다 —
+    2026-09-06 확정으로 업무의 시각이 사라지면서 그 제약도 함께 사라졌다.
+    """
     with pytest.raises(IntegrityError) as excinfo:
-        await _task(db_session, owner, due_date=DAY, start=time(14, 0), end=None)
+        await _task(
+            db_session, owner, start_date=DAY + timedelta(days=1), due_date=DAY
+        )
 
-    assert "ck_task_due_time_pair" in str(excinfo.value)
-
-
-async def test_times_without_a_due_date_are_rejected_by_the_database(
-    db_session: AsyncSession, owner: TaskOwner
-) -> None:
-    """T-1-b — 시간만 있고 기한 날짜가 없는 상태를 만들지 않는다."""
-    with pytest.raises(IntegrityError) as excinfo:
-        await _task(db_session, owner, due_date=None, start=time(14, 0), end=time(15, 0))
-
-    assert "ck_task_due_time_needs_date" in str(excinfo.value)
-
-
-async def test_end_before_start_is_rejected_by_the_database(
-    db_session: AsyncSession, owner: TaskOwner
-) -> None:
-    with pytest.raises(IntegrityError) as excinfo:
-        await _task(db_session, owner, due_date=DAY, start=time(15, 0), end=time(14, 0))
-
-    assert "ck_task_due_time_order" in str(excinfo.value)
+    assert "ck_task_plan_period_order" in str(excinfo.value)
 
 
 async def test_a_doc_attachment_with_a_url_is_rejected_by_the_database(
@@ -201,25 +203,29 @@ async def test_a_due_date_alone_derives_an_all_day_schedule(
     )
 
 
-async def test_adding_times_turns_it_into_a_timed_schedule(
+async def test_a_plan_period_derives_a_multi_day_band(
     db_session: AsyncSession, owner: TaskOwner
 ) -> None:
-    """시각까지 지정하면 **시간 일정**이 된다. 같은 행이 갱신된다(SCH-3)."""
+    """T-1-d — 시작일이 붙으면 **기간 일정**이 된다. 같은 행이 갱신된다(SCH-3)."""
     task = await _task(db_session, owner, due_date=DAY)
     await _derive(db_session, owner, task)
 
-    task.due_start_time = time(14, 0)
-    task.due_end_time = time(15, 0)
+    task.start_date = DAY - timedelta(days=2)
     await db_session.flush()
     await _derive(db_session, owner, task)
 
     placement = await schedule_service.find_task_placement(db_session, task_id=task.id)
     assert placement is not None
-    assert placement.is_all_day is False
+    # **업무는 언제나 종일이다** — 시간 그리드에 뜨는 것은 회의뿐이다
+    assert placement.is_all_day is True
 
     tz = ZoneInfo(get_settings().app_timezone)
-    assert placement.start_at.astimezone(tz).hour == 14
-    assert placement.end_at.astimezone(tz).hour == 15
+    assert placement.start_at.astimezone(tz) == datetime.combine(
+        DAY - timedelta(days=2), time.min, tzinfo=tz
+    )
+    assert placement.end_at.astimezone(tz) == datetime.combine(
+        DAY + timedelta(days=1), time.min, tzinfo=tz
+    )
 
     rows = (
         await db_session.scalars(
@@ -229,17 +235,40 @@ async def test_adding_times_turns_it_into_a_timed_schedule(
     assert len(rows) == 1
 
 
+async def test_a_start_date_alone_derives_one_all_day(
+    db_session: AsyncSession, owner: TaskOwner
+) -> None:
+    """T-1-d — 시작일만 있으면 **그 하루**다. 끝이 없어 무한 바를 그릴 수 없다."""
+    task = await _task(db_session, owner, start_date=DAY)
+
+    await _derive(db_session, owner, task)
+
+    placement = await schedule_service.find_task_placement(db_session, task_id=task.id)
+    assert placement is not None
+    assert placement.is_all_day is True
+
+    tz = ZoneInfo(get_settings().app_timezone)
+    assert placement.start_at.astimezone(tz) == datetime.combine(DAY, time.min, tzinfo=tz)
+    assert placement.end_at.astimezone(tz) == datetime.combine(
+        DAY + timedelta(days=1), time.min, tzinfo=tz
+    )
+
+
 async def test_clearing_the_due_date_removes_the_schedule_row(
     db_session: AsyncSession, owner: TaskOwner
 ) -> None:
-    """§3-3 · SCH-4 — 기한이 없어지면 행이 **사라진다**. 기한 없는 업무는 일정이 없다."""
-    task = await _task(db_session, owner, due_date=DAY, start=time(14, 0), end=time(15, 0))
+    """§3-3 · SCH-4 — **계획이 둘 다** 없어지면 행이 사라진다. 계획 없는 업무는 일정이 없다."""
+    task = await _task(db_session, owner, start_date=DAY, due_date=DAY)
     await _derive(db_session, owner, task)
     assert await schedule_service.find_task_placement(db_session, task_id=task.id)
 
+    # 기한만 지우면 시작일 하루로 **남는다** — 계획이 아직 있다
     task.due_date = None
-    task.due_start_time = None
-    task.due_end_time = None
+    await db_session.flush()
+    await _derive(db_session, owner, task)
+    assert await schedule_service.find_task_placement(db_session, task_id=task.id)
+
+    task.start_date = None
     await db_session.flush()
     await _derive(db_session, owner, task)
 
@@ -262,18 +291,31 @@ async def test_a_task_with_no_due_date_never_gets_a_row(
 async def _placed(
     session: AsyncSession, owner: TaskOwner, start: time, end: time, **kwargs: object
 ) -> Task:
-    task = await _task(session, owner, due_date=DAY, start=start, end=end, **kwargs)  # type: ignore[arg-type]
-    await _derive(session, owner, task)
+    """`task` 원본 + **시간 일정** 한 행. 배치는 `_timed` 로 직접 만든다(위 docstring 참조).
+
+    원본을 함께 두는 이유는 겹침 검사가 **원본을 조인해** 취소·삭제분을 거르기 때문이다(§3-4).
+    """
+    task = await _task(session, owner, due_date=DAY, **kwargs)  # type: ignore[arg-type]
+    await schedule_repository.upsert(
+        session,
+        account_id=owner.id,
+        source_type=ScheduleSourceType.TASK.value,
+        source_id=task.id,
+        placement=_timed(start, end),
+    )
     return task
 
 
 async def _check(
     session: AsyncSession, owner: TaskOwner, start: time | None, end: time | None
 ) -> None:
+    placement = (
+        schedule_service.build_placement(None, DAY)
+        if start is None or end is None
+        else _timed(start, end)
+    )
     await schedule_service.check_overlap(
-        session,
-        account_id=owner.id,
-        placement=schedule_service.build_placement(DAY, start, end),
+        session, account_id=owner.id, placement=placement
     )
 
 
@@ -352,10 +394,7 @@ async def test_another_account_does_not_block(
 ) -> None:
     """겹침은 **같은 계정 안에서만** 본다(G-5)."""
     other = await create_owner(client, db_session, "schedule_stranger")
-    other_task = await _task(
-        db_session, other, due_date=DAY, start=time(14, 0), end=time(15, 0)
-    )
-    await _derive(db_session, other, other_task)
+    await _placed(db_session, other, time(14, 0), time(15, 0))
 
     await _check(db_session, owner, time(14, 0), time(15, 0))
 
@@ -369,7 +408,7 @@ async def test_a_task_does_not_block_itself(
     await schedule_service.check_overlap(
         db_session,
         account_id=owner.id,
-        placement=schedule_service.build_placement(DAY, time(14, 30), time(15, 30)),
+        placement=_timed(time(14, 30), time(15, 30)),
         exclude_source_type=ScheduleSourceType.TASK.value,
         exclude_source_id=task.id,
     )
