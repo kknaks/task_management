@@ -105,3 +105,80 @@ class ScheduleSourceType(StrEnum):
 
     TASK = "task"
     MEETING = "meeting"
+
+
+# --- 회의 도메인 (WORK-006 · `domains/meeting.md`) ------------------------------
+
+
+class MeetingStatus(StrEnum):
+    """회의 상태 **4종** — `scheduled → recording → generating → ended` 한 방향(M-3 · DEC-003 §4).
+
+    「예정」·「기록 중」·「생성중」·「종료」는 표시 매핑이다(G-4). 취소 상태는 없다 — 회의는 지우는 것뿐이다.
+    상태를 대입하는 코드는 `meeting_service` 의 전이 함수(이 work 는 `start()` 하나)가 부르는
+    repository 함수 안에만 있다.
+    """
+
+    SCHEDULED = "scheduled"
+    RECORDING = "recording"
+    GENERATING = "generating"
+    ENDED = "ended"
+
+
+class IntegrationState(StrEnum):
+    """통합 결과 — `status` 와 **다른 축**이다(M-4). `ended + failed` 가 「다시 생성」의 조건이다."""
+
+    NOT_STARTED = "not_started"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+class MeetingTrack(StrEnum):
+    """안건·줄의 트랙 3종(M-5-a). 이 work 는 **`HUMAN` 만** 만든다 — `AI` 는 WORK-007, `MERGED` 는 WORK-008."""
+
+    HUMAN = "human"
+    AI = "ai"
+    MERGED = "merged"
+
+
+class LineKind(StrEnum):
+    """줄의 종류(ERD `meeting_line.kind`). 이 work 는 줄을 읽기만 한다."""
+
+    DISCUSSION = "discussion"
+    DECISION = "decision"
+    TASK = "task"
+    ACTION = "action"
+
+
+class AgendaState(StrEnum):
+    """안건 상태(M-5-c). **시작 전에는 `NULL`** 이라 값 자체는 회의 중·종료 후의 것이다.
+
+    `ACTIVE`「논의 중」· `DONE`「완료」· `NEXT`「대기」. 이 work 는 값을 쓰지 않고 자리만 둔다(WORK-007).
+    """
+
+    NEXT = "next"
+    ACTIVE = "active"
+    DONE = "done"
+
+
+class BatchPhase(StrEnum):
+    """`meeting_batch_run.phase`. 이 work 는 행을 만들지 않는다 — CHECK 값의 정본만 둔다."""
+
+    INCREMENTAL = "incremental"
+    FINAL = "final"
+    INTEGRATION = "integration"
+
+
+class BatchRunStatus(StrEnum):
+    """`meeting_batch_run.status`(DEC-003 §7 · M-16). `latestBatchSeq` 는 `SUCCEEDED` 분의 최대 `seq` 다."""
+
+    SUCCEEDED = "succeeded"
+    DISCARDED = "discarded"
+    FAILED = "failed"
+
+
+class MeetingSort(StrEnum):
+    """회의록 목록 정렬 2종(SPEC-006 §4). 기본은 `LATEST`(`startAt` 내림차순)."""
+
+    LATEST = "latest"
+    OLDEST = "oldest"

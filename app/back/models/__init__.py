@@ -3,6 +3,14 @@
 from models.account import Account, AuthSession, Career, Project, WorkType
 from models.base import Base
 from models.calendar import Schedule
+from models.meeting import (
+    Meeting,
+    MeetingAgenda,
+    MeetingAttachment,
+    MeetingBatchRun,
+    MeetingLine,
+    MeetingTranscript,
+)
 from models.task import (
     Task,
     TaskAttachment,
@@ -20,6 +28,12 @@ __all__ = [
     "Project",
     "WorkType",
     "Schedule",
+    "Meeting",
+    "MeetingAgenda",
+    "MeetingAttachment",
+    "MeetingBatchRun",
+    "MeetingLine",
+    "MeetingTranscript",
     "Task",
     "TaskAttachment",
     "TaskLog",

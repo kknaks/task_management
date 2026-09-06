@@ -17,15 +17,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from dto.calendar import SchedulePlacementDTO
 from dto.enums import ScheduleSourceType, TaskStatus
 from models.calendar import Schedule
+from models.meeting import Meeting
 from models.task import Task
 
 
 def _inactive_task_source() -> object:
     """원본이 **소프트 딜리트됐거나 취소된 업무**인 `schedule` 행을 가리키는 조건(C-10).
 
-    회의 등 다른 `source_type` 은 여기 걸리지 않는다 — **모르는 원본은 살아 있는 것으로 본다.**
-    겹침 검사에서 빠뜨리는 쪽(=충돌을 놓치는 쪽)보다 막는 쪽이 안전하고,
-    WORK-006 이 회의를 넣을 때 이 조건만 넓히면 된다.
+    다른 `source_type` 은 여기 걸리지 않는다 — **모르는 원본은 살아 있는 것으로 본다.**
+    겹침 검사에서 빠뜨리는 쪽(=충돌을 놓치는 쪽)보다 막는 쪽이 안전하다.
     """
     return exists().where(
         and_(
@@ -35,6 +35,20 @@ def _inactive_task_source() -> object:
                 Task.deleted_at.is_not(None),
                 Task.status == TaskStatus.CANCELLED.value,
             ),
+        )
+    )
+
+
+def _inactive_meeting_source() -> object:
+    """원본이 **소프트 딜리트된 회의**인 `schedule` 행(WORK-006 · SPEC-006 §4 「소프트 딜리트분은 검사 제외」).
+
+    회의에는 취소 상태가 없다(DEC-003 §3) — 삭제만 본다. 행은 남고 여기서 거른다(§3-3).
+    """
+    return exists().where(
+        and_(
+            Schedule.source_type == ScheduleSourceType.MEETING.value,
+            Meeting.id == Schedule.source_id,
+            Meeting.deleted_at.is_not(None),
         )
     )
 
@@ -59,6 +73,7 @@ async def find_overlapping(
         Schedule.start_at < end_at,
         Schedule.end_at > start_at,
         ~_inactive_task_source(),
+        ~_inactive_meeting_source(),
     )
 
     if exclude_source_type is not None and exclude_source_id is not None:

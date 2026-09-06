@@ -117,3 +117,16 @@ class DatabaseUnavailableError(AppError):
 
     status = 503
     code = "db_unavailable"
+
+
+class InvalidMeetingStatusError(ConflictError):
+    """회의 상태 흐름(`scheduled → recording → generating → ended`, 한 방향) 밖의 요청(SPEC-006 §4).
+
+    **상태별 허용 표의 판정은 `meeting_service._assert_allowed()` 한 곳**이고 이 예외는 거기서만 난다.
+    `/start` 두 번 · `recording` 중 삭제·일시 변경·메타 변경 · `generating` 중 첨부 등이 전부 이 코드다.
+
+    **`meeting_not_recording` 을 만들지 않는다** — 같은 상황(상태 가드)이라 이 코드 하나로 합쳤다
+    (SPEC-006 §7 정합 #3 · 코디 확정). `detail` 문구만 화면별로 다를 수 있다.
+    """
+
+    code = "invalid_meeting_status"

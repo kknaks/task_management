@@ -26,6 +26,9 @@ from repository import schedule_repository
 # SPEC-003 §4 Case Matrix — 문구까지 계약이다.
 _OVERLAP = "그 시간에 다른 일정이 있습니다"
 
+# 회의 서비스가 자기 옛 행을 검사에서 뺄 때 쓰는 원본 종류 — `schedule` 어휘는 이 파일 밖으로 흘리지 않는다.
+MEETING_SOURCE_TYPE = ScheduleSourceType.MEETING.value
+
 
 def _app_timezone() -> ZoneInfo:
     """`date`/`time` → `timestamptz` 변환 기준은 **앱 타임존(KST)** 이다(§3-3).
@@ -139,4 +142,47 @@ async def find_task_placement(
     """파생 결과 조회. **소프트 딜리트해도 행은 그대로 둔다**(§3-3) — 조회가 원본으로 거른다."""
     return await schedule_repository.find_placement(
         session, source_type=ScheduleSourceType.TASK.value, source_id=task_id
+    )
+
+
+# --- 회의(WORK-006) — 같은 파일 · 같은 모양. 두 번째 구현을 만들지 않는다 ---------
+
+
+def build_meeting_placement(start_at: datetime, end_at: datetime) -> SchedulePlacementDTO:
+    """회의 **일시** → 시간축 배치(`database/README` §3-1 · M-1).
+
+    회의는 **항상 시간 일정**이다(`is_all_day=False`) — 업무의 「날짜만 있는 기한」 예외가 회의에는 없다.
+    그래서 생성·일시 변경 **모두** 겹침 검사를 지난다(SPEC-006 §4 Case Matrix `schedule_overlap`).
+    """
+    return SchedulePlacementDTO(start_at=start_at, end_at=end_at, is_all_day=False)
+
+
+async def sync_from_meeting(
+    session: AsyncSession,
+    *,
+    account_id: int,
+    meeting_id: int,
+    start_at: datetime,
+    end_at: datetime,
+) -> None:
+    """회의의 **일시**를 `schedule` 로 내린다. **원본 쓰기와 같은 트랜잭션**이다(§3-4 · SCH-1).
+
+    회의는 일시가 NOT NULL 이라 행이 사라지는 갈래가 없다(SCH-4 「회의는 사실상 항상 행이 있다」).
+    소프트 딜리트는 행을 **그대로 둔다** — 조회·검사가 원본을 조인해 거른다(§3-3).
+    """
+    await schedule_repository.upsert(
+        session,
+        account_id=account_id,
+        source_type=ScheduleSourceType.MEETING.value,
+        source_id=meeting_id,
+        placement=build_meeting_placement(start_at, end_at),
+    )
+
+
+async def find_meeting_placement(
+    session: AsyncSession, *, meeting_id: int
+) -> SchedulePlacementDTO | None:
+    """파생 결과 조회. 테스트·검증 경로다 — 쓰기가 아니다."""
+    return await schedule_repository.find_placement(
+        session, source_type=ScheduleSourceType.MEETING.value, source_id=meeting_id
     )
