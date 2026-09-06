@@ -95,3 +95,19 @@ export function isInvalidMeetingStatus(error: unknown): boolean {
 export function autoSaveErrorToast(fieldLabel: string): string {
   return `저장하지 못했습니다 · ${fieldLabel}`;
 }
+
+/** 422 인가 — 종료 후 편집의 인라인 필드 · 드로어가 **그 필드**에 붙일지 가른다(SPEC-008 Case Matrix `validation_error`). */
+export function isValidationError(error: unknown): boolean {
+  return isApiError(error) && error.code === API_ERROR_CODE.VALIDATION_ERROR;
+}
+
+/** 서버가 짚은 요청 필드(camelCase) — 없으면 `null`(폼 전체). 엉뚱한 칸을 짚지 않는다(W-3). */
+export function validationFieldOf(error: unknown): string | null {
+  return isApiError(error) && error.code === API_ERROR_CODE.VALIDATION_ERROR ? error.field : null;
+}
+
+/** 줄 삭제 실패 토스트(Case Matrix 「줄 삭제 실패」) — 모달은 닫히고 줄은 그대로 남는다. */
+export const LINE_DELETE_FAILED_MESSAGE = "삭제하지 못했습니다";
+/** 「회의 종료」 · 「다시 생성」 요청 자체가 실패했을 때(5xx · 네트워크) — 가리지 않는다. */
+export const END_FAILED_MESSAGE = "회의를 종료하지 못했습니다";
+export const INTEGRATE_FAILED_MESSAGE = "다시 생성을 시작하지 못했습니다";

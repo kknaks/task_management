@@ -332,9 +332,12 @@ describe("삭제 · 시작 · 스위치", () => {
     expect(push).not.toHaveBeenCalled();
   });
 
-  it("`generating`·`ended` 는 WORK-008 플레이스홀더다", async () => {
-    server.use(http.get(`${API_BASE}/api/meetings/21`, () => HttpResponse.json(meetingDetail({ status: "generating" }))));
+  it("`generating`·`ended` 는 WORK-008 의 `MeetingClosedPage` 로 간다 — 상태 칩 「회의록 생성중」", async () => {
+    server.use(
+      http.get(`${API_BASE}/api/meetings/21`, () => HttpResponse.json(meetingDetail({ status: "generating", integrationState: "running" }))),
+    );
     renderWithProviders(<MeetingDetailPage />);
-    expect(await screen.findByText("이 화면은 WORK-008 에서 만든다")).toBeInTheDocument();
+    expect(await screen.findByText("회의록 생성중")).toBeInTheDocument();
+    expect(screen.queryByText("이 화면은 WORK-008 에서 만든다")).not.toBeInTheDocument();
   });
 });

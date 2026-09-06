@@ -14,14 +14,19 @@
  * | `connecting` | 회색 | 「연결 중」 + 경과 | SPEC-007 U-1 |
  * | `live` | `#EEF1FE`/`#C9D1FB` · dot 광륜 | 「기록 중」 + 경과 | L809~812 |
  * | `paused` | 회색 | 「일시정지」 + 사유 + 경과 · 「다른 창에서 기록 중입니다」 | U-1 · Case Matrix |
- * | `headline` | `#EEF1FE`/`#C9D1FB` | AI 한 줄 요약 | SPEC-008 · [09] L727~733 |
+ * | `headline` | `#EEF1FE`/`#C9D1FB` | AI 한 줄 요약 — 페이지 56 한 줄 / 드로어 72 두 줄(`layout`) | SPEC-008 U-3 · U-4 · [09] L727~733 |
+ * | `generating` | 회색 · 16px 스피너 | 「AI 요약을 정리하고 있습니다」 / 「회의록을 통합하고 있습니다 · 다시 시도 중 (n/2)」 + 「경과 mm:ss」 · 폴링 실패면 「상태를 확인하지 못했습니다 · 다시 확인」 | SPEC-008 U-1 |
+ * | `failed` | `#FCEEEC`/`#E2685B` 배너 | 「통합 정리 실패 · 회의록 탭에 회의 중 작성한 원본을 보여 드립니다」 + 「다시 생성」 | SPEC-008 U-2 |
  *
  * **회의 중 상태 바에 없는 것**(SPEC-007 §7-B): 파형 15개 막대(L813~829) · 「자동 저장 · 09:42」(L830) · AI 한 줄 요약.
  * 경과 시간은 **`now − recordingStartedAt`** 이고 일시정지 중에도 멈추지 않는다(U-1 기대 결과).
- * **`generating` · `failed` 는 WORK-008 이 이 파일에 더한다.** 회의 상태·라우트를 import 하지 않는다 — prop 만 받는다.
+ * **`generating` · `failed` 는 WORK-008 이 이 파일에 더했다** — 두 번째 상단 바 파일을 만들지 않는다(정적 검사 ⑥).
+ * 한 줄 요약 바의 「MM.DD HH:mm 생성」(시안 L1453)은 **그리지 않는다**(SPEC-008 §7). 회의 상태·라우트를 import 하지 않는다 — prop 만 받는다.
  */
 
-import type { MergedSummary, PauseReason } from "@/features/meetings/types";
+import { Loader2 } from "lucide-react";
+
+import type { JobPhase, MergedSummary, PauseReason } from "@/features/meetings/types";
 import { formatElapsed } from "@/lib/datetime";
 import { useNow } from "@/lib/hooks/useNow";
 import { cn } from "@/lib/utils";
@@ -36,6 +41,31 @@ export type MeetingStatusBarProps =
       /** `null` 이면 호출자가 **바를 그리지 않는다** — 빈 바를 두지 않는다(SPEC-006 U-8). */
       headline: string;
       summary: MergedSummary | null;
+      /**
+       * `single`(기본) = 페이지 56 한 줄 · `stacked` = 드로어 안 72 두 줄(SPEC-008 U-4).
+       * **값 · 색은 하나**이고 다른 것은 줄 나눔뿐이다. 문장 전체는 `title` 툴팁으로 본다.
+       */
+      layout?: "single" | "stacked";
+    }
+  | {
+      variant: "generating";
+      /** `final_batch` → 「AI 요약을 정리하고 있습니다」 · `integration` → 「회의록을 통합하고 있습니다」. 모르면(첫 폴링 전) ① 문구. */
+      phase: JobPhase | null;
+      /** 통합 시도 회차(1~3). 2 이상이면 「· 다시 시도 중 (n−1/2)」 — 재시도 2회(DEC-003 §7). */
+      attempt: number;
+      /** 「경과 mm:ss」의 기준 — 종료 요청 응답 시각(ms). 재진입이면 폴링을 처음 붙인 시각이다. `null` 이면 숨긴다. */
+      elapsedFromMs: number | null;
+      /** 폴링 조회 실패(5xx · 네트워크) 또는 480회 상한 — 스피너는 그대로, 우측에 「상태를 확인하지 못했습니다 · 다시 확인」. */
+      pollFailed: boolean;
+      onRecheck: () => void;
+    }
+  | {
+      variant: "failed";
+      /** 「다시 생성」 — `POST …/integrate`. 요청 중이면 비활성 + 스피너. */
+      onRegenerate: () => void;
+      regenerating: boolean;
+      /** 드로어(U-4)에서도 되지만 편집 잠금 등 부모 사정으로 막을 때. */
+      disabled?: boolean;
     };
 
 /** 사유별 문구(U-1 · Case Matrix). **별도 배너 컴포넌트가 아니라 이 바가 사유를 말한다**(DEC-003 §1). */
@@ -56,6 +86,32 @@ function Elapsed({ from, className }: { from: string | null; className?: string 
     </span>
   );
 }
+
+/** 「경과 mm:ss」 — 생성중 바 우측(U-1). 기준은 **종료 요청 응답 시각**이고 화면이 센다(표시 전용). */
+function ElapsedSince({ fromMs }: { fromMs: number }) {
+  const now = useNow(1000);
+  const total = Math.max(0, Math.floor((now - fromMs) / 1000));
+  const mm = String(Math.floor(total / 60)).padStart(2, "0");
+  const ss = String(total % 60).padStart(2, "0");
+  return (
+    <span data-elapsed className="text-caption tabular-nums text-fg-caption">
+      경과 {mm}:{ss}
+    </span>
+  );
+}
+
+/** 단계 문구(U-1) — `progress.phase` · `attempt` 파생. 시도 회차는 재시도 횟수(n−1)/2 로 적는다. */
+export function generatingLabel(phase: JobPhase | null, attempt: number): string {
+  if (phase !== "integration") {
+    return "AI 요약을 정리하고 있습니다";
+  }
+  const retry = Math.max(0, attempt - 1);
+  return retry > 0 ? `회의록을 통합하고 있습니다 · 다시 시도 중 (${retry}/2)` : "회의록을 통합하고 있습니다";
+}
+
+export const POLL_FAILED_LABEL = "상태를 확인하지 못했습니다";
+export const FAILED_BANNER_TITLE = "통합 정리 실패";
+export const FAILED_BANNER_BODY = "회의록 탭에 회의 중 작성한 원본을 보여 드립니다";
 
 const GRAY_BAR = "flex h-14 w-full items-center gap-3.5 rounded-xl border border-chip-border bg-chip-bg px-5";
 const LIVE_BAR = "flex h-14 w-full items-center gap-3.5 rounded-xl border border-ai-bar-border bg-ai-bar px-5";
@@ -103,21 +159,93 @@ export function MeetingStatusBar(props: MeetingStatusBarProps) {
       );
     }
 
-    case "headline":
+    case "headline": {
+      const badge = (
+        <span className="inline-flex h-[22px] shrink-0 items-center rounded-chip border border-ai-bar-border bg-card px-2 text-row-label text-ai-bar-badge">
+          AI 한 줄 요약
+        </span>
+      );
+      const counts = props.summary ? (
+        <span className="shrink-0 text-caption text-muted-foreground">
+          안건 {props.summary.agendaCount} · 결정 {props.summary.decisionCount} · 액션 {props.summary.actionCount}
+        </span>
+      ) : null;
+      if (props.layout === "stacked") {
+        // 드로어 — 첫 줄 배지 + 문장(말줄임) / 둘째 줄 카운트(U-4). 값 · 색은 페이지와 같다.
+        return (
+          <div
+            role="note"
+            aria-label="AI 한 줄 요약"
+            data-layout="stacked"
+            className="flex h-[72px] w-full flex-col justify-center gap-1.5 rounded-xl border border-ai-bar-border bg-ai-bar px-5"
+          >
+            <div className="flex min-w-0 items-center gap-3">
+              {badge}
+              <span title={props.headline} className="min-w-0 flex-1 truncate text-control-label font-semibold text-ai-bar-foreground">
+                {props.headline}
+              </span>
+            </div>
+            {counts}
+          </div>
+        );
+      }
       return (
         <div role="note" aria-label="AI 한 줄 요약" className={cn(LIVE_BAR, "gap-3")}>
-          <span className="inline-flex h-[22px] shrink-0 items-center rounded-chip border border-ai-bar-border bg-card px-2 text-row-label text-ai-bar-badge">
-            AI 한 줄 요약
-          </span>
+          {badge}
           {/* **한 문장 · 넘치면 말줄임**, 줄바꿈 없음([09] L731) */}
-          <span className="min-w-0 flex-1 truncate text-control-label font-semibold text-ai-bar-foreground">
+          <span title={props.headline} className="min-w-0 flex-1 truncate text-control-label font-semibold text-ai-bar-foreground">
             {props.headline}
           </span>
-          {props.summary ? (
-            <span className="shrink-0 text-caption text-muted-foreground">
-              안건 {props.summary.agendaCount} · 결정 {props.summary.decisionCount} · 액션 {props.summary.actionCount}
-            </span>
-          ) : null}
+          {counts}
+        </div>
+      );
+    }
+
+    case "generating": {
+      const label = generatingLabel(props.phase, props.attempt);
+      return (
+        <div role="status" aria-label="회의록 생성중" data-phase={props.phase ?? undefined} className={GRAY_BAR}>
+          {/* 16px 스피너 `#7181F8` + 단계 문구 14/600(U-1) — 실패로 꾸미지 않는다 */}
+          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" aria-hidden />
+          <span className="text-control-label font-semibold text-muted-foreground">{label}</span>
+          <span className="ml-auto flex shrink-0 items-center gap-3">
+            {props.pollFailed ? (
+              <span className="flex items-center gap-2 text-caption text-fg-meta">
+                {POLL_FAILED_LABEL}
+                <span aria-hidden>·</span>
+                <button type="button" onClick={props.onRecheck} className="font-semibold text-foreground underline underline-offset-2 hover:text-primary">
+                  다시 확인
+                </button>
+              </span>
+            ) : null}
+            {props.elapsedFromMs !== null ? <ElapsedSince fromMs={props.elapsedFromMs} /> : null}
+          </span>
+        </div>
+      );
+    }
+
+    case "failed":
+      return (
+        <div
+          role="alert"
+          aria-label={FAILED_BANNER_TITLE}
+          className="flex h-14 w-full items-center gap-3 rounded-xl border border-status-overdue bg-banner-fail px-5"
+        >
+          <span className="min-w-0 flex-1 truncate text-control-label text-status-overdue">
+            <span className="font-semibold">{FAILED_BANNER_TITLE}</span>
+            <span aria-hidden> · </span>
+            {FAILED_BANNER_BODY}
+          </span>
+          <button
+            type="button"
+            onClick={props.onRegenerate}
+            disabled={props.regenerating || props.disabled}
+            title="사람 원본과 AI 요약을 다시 통합합니다 · 원본은 바뀌지 않습니다"
+            className="flex h-[30px] shrink-0 items-center gap-1.5 rounded-control bg-primary px-3 text-caption font-semibold text-primary-foreground hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {props.regenerating ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : null}
+            다시 생성
+          </button>
         </div>
       );
   }

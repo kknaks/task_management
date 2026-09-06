@@ -30,6 +30,7 @@ import { toast } from "sonner";
 
 import { Breadcrumb } from "@/components/shared/AppShell";
 import { PanelTabs } from "@/components/shared/PanelTabs";
+import { LIVE_AGENDA_BADGE } from "@/features/meetings/agendaBadges";
 import { AgendaLineTree, type AgendaBadge } from "@/features/meetings/components/AgendaLineTree";
 import { AttachmentAddTrigger, MeetingAttachmentsTab } from "@/features/meetings/components/MeetingAttachmentsTab";
 import { MeetingStatusBar, type MeetingStatusBarProps } from "@/features/meetings/components/MeetingStatusBar";
@@ -49,12 +50,8 @@ import { useOverlay } from "@/lib/overlay/OverlayProvider";
 type LeftTab = "notes" | "ai";
 type RightTab = "transcript" | "attachments";
 
-/** 회의 중 어휘(DEC-003 §1 표 · SPEC-007 §7-A) — `next` 는 **「대기」**. 종료 후 「다음 논의로」는 WORK-008 이 같은 prop 으로 바꾼다. */
-export const LIVE_AGENDA_BADGE: Record<AgendaState, Exclude<AgendaBadge, null>> = {
-  active: { tone: "active", label: "논의 중" },
-  done: { tone: "done", label: "완료" },
-  next: { tone: "next", label: "대기" },
-};
+/** 회의 중 어휘(DEC-003 §1 표 · SPEC-007 §7-A) — `next` 는 **「대기」**. 정의는 `agendaBadges.ts`(WORK-008 이 올렸다 — 종료 후 「다음 논의로」는 `closeState.ts`). */
+export { LIVE_AGENDA_BADGE };
 
 /** AI 가 새로 만든 안건(`sourceAgendaId: null`)의 캡션(U-4). */
 const AI_AGENDA_CAPTION: AgendaBadge = { tone: "caption", label: "AI 안건" };

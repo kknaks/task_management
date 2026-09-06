@@ -11,12 +11,15 @@ import type {
   AddLineInput,
   AddMeetingAttachmentInput,
   CreateMeetingInput,
+  JobAccepted,
+  JobItem,
   MeetingDetail,
   MeetingLine,
   MeetingListResponse,
   MeetingsListQuery,
   TranscriptResponse,
   UpdateAgendaInput,
+  UpdateLineInput,
   UpdateMeetingInput,
 } from "@/features/meetings/types";
 
@@ -57,6 +60,26 @@ export function startMeeting(id: number): Promise<MeetingDetail> {
   return apiFetch<MeetingDetail>(`/api/meetings/${id}/start`, { method: "POST" });
 }
 
+// --- 종료 파이프라인(SPEC-008 §4) ------------------------------------------------
+
+/**
+ * **회의 종료** — `recording → generating` + job. `202 { jobId }` 가 오면 화면은 그 자리에서 「생성중」이 된다(U-1).
+ * 사전 조건은 `recording` 하나 — 스트림이 끊겨 있어도 받는다. 응답에 결과가 없다(BE §6).
+ */
+export function endMeeting(id: number): Promise<JobAccepted> {
+  return apiFetch<JobAccepted>(`/api/meetings/${id}/end`, { method: "POST" });
+}
+
+/** **「다시 생성」** — `ended`+`failed` 에서만(그 밖은 409). 통합(②)만 다시 돈다 · 한 줄 요약도 같은 응답에서 온다. */
+export function integrateMeeting(id: number): Promise<JobAccepted> {
+  return apiFetch<JobAccepted>(`/api/meetings/${id}/integrate`, { method: "POST" });
+}
+
+/** 종료 job 폴링 — 2초 간격 · 종결에서 멈춘다(`useMeetingFinalizeJob`). 남의 job 은 404. */
+export function fetchJob(jobId: number): Promise<JobItem> {
+  return apiFetch<JobItem>(`/api/jobs/${jobId}`, { cache: "no-store" });
+}
+
 // --- 안건(사람 트랙) — 세 SPEC 이 공유하는 표면 ----------------------------
 
 export function addAgenda(meetingId: number, title: string): Promise<MeetingDetail> {
@@ -94,6 +117,29 @@ export function deleteAgenda(meetingId: number, agendaId: number): Promise<void>
  */
 export function addLine(meetingId: number, input: AddLineInput): Promise<MeetingLine> {
   return apiFetch<MeetingLine>(`/api/meetings/${meetingId}/lines`, { method: "POST", body: input });
+}
+
+/**
+ * **인라인 수정 · 종류 전환**(SPEC-008 U-7) — `ended` 에서 편집 대상 트랙의 줄만. 응답은 **`MeetingDetail` 전체**
+ * (`mergedSummary` 가 함께 갱신돼 온다 — 화면이 세지 않는다).
+ */
+export function updateLine(
+  meetingId: number,
+  lineId: number,
+  input: UpdateLineInput,
+): Promise<MeetingDetail> {
+  return apiFetch<MeetingDetail>(`/api/meetings/${meetingId}/lines/${lineId}`, {
+    method: "PATCH",
+    body: input,
+  });
+}
+
+/**
+ * **「제거」**(SPEC-008 U-7 · M-20) — 회의록 탭이 그리는 트랙의 행 하나만 **하드 삭제**. `204`.
+ * 원본 줄 · AI 트랙 · 트랜스크립트 · 녹음 · 업무는 그대로다. 없는 줄은 404(멱등 삭제가 아니다).
+ */
+export function deleteLine(meetingId: number, lineId: number): Promise<void> {
+  return apiFetch<void>(`/api/meetings/${meetingId}/lines/${lineId}`, { method: "DELETE" });
 }
 
 /** 확정 발화 블록 전량 — 진입 시 1회. 이후는 WS `transcript.final` 로 append 한다(WP 캐시 키 행). */

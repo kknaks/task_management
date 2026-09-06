@@ -22,6 +22,7 @@ import { ArrowLeft, X } from "lucide-react";
 import { PanelTabs } from "@/components/shared/PanelTabs";
 import { attachmentMeta } from "@/features/meetings/components/MeetingAttachmentsTab";
 import type { MeetingAttachment } from "@/features/meetings/types";
+import type { useOverlay } from "@/lib/overlay/OverlayProvider";
 
 type FileTab = "preview" | "source";
 
@@ -116,4 +117,20 @@ export function AttachmentFileDrawer({ attachment }: { attachment: MeetingAttach
       </div>
     </div>
   );
+}
+
+/**
+ * 파일 드로어(U-7)를 여는 함수 — 드로어가 없는 화면(시작 전 · 회의 중 · 종료 후)에서만 연다(FE §6-2).
+ * `openMeetingDrawers` 가 다시 내보낸다. 여기 두는 이유 — 종료 후 본문(`MeetingDetailBody`)이 레지스트리를 import 하면
+ * 레지스트리 → 상세 드로어 → 본문 순환이 생긴다(WORK-008).
+ */
+export function openAttachmentFileDrawer(overlay: ReturnType<typeof useOverlay>, attachment: MeetingAttachment): void {
+  overlay.openDrawer({
+    key: `attachment-${attachment.id}`,
+    title: attachment.name,
+    renderHeader: ({ fullscreen, onClose }) => (
+      <AttachmentFileDrawerHeader attachment={attachment} fullscreen={fullscreen} onClose={onClose} />
+    ),
+    content: <AttachmentFileDrawer attachment={attachment} />,
+  });
 }

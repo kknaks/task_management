@@ -14,10 +14,12 @@ import { fetchTranscript } from "@/features/meetings/api";
 import type { TranscriptResponse } from "@/features/meetings/types";
 import { queryKeys } from "@/lib/api/queryKeys";
 
-export function useTranscriptQuery(meetingId: number) {
+export function useTranscriptQuery(meetingId: number, enabled = true) {
   return useQuery({
     queryKey: queryKeys.meetingTranscript(meetingId),
     queryFn: () => fetchTranscript(meetingId),
+    // 드로어(SPEC-008 U-4)에는 스크립트 패널이 없다 — 읽지 않는다(WORK-008).
+    enabled,
     // WS 가 append 하는 캐시다 — 포커스·마운트로 되감지 않는다(재조회는 「다시 시도」와 `ready` 따라잡기뿐).
     staleTime: Number.POSITIVE_INFINITY,
   });

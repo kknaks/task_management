@@ -11,7 +11,7 @@
  * 목록 계산(`buildPopoverItems`)을 내보내 두 곳이 같은 순서를 본다. WORK-008 편집 모드가 같은 팝오버를 쓴다.
  */
 
-import { LINE_KIND_LABEL } from "@/features/meetings/components/LineRow";
+import { LINE_KIND_LABEL, LINE_KINDS } from "@/features/meetings/lineKinds";
 import type { LineKind, MeetingAgenda } from "@/features/meetings/types";
 import { cn } from "@/lib/utils";
 
@@ -22,7 +22,7 @@ export type PopoverItem =
   | { id: string; kind: "new-agenda" }
   | { id: string; kind: "move"; agenda: MeetingAgenda };
 
-export const LINE_KINDS: readonly LineKind[] = ["discussion", "decision", "task", "action"];
+export { LINE_KINDS };
 
 /** 칩 한 글자 + 색([09] L668~672 · 시안 L926~935). */
 const KIND_CHIP: Record<LineKind, { glyph: string; className: string }> = {

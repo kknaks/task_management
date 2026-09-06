@@ -48,6 +48,8 @@ export const queryKeys = {
   meetings: () => ["meetings"] as const,
   meetingsList: (query: Record<string, string | number | null>) =>
     ["meetings", "list", query] as const,
+  /** 목록 전부(조건 무관) — job 종결이 `headline`(목록 셋째 줄)을 위해 무효화한다(무효화 표 「회의 job 완료」). */
+  meetingsListAll: () => ["meetings", "list"] as const,
   meetingDetail: (id: number) => ["meetings", "detail", id] as const,
   /**
    * 확정 발화 블록(SPEC-007) — 진입 시 `GET …/transcript` 1회 + WS `transcript.final` 로 append.
@@ -60,6 +62,11 @@ export const queryKeys = {
    * 시작한다(State/Lifecycle). 서버 상태가 아니라 세션 의도라 쿼리 함수가 없다.
    */
   meetingStartIntent: (id: number) => ["meetings", "startIntent", id] as const,
+  /**
+   * 종료 job 폴링(SPEC-008 §4 · §3-3 `['jobs', id]`) — `useMeetingFinalizeJob` 하나가 읽는다.
+   * 종결하면 `['meetings','detail',id]` + `['meetings','list',…]` 를 무효화한다(무효화 표 「회의 job 완료」).
+   */
+  job: (id: number) => ["jobs", id] as const,
   /** 캘린더 work 가 읽는다. 여기서는 **무효화로만** 건드린다(§3-3 「직접 쓰지 않는다」). */
   schedules: () => ["schedules"] as const,
 } as const;

@@ -117,6 +117,8 @@ const config: Config = {
         "decision-chip": "var(--tm-line-decision-chip-bg)",
         "dot-ai": "var(--tm-dot-ai)",
         "evidence-hover": "var(--tm-evidence-chip-hover)",
+        /* 종료 후 화면(SPEC-008 U-2) — 통합 실패 배너 배경. 테두리·글자는 `status.overdue` */
+        "banner-fail": "var(--tm-banner-fail-bg)",
 
         /* 동적 유형 색 — `data-color-token` 이 고른 팔레트 쌍(§5-3) */
         palette: { bg: "var(--tm-palette-bg)", fg: "var(--tm-palette-fg)" },

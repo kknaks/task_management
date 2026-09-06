@@ -52,6 +52,16 @@ export interface LineEvidence {
   toMs: number;
 }
 
+/**
+ * 업무 줄이 들고 있는 **반영 대기 변경** — 키는 `dueDate` · `status` · `note` **셋뿐**(DEC-003 §4 · M-14-a).
+ * `cancelled` 는 담을 수 없다(사유 필수). 적용은 Phase 5 의 「업무 갱신」 버튼이 한다 — 이 work 는 읽기만.
+ */
+export interface PendingChange {
+  dueDate?: string;
+  status?: "todo" | "in_progress" | "done";
+  note?: string;
+}
+
 /** 줄 — 형태만 고정한다. **의미·표시·쓰기 표면은 SPEC-007·008**(§4). */
 export interface MeetingLine {
   id: number;
@@ -63,7 +73,7 @@ export interface MeetingLine {
   evidence: LineEvidence[];
   orderIndex: number;
   taskId: number | null;
-  pendingChange: Record<string, unknown> | null;
+  pendingChange: PendingChange | null;
   sourceHumanLineId: number | null;
   sourceAiLineId: number | null;
   task: LineTaskSummary | null;
@@ -212,12 +222,20 @@ export interface AddMeetingAttachmentInput {
 
 // --- 회의 중(SPEC-007 §4) ----------------------------------------------------
 
-/** `POST /api/meetings/{id}/lines` — 사람 줄 하나. 응답은 `MeetingLine`(201). */
+/**
+ * `POST /api/meetings/{id}/lines` — 사람 줄 하나. 응답은 `MeetingLine`(201 — 코디 판정, 상세 전체가 아니다).
+ * `detail` 은 **종료 후 편집(SPEC-008 U-8)만** 보낸다 — 회의 중에 실으면 서버가 `validation_error` 다.
+ * `taskId` · `pendingChange` · `newTask` 갈래(U-9 · U-10)는 Phase 5 가 더한다.
+ */
 export interface AddLineInput {
   agendaId: number;
   kind: LineKind;
   content: string;
+  detail?: string | null;
 }
+
+/** `PATCH /api/meetings/{id}/lines/{lineId}` — 보낸 필드만(SPEC-008 §4). 응답은 `MeetingDetail` 전체. */
+export type UpdateLineInput = { content: string } | { kind: LineKind };
 
 /**
  * `PATCH …/agendas/{agendaId}` 는 **한 표면**이다 — 시작 전 `title`(SPEC-006) · 회의 중 `state`(SPEC-007).
@@ -265,6 +283,28 @@ export type StreamClientFrame =
     }
   | { type: "pause"; reason: "user" | "mic" }
   | { type: "resume" };
+
+// --- 종료 파이프라인(SPEC-008 §4 · BE §6) — 백엔드 `schemas/job.py` 의 미러 --------------------
+
+export type JobStatus = "queued" | "running" | "succeeded" | "failed";
+export type JobPhase = "final_batch" | "integration";
+export type JobErrorCode = "integration_failed" | "integration_timeout" | "job_timeout";
+
+/** `POST …/end` · `POST …/integrate` → `202 { jobId }`. 결과를 담지 않는다 — 종결 뒤 상세를 다시 읽는다. */
+export interface JobAccepted {
+  jobId: number;
+}
+
+/** `GET /api/jobs/{jobId}` — `progress` 는 **파생**(`kind≠meeting_finalize` 면 `null`). */
+export interface JobItem {
+  id: number;
+  kind: string;
+  status: JobStatus;
+  progress: { phase: JobPhase; attempt: number } | null;
+  errorCode: JobErrorCode | null;
+  errorMessage: string | null;
+  finishedAt: string | null;
+}
 
 // --- 클라이언트 세션 상태(SPEC-007 §4 stateDiagram) — DB 상태가 아니다 ---------------
 

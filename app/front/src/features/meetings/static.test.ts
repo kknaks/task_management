@@ -216,12 +216,137 @@ describe("⑭ 시안에 있으나 그리지 않는 것(SPEC-007 §7-B) — 문�
         .replace(/\/\*[\s\S]*?\*\//g, "")
         .replace(/^\s*\/\/.*$/gm, "")
         .replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
-      expect(code, name).not.toMatch(/회의실|회의 중 작성|PNG|PDF|다시 연결/);
+      // 「회의 중 작성」은 첨부 메타 라벨이다 — SPEC-008 U-2 실패 배너 문구 「회의 중 작성한 원본을 …」(상단 바 파일)은 다른 것이라 뺀다.
+      expect(code, name).not.toMatch(/회의실|회의 중 작성(?!한 원본)|PNG|PDF|다시 연결/);
     }
     const bar = read(path.join(MEETINGS, "components/MeetingStatusBar.tsx"))
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/^\s*\/\/.*$/gm, "")
       .replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
     expect(bar).not.toMatch(/자동 저장|wave|파형/);
+  });
+});
+
+/* ── WORK-008 — 종료 후 화면의 정적 검사(WP Phase 3·4·6 · 발주 §7) ──────────────────────────── */
+
+const WORK_008_FILES = [
+  "closeState.ts",
+  "hooks/useMeetingFinalizeJob.ts",
+  "hooks/useMeetingEdit.tsx",
+  "components/MeetingDetailBody.tsx",
+  "components/MeetingClosedPage.tsx",
+  "components/MeetingDetailDrawer.tsx",
+  "components/MeetingMetaInline.tsx",
+  "components/MeetingStatusChip.tsx",
+  "components/AddLineDrawer.tsx",
+  "components/LineDeleteModal.tsx",
+  "components/LineKindSelector.tsx",
+  "components/AgendaTitleInline.tsx",
+  "components/InlineFieldInput.tsx",
+  "openMeetingDrawers.tsx",
+];
+
+const stripComments = (code: string) =>
+  code
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "")
+    .replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+
+describe("⑮ 트리 — 컴포넌트 하나 · `track` prop 으로 부르지 않는다", () => {
+  it("`features/meetings/components` 에 `Tree` 이름을 가진 컴포넌트 파일이 `AgendaLineTree.tsx` 하나다(두 번째 트리 0건)", () => {
+    const trees = meetingSources.filter((file) => /Tree/i.test(path.basename(file))).map(rel);
+    expect(trees).toEqual(["features/meetings/components/AgendaLineTree.tsx"]);
+  });
+
+  it("`<AgendaLineTree` 호출에 `track=` prop 이 없다 — 통합본은 `agendas={…merged}` 로 부를 뿐이다", () => {
+    const offenders = meetingSources.filter((file) => /<AgendaLineTree[\s\S]*?track=/.test(read(file))).map(rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it("`AgendaLineTree` 안에 `track` 비교가 여전히 0건이다(⑫ 재실행)", () => {
+    const code = stripComments(read(path.join(MEETINGS, "components/AgendaLineTree.tsx")));
+    expect(code).not.toMatch(/track\s*[!=]==?|\.track\b|["']human["']|["']ai["']|["']merged["']/);
+  });
+});
+
+describe("⑯ 상단 바 슬롯 — `MeetingDetailBody` 하나", () => {
+  it("`variant=\"generating\"` · `variant=\"failed\"` 를 그리는 곳이 `MeetingDetailBody.tsx` 하나다(상단 바 파일 자신 제외)", () => {
+    const users = meetingSources
+      .filter((file) => !file.endsWith("MeetingStatusBar.tsx"))
+      .filter((file) => /variant="(generating|failed)"/.test(read(file)))
+      .map(rel);
+    expect(users).toEqual(["features/meetings/components/MeetingDetailBody.tsx"]);
+  });
+
+  it("WORK-008 파일 중 `<MeetingStatusBar` 를 그리는 곳이 `MeetingDetailBody.tsx` 하나다", () => {
+    const users = WORK_008_FILES.filter((name) => /<MeetingStatusBar\b/.test(read(path.join(MEETINGS, name))));
+    expect(users).toEqual(["components/MeetingDetailBody.tsx"]);
+  });
+});
+
+describe("⑰ 본문 껍데기 둘 — 페이지 · 드로어", () => {
+  it("`MeetingDetailBody` 를 import 하는 파일이 `MeetingClosedPage.tsx` · `MeetingDetailDrawer.tsx` 둘이다(본문이 셋이 아니다)", () => {
+    const users = meetingSources
+      .filter((file) => /from ["']@\/features\/meetings\/components\/MeetingDetailBody["']/.test(read(file)))
+      .map(rel)
+      .sort();
+    expect(users).toEqual([
+      "features/meetings/components/MeetingClosedPage.tsx",
+      "features/meetings/components/MeetingDetailDrawer.tsx",
+    ]);
+  });
+
+  it("`MeetingDetailBody` 가 라우터 · 검색 파라미터를 import 하지 않는다(부모를 모른다)", () => {
+    const code = read(path.join(MEETINGS, "components/MeetingDetailBody.tsx"));
+    expect(code).not.toMatch(/from ["']next\/navigation["']/);
+    expect(code).not.toMatch(/useSearchParams|useRouter/);
+  });
+});
+
+describe("⑱ 시안에 있으나 그리지 않는 것(SPEC-008 §7) — 문구 0건", () => {
+  it("WORK-008 파일(주석 제외)에 「되돌리기」 버튼 · 「구간 추가」 · 「비워두면 회의 종료 후」 · 「시작 상태」 · 「연관 업무로 바꾸기」 · 「미팅 · 회의」 · 「다음으로」 · 「MM.DD HH:mm 생성」 · 「대기」 배지가 없다", () => {
+    for (const name of WORK_008_FILES) {
+      const code = stripComments(read(path.join(MEETINGS, name)));
+      expect(code, name).not.toMatch(/[>"'`]되돌리기[<"'`]/);
+      expect(code, name).not.toMatch(/구간 추가|비워두면|시작 상태|연관 업무로 바꾸기|미팅 · 회의|["'>]다음으로["'<]|:\d\d 생성|HH:mm 생성/);
+      expect(code, name).not.toMatch(/["'>]대기["'<]/);
+    }
+    // 문단 요약(「요약 · AI 생성」)도 없다 — 한 줄 요약 바와 다른 것이다(§7)
+    for (const name of WORK_008_FILES) {
+      expect(stripComments(read(path.join(MEETINGS, name))), name).not.toMatch(/요약 · AI 생성/);
+    }
+  });
+
+  it("종료 후 배지 어휘 — `closeState.ts` 의 `next` 는 「다음 논의로」", () => {
+    const code = read(path.join(MEETINGS, "closeState.ts"));
+    expect(code).toMatch(/next:\s*\{\s*tone:\s*"next",\s*label:\s*"다음 논의로"\s*\}/);
+  });
+});
+
+describe("⑲ 편집 저장 경계 — 삭제는 낙관적이지 않다 · 폴링은 계약 주기로만", () => {
+  it("`useMeetingEdit` 의 삭제 뮤테이션(`removeLine`)에 `onMutate` 가 없다 — 모달을 지나 204 뒤에만 지운다", () => {
+    const code = read(path.join(MEETINGS, "hooks/useMeetingEdit.tsx"));
+    const start = code.indexOf("const removeLine = useMutation({");
+    const end = code.indexOf("});", start);
+    expect(start).toBeGreaterThan(0);
+    expect(code.slice(start, end)).not.toMatch(/onMutate/);
+    // 삭제 모달을 여는 곳은 `LineDeleteModal` 하나 · `openConfirm` 을 직접 부르는 WORK-008 화면 파일이 없다
+    const direct = WORK_008_FILES.filter((name) => name !== "components/LineDeleteModal.tsx" && /openConfirm\(/.test(read(path.join(MEETINGS, name))));
+    expect(direct).toEqual([]);
+  });
+
+  it("`useMeetingFinalizeJob` 에 `setInterval`·`setTimeout`·`retry` 가 없고 주기 2000 · 상한 480 이 상수로 있다", () => {
+    const code = stripComments(read(path.join(MEETINGS, "hooks/useMeetingFinalizeJob.ts")));
+    expect(code).not.toMatch(/setInterval|setTimeout|\bretry\b|backoff/);
+    expect(code).toMatch(/JOB_POLL_INTERVAL_MS = 2000/);
+    expect(code).toMatch(/JOB_POLL_MAX_COUNT = 480/);
+  });
+
+  it("자동 저장 실패를 `useState` 로 드는 WORK-008 컴포넌트가 0건이다 — 소유자는 `useRowFailures`", () => {
+    const offenders = WORK_008_FILES.filter((name) => name.startsWith("components/")).filter((name) => {
+      const code = read(path.join(MEETINGS, name));
+      return /useState<[^>]*(Fail|fail)/.test(code) || /set(Save)?Failed\(/.test(code);
+    });
+    expect(offenders).toEqual([]);
   });
 });

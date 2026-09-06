@@ -1,18 +1,22 @@
 "use client";
 
 /**
- * **줄 행 한 벌**(SPEC-007 U-2 · U-4 · [09] L660~700 · 시안 L858~871).
+ * **줄 행 한 벌**(SPEC-007 U-2 · U-4 · SPEC-008 U-3 · U-5 · U-7 · [09] L660~700 · 시안 L858~871 · L1898~1909).
  *
  * 라벨 폭 34 · 11/700, 색은 종류별 — 논의 `#9EA2AE` · 결정 `#1663B5`(본문 600 · 배경 `#F8FAFF`) ·
  * **업무 `#5F6470`**(본문 600) · 액션 `#4B52A8`(본문 600). 우측 시각 = `createdAt` `HH:MM`.
  *
  * **트랙을 모른다.** 회의록 탭(사람 줄) · AI 탭(AI 줄) · WORK-008 통합본이 같은 행이다 — 차이는 prop 뿐이다.
- * - `expandable` — 우측 끝 펼침 화살표(22×22, **hover 에서만** — [09] L700). 펼치면 상세 + 근거 칩
- * - `actions` — WORK-008 통합본 편집 모드의 줄 버튼 슬롯. 회의 중에는 비어 있다
+ * - `expandable` — 우측 끝 펼침 화살표(22×22, **hover 에서만** — [09] L700). 펼치면 상세 + 근거 칩.
+ *   통합본은 호출자(트리)가 `detail`·`evidence` 있는 줄에만 `true` 를 준다(SPEC-008 U-5)
+ * - `actions` — 줄 버튼 슬롯(업무 생성 · 업무 갱신 — **Phase 5**). 회의 중에는 비어 있다
+ * - **편집 모드(WORK-008 · U-7)** — `editable` 이면 라벨 자리가 종류 셀렉터, 본문이 입력 상자가 되고 `lineAction`(「제거」)이 우측 끝에 붙는다.
+ *   전부 **prop** 이라 회의 중 화면(`editable` 미지정)의 렌더는 WORK-007 그대로다
+ * - 실패 표시(`contentSaveFailed` · `kindSaveFailed`)도 prop 이다 — 여기 `useState` 로 들지 않는다(정적 검사 ⑧)
  *
  * **회의 중 사람 줄은 읽기 전용이다** — 클릭 핸들러·삭제·편집 어포던스가 없다(U-2). hover 배경 `#FAFBFC` 만.
  * `kind='task'` 줄이 업무를 가리키면(`task` 요약 — AI 줄) 라벨 옆에 그 업무의 **유형 배지**(공용 `TypeBadge` · `task.workType`)를 단다(U-4 · [09] L671).
- * 회의 중 사람 업무 줄은 `task=null` 이라 라벨만이다(DEC-003 §1 표). 「업무 갱신」 버튼은 WORK-008 이 같은 자리(`actions`)에 붙인다.
+ * 회의 중 사람 업무 줄은 `task=null` 이라 라벨만이다(DEC-003 §1 표). 「업무 갱신」 버튼은 Phase 5 가 같은 자리(`actions`)에 붙인다.
  */
 
 import { useState, type ReactNode } from "react";
@@ -20,28 +24,17 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 
 import { TypeBadge } from "@/components/shared/TypeBadge";
 import { EvidenceChip } from "@/features/meetings/components/EvidenceChip";
+import { InlineFieldInput } from "@/features/meetings/components/InlineFieldInput";
+import { LineKindSelector } from "@/features/meetings/components/LineKindSelector";
+import { isLineKind, LINE_KIND_LABEL, LINE_LABEL_CLASS } from "@/features/meetings/lineKinds";
 import type { LineKind, MeetingLine } from "@/features/meetings/types";
 import { formatClock } from "@/lib/datetime";
 import { cn } from "@/lib/utils";
 
-/** 표시 매핑(G-4) — 저장값은 영문 소문자. 모르는 값이 와도 숨기지 않고 그대로 적는다. */
-export const LINE_KIND_LABEL: Record<LineKind, string> = {
-  discussion: "논의",
-  decision: "결정",
-  task: "업무",
-  action: "액션",
-};
+/** 표시 매핑(G-4)의 정본은 `lineKinds.ts` — 기존 호출자(`PromptBar` · `LineKindPopover`)를 위해 다시 내보낸다. */
+export { LINE_KIND_LABEL, LINE_LABEL_CLASS } from "@/features/meetings/lineKinds";
 
-const LABEL_CLASS: Record<LineKind, string> = {
-  discussion: "text-fg-caption",
-  decision: "text-line-decision",
-  task: "text-muted-foreground",
-  action: "text-secondary-foreground",
-};
-
-function isLineKind(kind: string): kind is LineKind {
-  return kind in LINE_KIND_LABEL;
-}
+export const LINE_CONTENT_EMPTY_MESSAGE = "내용을 비울 수 없습니다";
 
 export function LineRow({
   line,
@@ -49,41 +42,82 @@ export function LineRow({
   expandable,
   onChipClick,
   actions,
+  editable = false,
+  onSaveContent,
+  onChangeKind,
+  contentSaveFailed = false,
+  kindSaveFailed = false,
+  attemptedContent,
+  lineAction,
+  chipCaption,
 }: {
   line: MeetingLine;
   recordingStartedAt: string | null;
-  /** AI 탭 — 펼침 화살표 + 상세 + 근거 칩. 회의록 탭은 `false`. */
+  /** 펼침 화살표 + 상세 + 근거 칩. 회의 중 회의록 탭은 `false`. */
   expandable: boolean;
   onChipClick?: (fromMs: number, toMs: number) => boolean;
-  /** WORK-008 통합본 편집 모드의 줄 버튼 슬롯. */
+  /** 줄 버튼 슬롯(Phase 5). */
   actions?: ReactNode;
+  /** 편집 모드(SPEC-008 U-7) — 종류 셀렉터 + 본문 입력. */
+  editable?: boolean;
+  onSaveContent?: (next: string) => Promise<void>;
+  onChangeKind?: (kind: LineKind) => void;
+  contentSaveFailed?: boolean;
+  kindSaveFailed?: boolean;
+  /** 실패한 본문에 사용자가 넣으려던 값(U-7 「값 유지」). 없으면 `line.content`. */
+  attemptedContent?: string;
+  /** 우측 끝 고스트 버튼 슬롯(「제거」). */
+  lineAction?: ReactNode;
+  /** 칩이 **표시만**일 때(드로어 U-4) 펼친 영역에 붙는 캡션. `onChipClick` 이 있으면 무시된다. */
+  chipCaption?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const kind: LineKind = isLineKind(line.kind) ? line.kind : "discussion";
   const emphasized = kind !== "discussion";
+  const editing = editable && onSaveContent !== undefined;
 
   return (
     <div className="flex flex-col">
       <div
         data-line-kind={kind}
+        data-line-id={line.id}
         className={cn(
           "group flex gap-3 rounded-control px-2 py-1.5",
-          kind === "decision" ? "bg-row-selected" : "hover:bg-row-hover",
+          kind === "decision" && !editing ? "bg-row-selected" : "hover:bg-row-hover",
+          editing && "items-center",
         )}
       >
-        <span className={cn("w-[34px] shrink-0 pt-0.5 text-row-label", LABEL_CLASS[kind])}>
-          {isLineKind(line.kind) ? LINE_KIND_LABEL[line.kind] : line.kind}
-        </span>
+        {editing && onChangeKind ? (
+          <LineKindSelector value={kind} taskLinked={line.taskId !== null} onSelect={onChangeKind} saveFailed={kindSaveFailed} />
+        ) : (
+          <span className={cn("w-[34px] shrink-0 pt-0.5 text-row-label", LINE_LABEL_CLASS[kind])}>
+            {isLineKind(line.kind) ? LINE_KIND_LABEL[line.kind] : line.kind}
+          </span>
+        )}
         {kind === "task" && line.task ? (
           <TypeBadge name={line.task.workType.name} colorToken={line.task.workType.colorToken} />
         ) : null}
-        <span className={cn("min-w-0 flex-1 text-body text-foreground", emphasized && "font-semibold")}>
-          {line.content}
-        </span>
+        {editing ? (
+          <InlineFieldInput
+            ariaLabel="줄 내용"
+            value={attemptedContent ?? line.content}
+            onSave={onSaveContent}
+            emptyMessage={LINE_CONTENT_EMPTY_MESSAGE}
+            saveFailed={contentSaveFailed}
+            className="min-w-0 flex-1"
+            inputClassName={cn("h-9 px-3 text-body", emphasized && "font-semibold")}
+          />
+        ) : (
+          <span className={cn("min-w-0 flex-1 text-body text-foreground", emphasized && "font-semibold")}>
+            {line.content}
+          </span>
+        )}
         {actions}
-        <span className="shrink-0 pt-[3px] text-caption tabular-nums text-fg-faint">
-          {formatClock(line.createdAt)}
-        </span>
+        {editing ? null : (
+          <span className="shrink-0 pt-[3px] text-caption tabular-nums text-fg-faint">
+            {formatClock(line.createdAt)}
+          </span>
+        )}
         {expandable ? (
           <button
             type="button"
@@ -98,6 +132,7 @@ export function LineRow({
             {expanded ? <ChevronUp className="h-3 w-3" aria-hidden /> : <ChevronDown className="h-3 w-3" aria-hidden />}
           </button>
         ) : null}
+        {lineAction}
       </div>
 
       {expandable && expanded ? (
@@ -121,6 +156,8 @@ export function LineRow({
                 ))}
                 {onChipClick ? (
                   <span className="text-caption text-fg-caption">칩을 누르면 해당 구간 스크립트로 이동합니다</span>
+                ) : chipCaption ? (
+                  <span className="text-caption text-fg-caption">{chipCaption}</span>
                 ) : null}
               </>
             )}
