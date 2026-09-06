@@ -17,7 +17,13 @@
 @layer base {
   :root {
     /* shadcn 시맨틱 변수 — 컴포넌트가 보는 유일한 층 */
-    --background: var(--tm-canvas);
+    /**
+     * **앱 배경은 흰색이다.** 시안 [10] RULES 「그라디언트는 홈만」이
+     * 「앱 안쪽 화면은 흰 배경 + breadcrumb + 타이틀로 시작합니다」라고 못박았고,
+     * 모든 화면 `.dc.html` 의 `<section>` 이 `background:#FFFFFF` 다.
+     * `--tm-canvas`(#F9FAFB)를 여기에 걸면 화면 전체가 회색으로 깔린다 — 걸지 않는다.
+     */
+    --background: var(--tm-surface);
     --foreground: var(--tm-fg);
 
     --card: var(--tm-surface);

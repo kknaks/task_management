@@ -35,6 +35,8 @@ const config: Config = {
         border: "var(--border)",
         input: "var(--input)",
         ring: "var(--ring)",
+        /* AI 서피스 외곽선 — 시안 [05] SURFACE · [06] AI PROMPT BAR */
+        "border-ai": "var(--tm-border-ai)",
 
         /**
          * 「검정은 위치」 — **화면당 하나**(§5-2). 내 업무 화면에서는 **유형 탭 밑줄**이
@@ -59,14 +61,33 @@ const config: Config = {
         /* 본문 계열 · 면과 선 — shadcn 시맨틱으로 덮이지 않는 축만 노출한다 */
         "fg-meta": "var(--tm-fg-meta)",
         "fg-caption": "var(--tm-fg-caption)",
+        /* placeholder · 비활성 아이콘 — 시안 [01] COLOR 「Placeholder · Icon」 */
+        "fg-placeholder": "var(--tm-fg-placeholder)",
         divider: "var(--tm-divider)",
         "row-divider": "var(--tm-row-divider)",
         "row-hover": "var(--tm-row-hover)",
         /* 인라인 추가 행 배경 — 행 hover 와 다른 면이다(SPEC-002 U-2) */
         "row-add": "var(--tm-row-add-bg)",
+        /* 중립 칩 바탕 — 프로젝트 칩·취소 배지(시안 [02]) */
+        "chip-bg": "var(--tm-chip-bg)",
         "sidebar-border": "var(--tm-sidebar-border)",
         column: "var(--tm-column)",
         surface: "var(--tm-surface)",
+        /* 흰 면 위에 얹는 옅은 바닥 — **body 배경이 아니다**(globals.css 주석) */
+        canvas: "var(--tm-canvas)",
+        /* 행 선택 — 시안 [01] COLOR 「Row Selected」 */
+        "row-selected": "var(--tm-row-selected)",
+
+        /* 충족·성공 — 시안 [07] Password Strength. 상태 5색과 다른 축이다 */
+        success: "var(--tm-success)",
+
+        /* 그라디언트 원색 — 시안 [01] COLOR 두 번째 줄. 배경·본문에 쓰지 않는다 */
+        "hero-top": "var(--tm-hero-top)",
+        "sky-200": "var(--tm-sky-200)",
+        "violet-300": "var(--tm-violet-300)",
+
+        /* 토스트 「실행취소」 — Ink 서피스 위 링크색(시안 [07] Toast) */
+        "toast-action": "var(--tm-toast-action)",
 
         status: {
           todo: "var(--tm-status-todo)",
@@ -84,7 +105,9 @@ const config: Config = {
       },
 
       borderRadius: {
+        /* 시안 [05] SURFACE 는 면이 둘이다 — Card r8 / Panel r16, 테두리는 둘 다 #D9D9D9 */
         card: "var(--tm-radius-card)",
+        panel: "var(--tm-radius-panel)",
         control: "var(--tm-radius-control)",
         chip: "var(--tm-radius-chip)",
         lg: "var(--radius)",
@@ -93,9 +116,20 @@ const config: Config = {
       },
 
       boxShadow: {
+        /**
+         * 시안 [05] SURFACE 의 넷. **Panel 은 그림자가 없어** 여기에 자리가 없다 —
+         * 패널은 `rounded-panel border-border` 만 쓴다.
+         */
         card: "var(--tm-shadow-card)",
+        metric: "var(--tm-shadow-metric)",
+        floating: "var(--tm-shadow-floating)",
+        ai: "var(--tm-shadow-ai)",
+        /* 칸반 「지금 하고 있는」 카드 — 진행중 컬럼의 하나에만 */
+        "kanban-active": "var(--tm-shadow-kanban-active)",
         drawer: "var(--tm-shadow-drawer)",
         modal: "var(--tm-shadow-modal)",
+        /* 토스트 — 팝오버보다 진하다(시안 [07] Toast) */
+        toast: "var(--tm-shadow-toast)",
         popover: "var(--tm-shadow-popover)",
         /**
          * **입력 포커스 글로우** — 색 스와치의 「현재 값」 표시와 **같은 토큰**이다
@@ -110,27 +144,68 @@ const config: Config = {
 
       /**
        * 타이포 계단을 프리셋으로 고정한다 — 컴포넌트가 임의 크기를 쓰지 않는다(§5-1).
-       * 값은 `09-design-tokens.md` §타입 그대로다.
+       *
+       * **값은 시안 [03] TYPE 의 열 계단 그대로다.** 「화면 전체 -0.02em, 큰 제목은 -0.03em」.
+       * 요약본을 보고 만들었을 때 `section` 이 14, `body` 가 14 로 어긋나 있었고
+       * `hero-date` · `group-header` · `item` · `metric` 은 아예 없어 화면이 숫자를 직접 썼다.
        */
       fontSize: {
         /**
-         * 로그인 브랜드 패널 헤드라인 — `11-auth-profile.md §로그인` 의 「헤드라인 44/700」.
-         * 계단이 프리셋에 없어 컴포넌트가 임의 크기를 쓰고 있었다(검수 W-1). 값은 디자인
-         * 원본 그대로이고, **등록만** 여기로 옮겨 §5-1 「임의 크기 금지」를 지킨다.
+         * 로그인 브랜드 패널 헤드라인 — `로그인 · 계정 · 프로필.dc.html` 의 「헤드라인 44/700」.
+         * 시안 [03] TYPE 계단 밖이지만 로그인 화면이 실제로 쓰는 크기라 **등록만** 해 둔다
+         * (§5-1 「임의 크기 금지」).
          */
-        "brand-title": ["44px", { lineHeight: "1.25", letterSpacing: "-0.03em", fontWeight: "700" }],
+        "brand-title": ["44px", { lineHeight: "1.28", letterSpacing: "-0.035em", fontWeight: "700" }],
+        /* 시안 [03] Page Title · 28 / 700 / -0.03 */
         "page-title": ["28px", { lineHeight: "1.3", letterSpacing: "-0.03em", fontWeight: "700" }],
+        /* 시안 [03] Hero Date · 24 / 700 / -0.03 */
+        "hero-date": ["24px", { lineHeight: "1.3", letterSpacing: "-0.03em", fontWeight: "700" }],
+        /* 업무 상세 제목 — `업무 화면 정의서.dc.html`. 시안 [03] 계단 밖이라 등록만 해 둔다 */
         "detail-title": ["26px", { lineHeight: "1.35", letterSpacing: "-0.03em", fontWeight: "700" }],
+        /* 시안 [03] Panel Title · 16 / 700 */
         panel: ["16px", { lineHeight: "1.4", letterSpacing: "-0.02em", fontWeight: "700" }],
-        section: ["14px", { lineHeight: "1.45", letterSpacing: "-0.02em", fontWeight: "700" }],
-        body: ["14px", { lineHeight: "1.6", letterSpacing: "-0.02em" }],
+        /* 시안 [03] Section · 15 / 700 */
+        section: ["15px", { lineHeight: "1.45", letterSpacing: "-0.02em", fontWeight: "700" }],
+        /* 시안 [03] Group Header · 14 / 700 */
+        "group-header": ["14px", { lineHeight: "1.45", letterSpacing: "-0.02em", fontWeight: "700" }],
+        /* 시안 [03] Item · 14 / 600 */
+        item: ["14px", { lineHeight: "1.45", letterSpacing: "-0.02em", fontWeight: "600" }],
+        /* 시안 [03] Body · 15 / 400 / 1.65 */
+        body: ["15px", { lineHeight: "1.65", letterSpacing: "-0.02em", fontWeight: "400" }],
+        /* 시안 [03] Meta · 13 / #757575 */
         meta: ["13px", { lineHeight: "1.5", letterSpacing: "-0.02em" }],
+        /* 시안 [03] Caption · 12 / #9EA2AE */
         caption: ["12px", { lineHeight: "1.5", letterSpacing: "-0.02em" }],
-        /* 유형 배지 — `09-design-tokens.md` §상태·유형 「h20 r4 11px/600」 */
+        /* 시안 [03] Metric · 28 / 700 */
+        metric: ["28px", { lineHeight: "1.2", letterSpacing: "-0.02em", fontWeight: "700" }],
+
+        /**
+         * 아래 셋은 **로그인 시안이 쓰는데 [03] TYPE 계단에 없는 조합**이다
+         * (`로그인 · 계정 · 프로필.dc.html` 32~80줄). 화면이 숫자를 직접 쓰지 않도록 등록한다.
+         */
+        /* 입력 라벨 「아이디」·「비밀번호」 — 시안 64·69줄 */
+        "field-label": ["13px", { lineHeight: "1.4", letterSpacing: "-0.02em", fontWeight: "600" }],
+        /**
+         * **드로어 블록·필드 라벨** — 「제목」·「유형」·「일정」·「할일」·「로그」…
+         * `업무 화면 정의서.dc.html` 566·572·586·612줄이 전부 **12 / 700 / `#757575`** 다.
+         * `section`(15/700 Ink)을 쓰면 라벨이 본문보다 무거워져 시안과 어긋난다(REDRAW-05 F-1①).
+         */
+        "block-label": ["12px", { lineHeight: "1.4", letterSpacing: "-0.02em", fontWeight: "700" }],
+        /* 컨트롤 라벨 — 체크박스 라벨(79줄) · 브랜드 패널 특징 3줄(40줄) */
+        "control-label": ["14px", { lineHeight: "1.5", letterSpacing: "-0.02em", fontWeight: "400" }],
+        /* 브랜드 패널 서브 — 시안 34줄 「16 / lh 1.7」 */
+        "brand-body": ["16px", { lineHeight: "1.7", letterSpacing: "-0.02em", fontWeight: "400" }],
+        /* 유형 배지 — 시안 [02] STATUS & TYPE TOKENS 「badge · h20 · r4 · 11px/600」 */
         badge: ["11px", { lineHeight: "1", letterSpacing: "-0.02em", fontWeight: "600" }],
       },
 
-      /* 컨트롤 높이 — 09-design-tokens §형태 (입력 38~48 · 버튼 34) */
+      letterSpacing: {
+        /* 시안 [03] TYPE — 전역 -0.02em, 큰 제목만 -0.03em */
+        tm: "var(--tm-tracking)",
+        title: "var(--tm-tracking-title)",
+      },
+
+      /* 컨트롤 높이 — 시안 [07] OVERLAY · INPUT (입력 38~48 · 버튼 34) */
       height: {
         control: "34px",
         input: "38px",
@@ -171,6 +246,20 @@ const config: Config = {
        */
       spacing: {
         gutter: "var(--tm-gutter)",
+
+        /**
+         * **스페이스 계단** — 시안 [04] LAYOUT 「4 · 8 · 12 · 16 · 24 · 32 · 48」.
+         * 일곱 값이 Tailwind 기본 키(1·2·3·4·6·8·12)와 정확히 같아 **그 자리에 얹는다** —
+         * `p-4`·`gap-6` 이 뜻하는 px 는 그대로이고, 값을 고칠 자리만 `tokens.css` 로 모인다.
+         * 계단 밖 값(`gap-1.5` 등)은 여전히 Tailwind 기본이 답하지만 화면이 쓰지 않는다.
+         */
+        1: "var(--tm-space-1)",
+        2: "var(--tm-space-2)",
+        3: "var(--tm-space-3)",
+        4: "var(--tm-space-4)",
+        6: "var(--tm-space-6)",
+        8: "var(--tm-space-8)",
+        12: "var(--tm-space-12)",
       },
 
       backgroundColor: {
@@ -181,6 +270,10 @@ const config: Config = {
       /* 로그인 브랜드 패널 — 값은 `tokens.css` 의 `--tm-brand-gradient`(§5-1) */
       backgroundImage: {
         brand: "var(--tm-brand-gradient)",
+        /* 로고 마크 「M」 사각 — 패널 그라디언트와 다른 축이다 */
+        "brand-mark": "var(--tm-brand-mark)",
+        /* 사이드바 프로필 아바타 32px 원 */
+        avatar: "var(--tm-avatar)",
       },
     },
   },
