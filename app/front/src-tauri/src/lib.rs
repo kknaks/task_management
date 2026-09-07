@@ -46,6 +46,47 @@ fn keychain_clear_refresh_token() -> Result<(), String> {
     }
 }
 
+/// Windows(WebView2) 마이크 권한.
+///
+/// WebView2 는 `PermissionRequested` 를 아무도 처리하지 않으면 `getUserMedia` 가 프롬프트 없이 실패한다 —
+/// 마이크 트랙이 0 이라 회의 화면이 곧바로 `paused/mic` 로 떨어진다. wry 0.55 는 이 이벤트에서
+/// **CLIPBOARD_READ 만** 허용하므로(`wry/src/webview2/mod.rs`), 마이크는 셸이 직접 허용한다.
+///
+/// macOS 는 여기서 할 일이 없다 — wry 의 `WKUIDelegate` 가 WebKit 단계 요청을 Grant 하고,
+/// OS 프롬프트는 `Info.plist` 의 `NSMicrophoneUsageDescription` 이 띄운다.
+#[cfg(windows)]
+fn allow_microphone_on_webview2(webview: &tauri::Webview) -> tauri::Result<()> {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        COREWEBVIEW2_PERMISSION_KIND, COREWEBVIEW2_PERMISSION_KIND_MICROPHONE,
+        COREWEBVIEW2_PERMISSION_STATE_ALLOW,
+    };
+    use webview2_com::PermissionRequestedEventHandler;
+
+    webview.with_webview(|platform| {
+        let result = unsafe {
+            let core = platform.controller().CoreWebView2();
+            core.and_then(|core| {
+                let mut token: i64 = 0;
+                core.add_PermissionRequested(
+                    &PermissionRequestedEventHandler::create(Box::new(|_, args| {
+                        let Some(args) = args else { return Ok(()) };
+                        let mut kind = COREWEBVIEW2_PERMISSION_KIND::default();
+                        args.PermissionKind(&mut kind)?;
+                        if kind == COREWEBVIEW2_PERMISSION_KIND_MICROPHONE {
+                            args.SetState(COREWEBVIEW2_PERMISSION_STATE_ALLOW)?;
+                        }
+                        Ok(())
+                    })),
+                    &mut token,
+                )
+            })
+        };
+        if let Err(error) = result {
+            log::error!("WebView2 PermissionRequested 등록 실패 — 마이크가 열리지 않는다: {error}");
+        }
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -56,6 +97,13 @@ pub fn run() {
                         .level(log::LevelFilter::Info)
                         .build(),
                 )?;
+            }
+            #[cfg(windows)]
+            {
+                use tauri::Manager;
+                for webview in app.webviews().values() {
+                    allow_microphone_on_webview2(webview)?;
+                }
             }
             Ok(())
         })

@@ -47,7 +47,7 @@ test: ## 백엔드 테스트 (실제 Postgres). 예) make test a="-k health"
 front-install: ## 프론트 의존성 설치 (최초 1회)
 	cd $(FRONT) && npm ci
 
-app: ## Tauri 앱 창을 띄운다 (프론트 개발 서버를 함께 문다)
+app: ## Tauri 앱 창을 띄운다 (프론트 개발 서버를 함께 문다). 마이크 권한이 안 뜨면 src-tauri/Info.plist 변경 후 재컴파일이 안 된 것 — `tauri build` 로 구운 .app 에서 확인
 	cd $(FRONT) && npm run tauri dev
 
 front-build: ## 정적 산출물(`app/front/out`)만 굽는다

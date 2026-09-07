@@ -20,6 +20,7 @@ make front-install && make app            # 의존성 설치(최초 1회) · 앱
 | 명령 | 하는 일 |
 |---|---|
 | `make app` | `tauri dev` — 프론트 개발 서버를 앱 창에 문다 |
+| `cd app/front && npm run tauri build` | `.app` 번들을 굽는다. **마이크 권한 문구**(`src-tauri/Info.plist`)는 `tauri dev` 에서도 실행파일에 박히지만(tauri 코드젠 `embed_plist`), `Info.plist` 만 고친 뒤에는 `src-tauri/src/lib.rs` 를 건드리거나 `cargo clean -p app` 으로 재컴파일해야 반영된다 — 안 뜨면 `tauri build` 로 구운 `.app` 에서 확인한다 |
 | `make front-build` | `out/` 정적 산출물만 굽는다 |
 | `cd app/front && npm run typecheck` | `tsc --noEmit` |
 | `cd app/front && npm run lint` | 금지 목록(§11) 일부를 ESLint 로 검사 |

@@ -26,3 +26,8 @@ tauri-plugin-log = "2"
 # **WORK-001 은 의존성만 건다.** 실제 커맨드 노출과 프론트 `tokenStore.ts` 연결은 WORK-002 다.
 # 셸이 맡는 것은 마이크 권한·OS 키체인·파일 선택창뿐이고, 데이터·비즈니스 로직은 갖지 않는다(SYS §Components).
 keyring = { version = "3", features = ["apple-native", "windows-native"] }
+
+# Windows(WebView2) 마이크 권한 — `PermissionRequested` 에서 MICROPHONE 을 허용한다(lib.rs `allow_microphone_on_webview2`).
+# 버전은 tauri-runtime-wry → wry 0.55 가 쓰는 것과 같은 0.38 로 맞춘다(Cargo.lock 의 webview2-com 0.38.2).
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38"
