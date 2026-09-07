@@ -518,14 +518,16 @@ async def update_meeting(
 async def start(
     session: AsyncSession, *, account_id: int, meeting_id: int
 ) -> MeetingDetailDTO:
-    """`scheduled → recording` + **웜스타트**(SPEC-007 §4 · WP Internal Interface Contract `/start` 훅).
+    """`scheduled → recording` — **전이만 한다**(MF-1 · SPEC-006 §4 · WORK-010).
 
-    순서 — 전이(`status` + `recording_started_at` 한 UPDATE) → **커밋** → 웜스타트 제출(새 세션 · 결과 무시) →
-    `ai_session_id` 저장(새 트랜잭션) → 상세. **codex 대기 중에는 트랜잭션을 열어 두지 않는다**(BE §7) —
-    그래서 이 파일에서 `commit()` 을 부르는 자리는 **여기 하나**다(WP L169 「전이 커밋 → 제출 → 새 세션에서 UPDATE」).
-    커밋 뒤 같은 `session` 은 새 트랜잭션으로 이어지고, 요청 끝의 `get_db` 커밋이 `ai_session_id` 를 남긴다.
+    한 트랜잭션에 둘뿐이다 — 전이(`status` + `recording_started_at` 한 UPDATE)와
+    회의별 단명 토큰 INSERT(A-13 · WORK-009). **`commit()` 을 부르지 않는다**(BE §7) —
+    커밋은 요청 끝의 `get_db` 가 한다. 이 파일에 `commit()` 호출이 0건인 것이 정적 검사다.
 
-    웜스타트 실패는 DEC-003 §7 목록에 없다 — 전파한다. 전이는 이미 커밋돼 있다(회의는 `recording`).
+    **웜스타트를 기다리지 않는다.** 커밋 뒤 훅으로 태스크 하나를 띄우고 끝이다 — 워커가 죽어 있어도
+    회의는 시작된다(SPEC-007 §6 AC). 커밋이 안 되면 훅도 돌지 않으므로 웜스타트도 없다.
+
+    웜스타트가 실패하면 `ai_session_id` 가 `NULL` 로 남고 **그것이 전부다**(MF-70) — 배치가 제출되지 않을 뿐이다.
     `start_at`(예정)을 덮어쓰지 않는다 — 전이 시각은 `recording_started_at`(M-1-a).
     """
     current = await _require_meeting(session, account_id=account_id, meeting_id=meeting_id)
@@ -538,20 +540,12 @@ async def start(
         started_at=datetime.now(UTC),
     )
     # 회의별 단명 토큰 — **전이와 같은 트랜잭션**에서 행 하나(A-13 · MF-69 · WORK-009 Phase 1).
-    # 회의당 하나다. 돌려받은 원문은 **웜스타트 제출에만** 넘기고, 이후 제출부는 `get_meeting_token()` 으로 다시 읽는다.
-    # 아래 commit 이 이 INSERT 를 전이와 함께 남긴다(둘이 갈리지 않는다).
-    meeting_token = await auth_service.issue_meeting_token(
+    # 회의당 하나다. 원문은 여기서 쓰지 않는다 — 제출부가 `get_meeting_token()` 으로 읽는다.
+    await auth_service.issue_meeting_token(
         session, account_id=account_id, meeting_id=meeting_id
     )
-    context = await meeting_batch_service.load_warm_start_context(session, meeting_id=meeting_id)
-    await session.commit()
-
-    ai_session_id = await meeting_batch_service.warm_start(
-        context, meeting_token=meeting_token
-    )
-
-    await meeting_repository.set_ai_session_id(
-        session, meeting_id=meeting_id, ai_session_id=ai_session_id
+    register_after_commit(
+        session, lambda: meeting_batch_service.launch_warm_start(meeting_id)
     )
     return await build_detail(session, account_id=account_id, meeting_id=meeting_id)
 

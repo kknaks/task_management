@@ -82,30 +82,20 @@ def test_batch_numbers_match_dec_003(monkeypatch: pytest.MonkeyPatch) -> None:
 # --- Phase 2 — `/start` 웜스타트 ------------------------------------------------------
 
 
-async def test_start_submits_warm_start_once_and_stores_the_session(
-    client: AsyncClient, owner: MeetingOwner, db_session: AsyncSession, fake_agent: FakeAgentGateway
+async def test_start_is_a_transition_only_and_does_not_wait_for_the_warm_start(
+    client: AsyncClient, owner: MeetingOwner, db_session: AsyncSession
 ) -> None:
-    """`/start` 뒤 `recording_started_at` 이 채워지고 `ai_session_id` 가 대역 세션 id 다. 새 세션 호출 **정확히 1회**."""
+    """WORK-010(MF-1) — `/start` 응답 시점에 `recording` 이고 **`ai_session_id` 는 아직 비어 있다**.
+
+    웜스타트는 커밋 뒤 태스크가 나중에 채운다 — 제출·저장은 `test_meeting_start_warm.py` 가 본다.
+    """
     detail = await start_meeting(client, owner, projectId=owner.project_id)
     assert detail["status"] == "recording" and detail["recordingStartedAt"] is not None
 
     row = (await db_session.scalars(select(Meeting).where(Meeting.id == detail["id"]))).one()
-    assert row.ai_session_id == WARM_SESSION_ID
-
-    assert len(fake_agent.calls) == 1
-    call = fake_agent.calls[0]
-    assert call.session_id is None and call.output_schema is None
-    assert "첫째 안건" in call.prompt and "둘째 안건" in call.prompt
-
-
-async def test_warm_start_failure_propagates_and_is_not_hidden(
-    client: AsyncClient, owner: MeetingOwner, fake_agent: FakeAgentGateway
-) -> None:
-    """웜스타트 실패는 DEC-003 §7 목록에 없다 — 조용히 넘기지 않고 전파한다(500)."""
-    created = await create_meeting(client, owner)
-    fake_agent.will_raise(RuntimeError("broker down"))
-    with pytest.raises(RuntimeError, match="broker down"):
-        await client.post(f"{BASE}/{created['id']}/start", headers=owner.headers)
+    # 이 파일은 `session_scope` 를 테스트 세션으로 묶지 않는다 — 태스크가 토큰을 못 찾고 제출 없이 끝난다.
+    # 그래도 **회의는 `recording`** 이고 응답은 이미 나갔다는 것이 이 테스트의 뜻이다(MF-70).
+    assert row.ai_session_id is None
 
 
 # --- Phase 2 — `POST …/lines` ---------------------------------------------------------

@@ -31,7 +31,6 @@ import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import date
 from pathlib import Path
 
 import jsonschema
@@ -624,70 +623,83 @@ async def _persist(
     return new_agendas, new_lines
 
 
-# --- 웜스타트 (`/start` 안에서 1회 — SPEC-007 §4) -----------------------------------
+# --- 웜스타트 (`/start` 의 **커밋 뒤 백그라운드** — MF-1 · SPEC-007 §4 「웜스타트」 표) ------------
+#
+# `/start` 는 전이만 하고 즉시 응답한다. 웜스타트는 여기서 태스크 하나로 나가고,
+# **실패 처리를 만들지 않는다**(MF-70) — 실패의 결과는 `ai_session_id` 가 `NULL` 로 남는 것 하나이고
+# 그 뒤는 이미 있는 두 경로가 받는다(회의 중 = 배치 미제출 · 종료 후 = ② `final_failed`).
+# 재시도 · 재웜스타트 · 별도 기록 · 상태 컬럼 어느 것도 없다. 예외는 done 콜백이 로그로 드러낸다.
 
 
-@dataclass(frozen=True)
-class WarmStartContext:
-    meeting: MeetingAiContextDTO
-    agendas: list[MeetingAgendaDTO]
-    tasks: list[TaskContextDTO]
+async def launch_warm_start(meeting_id: int) -> None:
+    """`/start` 의 **커밋 뒤 훅**이 부른다(`register_after_commit`). 태스크만 띄우고 **즉시 돌아온다**.
+
+    `await` 하지 않는다 — 여기서 기다리면 「회의 시작」이 다시 codex 를 기다리게 된다(MF-1).
+    커밋이 안 되면 훅이 돌지 않으므로 **웜스타트도 없다**(`core/db.run_after_commit_hooks`).
+    """
+    task = asyncio.create_task(_warm_start_once(meeting_id))
+    _tasks.add(task)
+    task.add_done_callback(_on_warm_start_task_done)
 
 
-async def load_warm_start_context(session: AsyncSession, *, meeting_id: int) -> WarmStartContext:
-    """프로젝트 + 그 프로젝트의 업무(무소속 회의면 무소속 업무) + 미리 작성된 사람 안건(DEC-003 §8 L149 · §4 L98)."""
-    meeting = await meeting_repository.find_ai_context(session, meeting_id=meeting_id)
-    if meeting is None:
-        raise RuntimeError(f"회의 {meeting_id} 가 없습니다")
-    return WarmStartContext(
-        meeting=meeting,
-        agendas=await meeting_child_repository.list_agendas_by_track(
-            session, meeting_id, track=MeetingTrack.HUMAN.value
-        ),
-        tasks=await task_repository.list_meeting_context(
-            session, account_id=meeting.account_id, project_id=meeting.project_id
-        ),
-    )
+def _on_warm_start_task_done(task: asyncio.Task) -> None:
+    """**여기가 웜스타트 실패 처리의 전부다**(MF-70) — 로그 한 줄. 재시도도 기록도 없다.
+
+    모양은 `_on_batch_task_done` 과 같다(BE §8-1 「전파 = 로그에 스택」). 삼키지 않는다.
+    """
+    _tasks.discard(task)
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error("회의 웜스타트 태스크가 예외로 끝났습니다", exc_info=exc)
 
 
-async def warm_start(context: WarmStartContext, *, meeting_token: str) -> str:
-    """새 세션을 만들고 그 `session_id` 를 돌려준다. **결과 본문은 버린다.** 트랜잭션 밖에서 부른다(BE §7).
+async def _warm_start_once(meeting_id: int) -> None:
+    """새 세션을 만들고 `session_id` 만 남긴다. **결과 본문은 버린다.**
 
-    `meeting_token` 은 `/start` 가 전이와 같은 트랜잭션에서 발급한 원문이다(A-13) — 여기서 다시 읽지 않는다.
-    새 세션이라 `sandbox="read-only"` 가 이때 걸리고, 이어지는 resume 들이 그 값을 물려받는다.
+    ① 회의 토큰 원문을 읽는다(WORK-009 · A-13). **없으면 제출하지 않는다** — 도구가 전부 401 이 될 뿐이라
+       제출에 뜻이 없다. 배치 쪽과 같은 규칙이고, 그때도 결과는 `ai_session_id` 가 `NULL` 로 남는 것뿐이다
+    ② 제출 — 새 세션(`session_id=None`) · **`output_schema=None`**(웜스타트는 JSON 을 강제하지 않는다) ·
+       컨텍스트 없음(MF-50 — AI 가 도구로 조회한다)
+    ③ `session_id` 를 **새 세션**에서 UPDATE. codex 를 기다리는 동안 트랜잭션을 열어 두지 않는다(BE §7)
     """
     _assert_single_session()
+
+    async with session_scope() as session:
+        meeting_token = await auth_service.get_meeting_token(session, meeting_id=meeting_id)
+    if meeting_token is None:
+        # MF-70 — 여기서 끝난다. 재발급도 재시도도 없다
+        logger.warning("회의 %s 에 회의 토큰이 없어 웜스타트를 제출하지 않습니다", meeting_id)
+        return
+
     result = await agent_integration.get_gateway().run(
-        prompt=build_warm_start_prompt(context),
+        prompt=build_warm_start_prompt(),
         session_id=None,
         output_schema=None,
         timeout_sec=get_settings().ai_timeout_sec,
         meeting_token=meeting_token,
     )
     if not result.session_id:
-        # 세션 없이는 배치가 이어질 수 없다(M-12) — 설계한 실패가 아니다. 전파한다
+        # 세션 없이는 배치가 이어질 수 없다(M-12) — 설계한 실패가 아니다. 전파한다(콜백이 로그)
         raise RuntimeError("웜스타트가 세션 id 를 돌려주지 않았습니다")
-    return result.session_id
+
+    async with session_scope() as session:
+        await meeting_repository.set_ai_session_id(
+            session, meeting_id=meeting_id, ai_session_id=result.session_id
+        )
+
+
+async def wait_for_tasks() -> None:
+    """테스트 격리용 — 떠 있는 백그라운드 태스크를 거둔다(`reset_state` 와 같은 결).
+
+    프로덕션 경로는 이것을 부르지 않는다. 부르면 「기다리지 않는다」가 깨진다.
+    """
+    while _tasks:
+        await asyncio.gather(*tuple(_tasks), return_exceptions=True)
 
 
 # --- 프롬프트 -----------------------------------------------------------------
-
-
-def _date(value: date | None) -> str | None:
-    return None if value is None else value.isoformat()
-
-
-def _task_rows(tasks: list[TaskContextDTO]) -> list[dict[str, object]]:
-    return [
-        {
-            "id": task.id,
-            "title": task.title,
-            "status": task.status,
-            "dueDate": _date(task.due_date),
-            "workType": task.work_type_name,
-        }
-        for task in tasks
-    ]
 
 
 def _agenda_rows(agendas: list[MeetingAgendaDTO], *, with_source: bool = False) -> list[dict[str, object]]:
@@ -706,22 +718,102 @@ def _dumps(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2)
 
 
-def build_warm_start_prompt(context: WarmStartContext) -> str:
-    payload = {
-        "project": None if context.meeting.project_id is None else {
-            "id": context.meeting.project_id,
-            "name": context.meeting.project_name,
-        },
-        "tasks": _task_rows(context.tasks),
-        "humanAgendas": _agenda_rows(context.agendas),
-    }
-    return (
-        "너는 회의록 AI 요약 담당이다. 지금부터 한 회의가 시작된다. 아래 컨텍스트(프로젝트 · 업무 목록 · "
-        "미리 작성된 안건)를 기억해 두고, 이후 같은 세션으로 오는 배치 요청에서 참조한다.\n"
-        "업무 목록의 id 만 이후 `taskId` 로 쓸 수 있다. 목록 밖의 업무를 만들어 내지 마라.\n"
-        "이번 요청에는 아무 작업도 하지 말고 「준비됨」이라고만 답하라.\n\n"
-        f"컨텍스트:\n{_dumps(payload)}"
-    )
+# 웜스타트 프롬프트 — **여섯 절 고정 상수**(WORK-010 §Internal Interface · 초안 `ai-prompt-draft.md` §A).
+#
+# **컨텍스트를 싣지 않는다**(MF-50). 프로젝트 · 업무 목록 · 안건 · 유형 · 화이트리스트가 여기 없다 —
+# AI 가 필요할 때 MCP 도구로 조회하고, 조회하면 그 순간 최신이다. 데이터를 실을 자리가 없으므로
+# 이 문자열에 JSON 블록도 없다(`_dumps` 를 부르지 않는다).
+#
+# ⑤ 의 도구 이름 일곱은 `integrations/agent.py` 의 `enabled_tools`(WORK-009) 와 **글자 그대로** 같아야 한다.
+# 프롬프트에만 있고 설정에 없는 이름을 적으면 AI 가 없는 도구를 부르려다 시간을 버린다.
+# 인자 이름은 적지 않는다 — MCP 의 `tools/list` 가 스키마로 이미 알려 준다.
+_WARM_START_PROMPT = """너는 회의에 참가하는 두 명 중 하나다. 사람과 AI 가 각자 회의록을 쓰고, 회의가 끝나면 합친다.
+사람이 모든 것을 다 칠 수 없고 너도 모든 것을 정확히 요약할 수 없다 — 그래서 둘 다 쓴다.
+
+## 회의는 이렇게 흐른다
+
+회의가 시작되면 사람의 말이 실시간으로 받아쓰기 되어 발화로 너에게 온다.
+사람은 그와 별개로 자기 회의록에 안건 · 논의 · 결정 등을 직접 적는다.
+너는 네 트랙(AI 요약)에만 쓴다. 사람이 쓴 것을 고치지도, 사람에게 제안하지도 않는다 — 사람 트랙은 읽기 전용이다.
+
+발화는 한 번에 다 오지 않는다. 일정량이 쌓이면 그 구간만 너에게 온다.
+회의가 끝나면 마지막으로 전체를 처음부터 다시 읽고 정리한다.
+그다음 사람 것과 네 것을 합친다 — 사람이 나중에 보는 것은 합쳐진 회의록이다.
+
+## 무엇을 만드나 — 안건이 뼈대고 나머지는 거기서 파생된다
+
+안건
+├─ 논의   아직 정해지지 않은 것
+├─ 결정   정해진 것
+├─ 액션   새로 생긴 할 일
+└─ 업무   이미 있는 업무의 현황 · 변경
+
+논의 · 결정 · 액션 · 업무는 전부 어떤 안건에서 나온다.
+안건 없이 떠 있는 줄은 없다 — 「무슨 이야기를 하다 나온 것인가」가 항상 있어야 한다.
+그러니 줄을 만들기 전에 먼저 어느 안건인지를 정해라.
+
+안건 — 회의에서 다루는 주제 단위. 「무엇에 대해 이야기하는가」다.
+  - 사람이 미리 적어둔 안건이 있으면 거기에 붙인다. 그것이 이 회의의 뼈대다
+  - 화제가 조금 옮겨갔다고 새 안건을 만들지 마라. 같은 주제 안에서 이야기가 흐르는 것은 한 안건이다
+  - 새로 만드는 것은 정말 어디에도 안 붙을 때만이다
+  - 안건 하나에 논의 · 결정 · 액션 · 업무가 여러 개 달린다. 그게 정상이다
+
+논의 — 오간 이야기. 아직 정해지지 않은 것.
+  - 의견 · 현황 공유 · 질문 · 「검토가 필요하다」
+  - 예: 「A안과 B안 중 고민이 필요하다」
+
+결정 — 이 회의에서 정해진 것. 되돌리려면 다시 회의해야 하는 것.
+  - 「~로 한다」 「~는 하지 않는다」 「~로 통일한다」
+  - 확실하지 않으면 결정으로 올리지 마라. 논의로 둬라 — 「그렇게 할까요?」는 결정이 아니다
+
+액션 — 이 회의 때문에 새로 생긴 할 일.
+  - 「~하기로 했다」 「~를 준비한다」 「다음 주까지 ~한다」
+  - 이미 하고 있던 일의 현황 보고는 액션이 아니다 — 그건 업무다
+  - 담당 · 기한이 말에 나왔으면 함께 담는다
+
+업무 — 이미 있는 업무의 현황 · 변경.
+  - 반드시 실제로 있는 업무를 가리킨다. 없는 업무를 만들어 내지 마라 — 도구로 조회해서 확인해라
+  - 기한 변경 · 진행 상태 · 진행 메모 · 완료 결과가 여기 담긴다
+
+## 어떻게 요약하나
+
+- 발화를 그대로 옮기지 마라. 한 문장으로 압축한다. 「어, 그」 같은 말버릇은 버린다
+- 말한 사람 이름을 쓰지 마라. 화자는 익명이고 이름을 모른다
+- 인사 · 잡담 · 같은 말 반복은 버린다
+- 숫자 · 날짜 · 고유명사는 그대로 옮긴다. 383,900원을 「약 38만원」으로 바꾸지 마라
+- 말하지 않은 것을 채우지 마라. 흐름상 그럴 것 같아도 발화에 없으면 쓰지 않는다
+- 줄마다 근거 구간을 단다 — 그 줄이 어느 발화에서 나왔는지
+- 확실하지 않으면 한 단계 낮춰라 — 결정 같으면 논의로, 액션 같으면 논의로
+
+## 쓸 수 있는 도구
+
+  get_meeting        이 회의 정보 — 제목 · 일시 · 유형 · 프로젝트
+  get_account        사용자 정보
+  list_agendas       안건 목록 — 사람이 적은 안건과 네가 만든 안건 둘 다
+  get_agenda         안건 상세 — 그 안건에 달린 줄(논의 · 결정 · 액션 · 업무)
+  list_tasks         업무 목록 — 제목 · 상태 · 기한 · 유형
+  get_task           업무 상세 — 할일 · 메모 · 연관 · 일정
+  list_work_types    업무 유형 목록 — 이름 · 종류 · 설명
+
+  필요할 때 조회해라. 미리 다 주지 않는다.
+  도구는 이 회의 · 이 계정 범위에서만 답한다 — 다른 사람 데이터에는 닿지 않는다.
+
+## 쓰면 안 되는 것
+
+  위 도구가 전부다. 그 밖에는 아무것도 쓰지 마라.
+
+  - 셸 · 파일 · 명령 실행 — 쓰지 마라
+  - 웹 검색 · 외부 조회 — 쓰지 마라. 회의에서 나온 말만 다룬다
+  - 이미지 생성 — 쓰지 마라
+  - 쓰기 도구 — 없다. 너는 조회만 한다.
+    회의록에 남길 것은 출력으로만 낸다. 도구로 직접 쓰지 않는다(저장하는 것은 서버다)
+
+이번 요청에는 아무것도 만들지 말고 「준비됨」이라고만 답하라."""
+
+
+def build_warm_start_prompt() -> str:
+    """**인자가 없다**(MF-50) — 회의마다 달라질 것이 없어서다. 상수를 그대로 돌려준다."""
+    return _WARM_START_PROMPT
 
 
 def build_final_prompt(batch_input: _BatchInput) -> str:

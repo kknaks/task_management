@@ -80,6 +80,10 @@ async def start_meeting(
     created = await create_meeting(client, owner, **overrides)
     response = await client.post(f"{BASE}/{created['id']}/start", headers=owner.headers)
     assert response.status_code == 200, response.text
+    # WORK-010 — `/start` 는 웜스타트를 **기다리지 않는다**(MF-1). 응답 뒤 커밋 훅이 태스크를 띄운다.
+    # 테스트는 그 태스크가 끝난 상태를 전제로 이어지므로(배치가 `ai_session_id` 를 쓴다) 여기서 거둔다.
+    # 「기다리지 않는다」 자체는 `test_meeting_start_warm.py` 가 따로 단언한다.
+    await meeting_batch_service.wait_for_tasks()
     return response.json()
 
 
