@@ -13,12 +13,13 @@ from dto.unset import UNSET, Unset
 
 @dataclass(frozen=True)
 class WorkTypeDTO:
-    """유형 한 건. `kind` 는 영문 소문자로 저장·전송한다(DB G-4)."""
+    """유형 한 건. `kind` 는 영문 소문자로 저장·전송한다(DB G-4). `description` 은 비어 있을 수 있다(A-12 · 선택 입력)."""
 
     id: int
     kind: str
     name: str
     color_token: str
+    description: str | None
     is_default: bool
 
 
@@ -27,6 +28,7 @@ class WorkTypeCreateDTO:
     kind: str
     name: str
     color_token: str
+    description: str | None = None
 
 
 @dataclass(frozen=True)
@@ -34,10 +36,12 @@ class WorkTypeUpdateDTO:
     """**`kind` 가 없다** — 종류는 생성 시에만 정해진다(SPEC-002 §5).
 
     이미 참조된 유형의 종류를 바꾸면 기존 참조가 규약을 어긴 상태가 된다.
+    **`description` 만 `None` 을 값으로 받는다** — 「설명을 지운다」는 뜻이 있는 유일한 필드다(SPEC-002 §4).
     """
 
     name: str | Unset = UNSET
     color_token: str | Unset = UNSET
+    description: str | None | Unset = UNSET
 
 
 @dataclass(frozen=True)

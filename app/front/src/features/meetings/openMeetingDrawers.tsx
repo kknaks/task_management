@@ -9,8 +9,8 @@
 
 import { openAddLineDrawer } from "@/features/meetings/components/AddLineDrawer";
 import { openAttachmentFileDrawer } from "@/features/meetings/components/AttachmentFileDrawer";
-import { openCreateTaskFromLineDrawer } from "@/features/meetings/components/CreateTaskFromLineDrawer";
-import { openLinkTaskDrawer } from "@/features/meetings/components/LinkTaskDrawer";
+import { openActionPayloadDrawer } from "@/features/meetings/components/CreateTaskFromLineDrawer";
+import { openTaskPayloadDrawer } from "@/features/meetings/components/LinkTaskDrawer";
 import {
   MeetingCreateDrawer,
   MeetingCreateDrawerHeader,
@@ -20,10 +20,10 @@ import type { MeetingDetail } from "@/features/meetings/types";
 import type { useOverlay } from "@/lib/overlay/OverlayProvider";
 
 /**
- * 파일 드로어(U-7) · 논의/결정 추가 드로어(SPEC-008 U-8) · 연관 업무(U-9) · 업무 생성(U-10) 드로어는 **각 드로어 파일이 여는 함수를 갖고**
+ * 파일 드로어(U-7) · 논의/결정 추가 드로어(SPEC-008 U-8) · 업무 payload(U-9) · 액션 payload(U-10) 드로어는 **각 드로어 파일이 여는 함수를 갖고**
  * 여기서 다시 내보낸다 — 종료 후 본문(`MeetingDetailBody`)이 이 레지스트리를 import 하면 레지스트리 → 상세 드로어 → 본문 순환이 생기기 때문이다(WORK-008).
  */
-export { openAddLineDrawer, openAttachmentFileDrawer, openCreateTaskFromLineDrawer, openLinkTaskDrawer };
+export { openAddLineDrawer, openAttachmentFileDrawer, openActionPayloadDrawer, openTaskPayloadDrawer };
 
 type Overlay = ReturnType<typeof useOverlay>;
 

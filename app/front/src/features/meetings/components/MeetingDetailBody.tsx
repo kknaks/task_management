@@ -48,8 +48,10 @@ import { speakerCountOf, useTranscriptQuery } from "@/features/meetings/hooks/us
 import { useMeetingMutations } from "@/features/meetings/hooks/useMeetingMutations";
 import { openAddLineDrawer } from "@/features/meetings/components/AddLineDrawer";
 import { openAttachmentFileDrawer } from "@/features/meetings/components/AttachmentFileDrawer";
-import { openCreateTaskFromLineDrawer } from "@/features/meetings/components/CreateTaskFromLineDrawer";
-import { openLinkTaskDrawer } from "@/features/meetings/components/LinkTaskDrawer";
+import { openActionPayloadDrawer } from "@/features/meetings/components/CreateTaskFromLineDrawer";
+import { openTaskPayloadDrawer, pickedFromLineTask } from "@/features/meetings/components/LinkTaskDrawer";
+import type { SubmitMode } from "@/features/meetings/components/PayloadDrawerParts";
+import { actionPayloadOf, taskPayloadOf } from "@/features/meetings/linePayload";
 import { LineTaskButton } from "@/features/meetings/components/LineTaskButton";
 import { useMeetingTaskLink } from "@/features/meetings/hooks/useMeetingTaskLink";
 import type { MeetingAgenda, MeetingAttachment, MeetingDetail, MeetingLine } from "@/features/meetings/types";
@@ -223,43 +225,81 @@ export function MeetingDetailBody({ meeting, mode }: { meeting: MeetingDetail; m
     <button
       type="button"
       aria-label={`줄 제거`}
-      onClick={() => openLineDeleteModal(overlay, line, () => edit.deleteLineConfirmed(line).then(() => undefined))}
+      onClick={() => openLineDeleteModal(overlay, () => edit.deleteLineConfirmed(line).then(() => undefined))}
       className="shrink-0 rounded-chip px-1.5 text-caption text-fg-caption opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
     >
       제거
     </button>
   );
-  /* ── 업무 연동(U-6 · U-9 · U-10 — 페이지 · 회의록 탭만) ───────────────────────────────────── */
-  const openCreate = (agenda: MeetingAgenda, line: MeetingLine | null) =>
-    openCreateTaskFromLineDrawer(overlay, {
-      agendas: editAgendas,
-      agendaId: agenda.id,
-      line,
+  /* ── payload 드로어 둘(U-6 · U-9 · U-10 — 페이지 · 회의록 탭만) ─────────────────────────────
+   *
+   * **모드가 푸터를 가른다**(MF-66) — 편집 모드는 「저장」(줄에 `payload` 만 붙는다) · 보기 모드는 「넣기」(업무가 생기거나 바뀐다).
+   * **AI 줄과 사람 줄을 가르지 않는다**(MF-65) — 드로어가 보는 것은 `prefill` 이 차 있나뿐이다.
+   */
+  const submitMode: SubmitMode = editing ? "save" : "insert";
+
+  /** 액션 payload 드로어 — 줄에서 열거나(`line`) 「+ 액션 아이템」 칩에서 연다(`line=null`). */
+  const openActionPayload = (agenda: MeetingAgenda, line: MeetingLine | null) =>
+    openActionPayloadDrawer(overlay, {
+      agenda,
       meetingProject: meeting.project,
-      onCreateFromLine: taskLink.createTaskFromLine,
-      onAddNewTask: edit.addLineFromDrawer,
-    });
-  const openLink = (agenda: MeetingAgenda) =>
-    openLinkTaskDrawer(overlay, {
-      meetingProject: meeting.project,
-      agendaId: agenda.id,
-      onAdd: edit.addLineFromDrawer,
-      // ② — 변경이 있을 때만. `applyLinePayload` 는 던지지 않는다(실패는 토스트 · 줄은 「업무 갱신」 활성으로 남는다)
-      onLinked: (line, hasChange) => {
-        if (hasChange) {
-          void taskLink.applyLinePayload(line);
+      lineContent: line?.content ?? null,
+      prefill: line ? actionPayloadOf(line) : null,
+      submitMode,
+      onSubmit: async (payload) => {
+        if (submitMode === "insert" && line) {
+          // 「넣기」 — 업무를 만든다. 유형은 드로어가 필수로 받았다
+          await taskLink.insertNewTask(line, {
+            title: payload.title,
+            workTypeId: payload.workTypeId as number,
+            projectId: payload.projectId ?? null,
+            startDate: payload.startDate ?? null,
+            dueDate: payload.dueDate ?? null,
+            description: payload.description ?? null,
+            todos: payload.todos ?? [],
+          });
+          return;
         }
+        if (line) {
+          await edit.savePayload(line, { payload }, { payload });
+          return;
+        }
+        // 칩 진입 — 줄과 `payload` 가 **한 요청**으로 생긴다(MF-64 정정). 닫으면 줄이 없다
+        await edit.addLineFromDrawer({ agendaId: agenda.id, kind: "action", content: payload.title, payload });
       },
     });
+
+  /** 업무 payload 드로어 — 줄에서 열거나 「+ 연관 업무」 칩에서 연다. 업무는 **헤더 셀렉터**에서 고른다. */
+  const openTaskPayload = (agenda: MeetingAgenda, line: MeetingLine | null) =>
+    openTaskPayloadDrawer(overlay, {
+      agenda: line ? null : agenda,
+      meetingProject: meeting.project,
+      lineContent: line?.content ?? null,
+      initialTask: line?.task && line.taskId !== null ? pickedFromLineTask(line.taskId, line.task) : null,
+      prefill: line ? taskPayloadOf(line) : null,
+      submitMode,
+      onSubmit: async ({ taskId, changes, content }) => {
+        if (submitMode === "insert" && line && taskId !== null) {
+          await taskLink.applyTaskUpdate(line, { taskId, ...changes });
+          return;
+        }
+        if (line) {
+          await edit.savePayload(line, { taskId, payload: changes }, { taskId, payload: changes });
+          return;
+        }
+        await edit.addLineFromDrawer({ agendaId: agenda.id, kind: "task", content, taskId, payload: changes });
+      },
+    });
+
   // 줄 버튼 슬롯 — 보기 · 편집 모드 같은 자리. `generating` 이면 전부 잠금(U-1). 드로어 · AI 탭에는 없다
   const renderLineActions = isPage
     ? (line: MeetingLine, agenda: MeetingAgenda) => (
         <LineTaskButton
           line={line}
           locked={!canEdit}
-          busy={taskLink.applyingLineId === line.id}
-          onCreate={(target) => openCreate(agenda, target)}
-          onApply={(target) => void taskLink.applyLinePayload(target)}
+          busy={taskLink.busyLineId === line.id}
+          onOpenAction={(target) => openActionPayload(agenda, target)}
+          onOpenTask={(target) => openTaskPayload(agenda, target)}
         />
       )
     : undefined;
@@ -278,13 +318,13 @@ export function MeetingDetailBody({ meeting, mode }: { meeting: MeetingDetail; m
           <Plus className="h-2.5 w-2.5" aria-hidden />
           결정
         </button>
-        {/* 「+ 연관 업무」(U-9) — 줄 추가 → 변경이 있으면 곧바로 U-6 「업무 갱신」과 같은 요청(다른 요청 · ②가 실패해도 줄은 있다) */}
-        <button type="button" onClick={() => openLink(agenda)} className={chip}>
+        {/* 「+ 연관 업무」(U-9 칩 진입) — **payload 드로어가 바로** 뜬다. 「저장」이 줄 + `payload` 를 한 요청으로 만든다(MF-64 정정) */}
+        <button type="button" onClick={() => openTaskPayload(agenda, null)} className={chip}>
           <Plus className="h-2.5 w-2.5" aria-hidden />
           연관 업무
         </button>
-        {/* 「+ 액션 아이템」(U-10 칩 진입) — 업무 생성 + 줄 한 요청 */}
-        <button type="button" onClick={() => openCreate(agenda, null)} className={chip}>
+        {/* 「+ 액션 아이템」(U-10 칩 진입) — 〃. **줄 추가 드로어를 거치지 않는다** */}
+        <button type="button" onClick={() => openActionPayload(agenda, null)} className={chip}>
           <Plus className="h-2.5 w-2.5" aria-hidden />
           액션 아이템
         </button>
@@ -304,7 +344,6 @@ export function MeetingDetailBody({ meeting, mode }: { meeting: MeetingDetail; m
       empty={<p className="text-meta text-fg-caption">기록된 안건이 없습니다</p>}
       editable={editing}
       onSaveLineContent={edit.saveLineContent}
-      onChangeKind={(line, kind) => void edit.changeLineKind(line, kind)}
       onRenameAgenda={edit.renameAgendaTitle}
       renderLineAction={renderLineAction}
       renderAgendaFooter={renderAgendaFooter}

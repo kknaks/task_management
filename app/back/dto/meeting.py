@@ -20,8 +20,9 @@ __all__ = [
     "AgendaUpdateDTO",
     "LineCreateDTO",
     "LineNewTaskDTO",
+    "LinePayloadJson",
     "LineUpdateDTO",
-    "LinePayloadDTO",
+    "LineTaskUpdateDTO",
     "MeetingAiContextDTO",
     "MeetingTaskFilterDTO",
     "TaskContextDTO",
@@ -262,64 +263,79 @@ class AgendaUpdateDTO:
     state: str | Unset = UNSET
 
 
-@dataclass(frozen=True)
-class LinePayloadDTO:
-    """`payload` — 담는 것은 **기한 · 상태 · note 셋뿐**(M-14-a · DEC-003 §4 L102). 보낸 키만 값이 있다.
-
-    저장 형태는 JSONB `{dueDate, status, note}` 이고 `to_json()` 이 **보낸 키만** 싣는다 — 「보내지 않음」이 곧 「변경 없음」이다.
-    `cancelled` 는 담지 않는다(사유가 필수라 세 키로 표현할 수 없다 — SPEC-008 §4 Validation). 적용은 `meeting_task_link_service.apply_payload`.
-    """
-
-    due_date: date | None = None
-    status: str | None = None
-    note: str | None = None
-
-    def to_json(self) -> dict[str, object]:
-        payload: dict[str, object] = {}
-        if self.due_date is not None:
-            payload["dueDate"] = self.due_date.isoformat()
-        if self.status is not None:
-            payload["status"] = self.status
-        if self.note is not None:
-            payload["note"] = self.note
-        return payload
+# `payload` 는 **줄에 붙는 JSON 그대로**다(M-14-a) — 액션 줄 = 생성분 · 업무 줄 = 변경분, 두 모양.
+# 값의 모양을 보는 것은 **스키마 층 하나**이고(`schemas.meeting.ActionLinePayload` · `TaskLinePayload`),
+# 여기서부터 아래로는 **저장 형태(camelCase dict)를 그대로 나른다** — service 는 payload 를 해석하지 않는다.
+# 「넣기」의 요청은 줄의 저장값이 아니라 드로어가 보낸 본문(`LineTaskUpdateDTO`)이다(MF-59 · SPEC-008 §4).
+LinePayloadJson = dict[str, object]
 
 
 @dataclass(frozen=True)
 class LineNewTaskDTO:
-    """`POST …/lines { newTask }` — 업무 생성 + 줄 한 트랜잭션(SPEC-008 U-10). `POST …/lines/{id}/task` 본문도 이 모양이다 — `meeting_task_link_service`."""
+    """`POST …/lines/{id}/task` 본문 — 액션 줄 「넣기」의 업무 생성분(SPEC-008 U-10).
+
+    규칙은 SPEC-003 `POST /api/tasks` 그대로다(`todos[]` 포함 · 첨부 · 연관은 받지 않는다).
+    **줄에 저장된 `payload` 를 서버가 그대로 쓰지 않는다** — 사람이 드로어에서 확인·수정한 값이 이 본문이다.
+    """
 
     title: str
     work_type_id: int
     project_id: int | None = None
+    start_date: date | None = None
     due_date: date | None = None
     description: str | None = None
+    todos: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
 class LineCreateDTO:
     """`POST …/lines` — 사람 줄 하나. 회의 중(SPEC-007 §4)과 종료 후 편집(SPEC-008 §4)이 **같은 표면**이다.
 
-    회의 중에는 `agenda_id`·`kind`·`content` 만 — `detail`·`task_id`·`payload`·`new_task` 는 **`ended` 에서만** 받고
+    회의 중에는 `agenda_id`·`kind`·`content` 만 — `detail`·`task_id`·`payload` 는 **`ended` 에서만** 받고
     `recording` 에서 오면 `meeting_edit_service` 가 `validation_error` 로 거른다(SPEC-007 규칙 유지).
-    `content` 는 `task_id`·`new_task` 줄에서는 서버가 업무 제목으로 채우므로 None 일 수 있다.
+    **`content` 는 네 종류 모두 필수다**(서버가 업무 제목으로 채우는 갈래가 없다 — SPEC-008 §4 Validation).
+    `payload`·`task_id` 가 어느 종류에 실릴 수 있는지는 **스키마 층**이 `kind` 로 가른다(줄과 업무를 함께 만드는 갈래는 폐기됐다).
     """
 
     agenda_id: int
     kind: str
-    content: str | None
+    content: str
     detail: str | None = None
     task_id: int | None = None
-    payload: LinePayloadDTO | None = None
-    new_task: LineNewTaskDTO | None = None
+    payload: LinePayloadJson | None = None
 
 
 @dataclass(frozen=True)
 class LineUpdateDTO:
-    """`PATCH …/lines/{id}` — **보낸 필드만**(SPEC-008 §4). `kind` 가 `task` 를 벗어나면 `task_id`·`payload` 가 비워진다."""
+    """`PATCH …/lines/{id}` — **보낸 필드만**(SPEC-008 §4). `content` · `payload` · `task_id` 셋뿐이다.
+
+    **`kind` 가 없다**(MF-60 — 줄 종류를 바꾸는 표면이 없다). `payload_kind` 는 스키마가 알아본 `payload` 의 모양
+    (`action` = 생성분 · `task` = 변경분)이고, **그 줄의 종류와 같은지**는 service 가 본다 — PATCH 본문에는 `kind` 가 없어
+    스키마 혼자서는 알 수 없다. `payload`·`task_id` 는 `None` 으로 **비울 수 있다**(「보내지 않음」과 다르다).
+    """
 
     content: str | Unset = UNSET
-    kind: str | Unset = UNSET
+    payload: LinePayloadJson | None | Unset = UNSET
+    payload_kind: str | Unset = UNSET
+    task_id: int | None | Unset = UNSET
+
+
+@dataclass(frozen=True)
+class LineTaskUpdateDTO:
+    """`PATCH …/lines/{id}/task` 본문 — 업무 줄 「넣기」(SPEC-008 §4 ①~⑧ · MF-59).
+
+    `task_id` 는 **필수**(드로어 헤더 셀렉터의 업무 — 줄에 저장된 값과 달라도 이 값이 이긴다).
+    나머지 일곱은 **변경분**이고 「보내지 않음」(`UNSET`)과 값이 있는 것만 구분한다 — 0개도 받는다(⑧ 만 일어난다).
+    """
+
+    task_id: int
+    due_date: date | Unset = UNSET
+    status: str | Unset = UNSET
+    note: str | Unset = UNSET
+    todos: tuple[str, ...] | Unset = UNSET
+    related_task_ids: tuple[int, ...] | Unset = UNSET
+    project_id: int | Unset = UNSET
+    completion_result: str | Unset = UNSET
 
 
 # --- 회의 중 (SPEC-007) ----------------------------------------------------

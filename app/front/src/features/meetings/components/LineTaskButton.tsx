@@ -8,19 +8,20 @@
  *
  * | 줄 | 버튼 |
  * |---|---|
- * | 액션(`taskId` 없음) | 「**업무 생성**」 30 r8 테두리 12/600 → U-10 드로어(제목 프리필) |
- * | 업무 · `payload` 있음 | 「**업무 갱신**」 30 r8 배경 · 테두리 12/600 → **즉시 요청**(확인 없음). 응답까지 비활성 + 진행. 툴팁 = 반영할 내용(같은 상태 제외) |
- * | 업무 · `payload` 없음 | 「**갱신 완료**」 비활성 — 방금 갱신했거나 처음부터 변경이 없는 줄 |
- * | 업무 · `task.isDeleted` | 「**삭제된 업무**」 12 `#9EA2AE` 비활성(DEC-001 §4 참조 표시의 결). 배지 · 제목은 `LineRow` 가 그대로 |
+ * | 액션(`taskId` 없음) | 「**업무 생성**」 30 r8 테두리 12/600 → **U-10 드로어**(`payload` 가 있으면 그 값이 채워진 채로) |
+ * | 업무 · 넣기 전 | 「**업무 갱신**」 30 r8 배경 · 테두리 12/600 → **U-9 드로어**(헤더 셀렉터에 그 업무 · 없으면 빈 셀렉터) |
+ * | 업무 · 넣기 뒤(`taskId` 있고 `payload` 없음) | 「**갱신 완료**」 비활성 |
+ * | 업무 · `task.isDeleted` | 「삭제된 업무」 캡션 + 「업무 갱신」 그대로 — 헤더 셀렉터에서 다른 업무로 바꿀 수 있다(U-6) |
  * | `locked`(`generating`) | 전부 비활성(U-1) |
  *
- * 갱신 성공 시 토스트 없음 — 버튼이 「갱신 완료」로 바뀌는 것이 결과다(완료 전이가 실렸으면 훅이 완료 토스트를 띄운다).
+ * **`payload` 가 있으면 버튼 옆에 6px dot**(「채워진 값이 있다」 — 디자인 시스템 [09] 탭 dot 재사용)과 **툴팁**(그 내용)이 붙는다.
+ * **누르는 것은 언제나 드로어를 여는 것**이다 — 이 버튼에서 바로 요청이 나가지 않는다(MF-66 — 요청은 드로어 푸터가 낸다).
  * **판정이 없다** — 어떤 상태로 갈 수 있는지 · 결과자료가 있는지 여기서 보지 않는다.
  */
 
 import { Loader2 } from "lucide-react";
 
-import { payloadSummary } from "@/features/meetings/hooks/useMeetingTaskLink";
+import { payloadSummary } from "@/features/meetings/linePayload";
 import type { MeetingLine } from "@/features/meetings/types";
 import { cn } from "@/lib/utils";
 
@@ -31,45 +32,52 @@ export const DELETED_TASK_LABEL = "삭제된 업무";
 
 const BASE = "flex h-[30px] shrink-0 items-center gap-1.5 rounded-control px-3 text-caption font-semibold disabled:cursor-not-allowed";
 
+/** 「채워진 값이 있다」 — 6px dot `#7181F8`(U-6). `payload` 유무 하나만 본다. */
+function PayloadDot() {
+  return <span data-payload-dot aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />;
+}
+
 export function LineTaskButton({
   line,
   locked = false,
   busy = false,
-  onCreate,
-  onApply,
+  onOpenAction,
+  onOpenTask,
 }: {
   line: MeetingLine;
   /** `generating` — 전부 비활성(U-1). */
   locked?: boolean;
-  /** 이 줄의 갱신 요청이 나가 있다 — 비활성 + 진행 표시. */
+  /** 이 줄의 「넣기」 요청이 나가 있다 — 비활성 + 진행 표시. */
   busy?: boolean;
-  onCreate: (line: MeetingLine) => void;
-  onApply: (line: MeetingLine) => void;
+  /** 액션 줄 → U-10 드로어. */
+  onOpenAction: (line: MeetingLine) => void;
+  /** 업무 줄 → U-9 드로어. */
+  onOpenTask: (line: MeetingLine) => void;
 }) {
+  const summary = payloadSummary(line);
+  const tooltip = summary.length > 0 ? summary.join(" · ") : undefined;
+
   if (line.kind === "action" && line.taskId === null) {
     return (
       <button
         type="button"
-        onClick={() => onCreate(line)}
-        disabled={locked}
+        onClick={() => onOpenAction(line)}
+        disabled={locked || busy}
+        aria-busy={busy || undefined}
+        title={tooltip}
         className={cn(BASE, "border border-border bg-card text-foreground hover:bg-muted disabled:opacity-50")}
       >
+        {busy ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : null}
         {CREATE_TASK_LABEL}
+        {line.payload ? <PayloadDot /> : null}
       </button>
     );
   }
-  if (line.kind !== "task" || line.taskId === null) {
+  if (line.kind !== "task") {
     return null;
   }
-  if (line.task?.isDeleted) {
-    return (
-      <button type="button" disabled className={cn(BASE, "text-fg-caption")}>
-        {DELETED_TASK_LABEL}
-      </button>
-    );
-  }
-  const summary = payloadSummary(line);
-  if (!line.payload) {
+  // **넣기 뒤** — `taskId` 가 있고 `payload` 가 비었다. 삭제된 업무는 여기 오지 않는다(아래 「업무 갱신」으로 다시 고를 수 있다)
+  if (line.taskId !== null && !line.payload && !line.task?.isDeleted) {
     return (
       <button type="button" disabled className={cn(BASE, "border border-chip-border bg-muted text-fg-caption")}>
         {APPLIED_LABEL}
@@ -77,16 +85,20 @@ export function LineTaskButton({
     );
   }
   return (
-    <button
-      type="button"
-      onClick={() => onApply(line)}
-      disabled={locked || busy}
-      aria-busy={busy || undefined}
-      title={summary.length > 0 ? summary.join(" · ") : undefined}
-      className={cn(BASE, "border border-chip-border bg-muted text-fg-meta hover:text-foreground disabled:opacity-50")}
-    >
-      {busy ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : null}
-      {APPLY_TASK_LABEL}
-    </button>
+    <span className="flex shrink-0 items-center gap-1.5">
+      {line.task?.isDeleted ? <span className="shrink-0 text-caption text-fg-caption">{DELETED_TASK_LABEL}</span> : null}
+      <button
+        type="button"
+        onClick={() => onOpenTask(line)}
+        disabled={locked || busy}
+        aria-busy={busy || undefined}
+        title={tooltip}
+        className={cn(BASE, "border border-chip-border bg-muted text-fg-meta hover:text-foreground disabled:opacity-50")}
+      >
+        {busy ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : null}
+        {APPLY_TASK_LABEL}
+        {line.payload ? <PayloadDot /> : null}
+      </button>
+    </span>
   );
 }

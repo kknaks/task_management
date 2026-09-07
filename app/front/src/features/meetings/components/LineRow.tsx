@@ -13,9 +13,10 @@
  * - `expandable` — 우측 끝 펼침 화살표(22×22, **hover 에서만** — [09] L700). 펼치면 상세 + 근거 칩.
  *   통합본은 호출자(트리)가 `detail`·`evidence` 있는 줄에만 `true` 를 준다(SPEC-008 U-5)
  * - `actions` — 줄 버튼 슬롯(업무 생성 · 업무 갱신 — **Phase 5**). 회의 중에는 비어 있다
- * - **편집 모드(WORK-008 · U-7)** — `editable` 이면 라벨 자리가 종류 셀렉터, 본문이 입력 상자가 되고 `lineAction`(「제거」)이 우측 끝에 붙는다.
+ * - **편집 모드(U-7)** — `editable` 이면 **본문만** 입력 상자가 되고 `lineAction`(「제거」)이 우측 끝에 붙는다.
+ *   **라벨은 그대로 라벨이다 — 종류 셀렉터가 없다**(WORK-013 · MF-60 — 종류가 틀린 줄은 지우고 새로 적는다).
  *   전부 **prop** 이라 회의 중 화면(`editable` 미지정)의 렌더는 WORK-007 그대로다
- * - 실패 표시(`contentSaveFailed` · `kindSaveFailed`)도 prop 이다 — 여기 `useState` 로 들지 않는다(정적 검사 ⑧)
+ * - 실패 표시(`contentSaveFailed`)도 prop 이다 — 여기 `useState` 로 들지 않는다(정적 검사 ⑧)
  *
  * **회의 중 사람 줄은 읽기 전용이다** — 클릭 핸들러·삭제·편집 어포던스가 없다(U-2). hover 배경 `#FAFBFC` 만.
  * `kind='task'` 줄이 업무를 가리키면(`task` 요약 — AI 줄) 라벨 옆에 그 업무의 **유형 배지**(공용 `TypeBadge` · `task.workType`)를 단다(U-4 · [09] L671).
@@ -28,7 +29,6 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import { TypeBadge } from "@/components/shared/TypeBadge";
 import { EvidenceChip } from "@/features/meetings/components/EvidenceChip";
 import { InlineFieldInput } from "@/features/meetings/components/InlineFieldInput";
-import { LineKindSelector } from "@/features/meetings/components/LineKindSelector";
 import { isLineKind, LINE_KIND_LABEL, LINE_LABEL_CLASS } from "@/features/meetings/lineKinds";
 import type { LineKind, MeetingLine } from "@/features/meetings/types";
 import { cn } from "@/lib/utils";
@@ -46,9 +46,7 @@ export function LineRow({
   actions,
   editable = false,
   onSaveContent,
-  onChangeKind,
   contentSaveFailed = false,
-  kindSaveFailed = false,
   attemptedContent,
   lineAction,
   chipCaption,
@@ -63,9 +61,7 @@ export function LineRow({
   /** 편집 모드(SPEC-008 U-7) — 종류 셀렉터 + 본문 입력. */
   editable?: boolean;
   onSaveContent?: (next: string) => Promise<void>;
-  onChangeKind?: (kind: LineKind) => void;
   contentSaveFailed?: boolean;
-  kindSaveFailed?: boolean;
   /** 실패한 본문에 사용자가 넣으려던 값(U-7 「값 유지」). 없으면 `line.content`. */
   attemptedContent?: string;
   /** 우측 끝 고스트 버튼 슬롯(「제거」). */
@@ -89,13 +85,10 @@ export function LineRow({
           editing && "items-center",
         )}
       >
-        {editing && onChangeKind ? (
-          <LineKindSelector value={kind} taskLinked={line.taskId !== null} onSelect={onChangeKind} saveFailed={kindSaveFailed} />
-        ) : (
-          <span className={cn("w-[34px] shrink-0 pt-0.5 text-row-label", LINE_LABEL_CLASS[kind])}>
-            {isLineKind(line.kind) ? LINE_KIND_LABEL[line.kind] : line.kind}
-          </span>
-        )}
+        {/* **라벨은 편집 모드에서도 라벨이다** — 종류를 바꾸는 표면이 없다(MF-60) */}
+        <span className={cn("w-[34px] shrink-0 pt-0.5 text-row-label", LINE_LABEL_CLASS[kind])}>
+          {isLineKind(line.kind) ? LINE_KIND_LABEL[line.kind] : line.kind}
+        </span>
         {kind === "task" && line.task ? (
           <TypeBadge name={line.task.workType.name} colorToken={line.task.workType.colorToken} />
         ) : null}

@@ -13,14 +13,22 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Annotated, Literal
 
-from pydantic import AwareDatetime, ConfigDict, StringConstraints, field_validator, model_validator
+from pydantic import (
+    AwareDatetime,
+    ConfigDict,
+    StringConstraints,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
-from dto.enums import PAYLOAD_STATUSES
+from dto.enums import PayloadStatus
 from dto.meeting import (
     AgendaCreateDTO,
     AgendaUpdateDTO,
     LineCreateDTO,
     LineNewTaskDTO,
+    LineTaskUpdateDTO,
     LineTaskSummaryDTO,
     LineUpdateDTO,
     MeetingAgendaDTO,
@@ -33,7 +41,6 @@ from dto.meeting import (
     MeetingListResultDTO,
     MeetingUpdateDTO,
     MergedSummaryDTO,
-    LinePayloadDTO,
     ProjectCountDTO,
     TaskContextDTO,
     TranscriptDTO,
@@ -117,81 +124,220 @@ class AgendaUpdate(_MeetingRequest):
         )
 
 
-# SPEC-008 §4 Validation — `detail` 4000 이하 · `note` 1~2000 · `payload.status` 는 `cancelled` 불가
+# SPEC-008 §4 Validation — `detail` 4000 이하 · `note` 1~2000 · 할일 각 1~200 · 완료 결과 4000 이하
 LineDetail = Annotated[str, StringConstraints(max_length=4000)]
-PendingNote = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
-# SPEC-003 `POST /api/tasks` Validation 그대로(`newTask` · `/lines/{id}/task`) — 제목 1~200 · 설명 4000 이하
+PayloadNote = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
+TodoText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+CompletionResult = Annotated[str, StringConstraints(max_length=4000)]
+# SPEC-003 `POST /api/tasks` Validation 그대로(액션 줄 생성분 · `/lines/{id}/task` 본문) — 제목 1~200 · 설명 4000 이하
 TaskTitle = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 TaskDescription = Annotated[str, StringConstraints(max_length=4000)]
+# 상태 값 집합의 정본은 **`dto.enums.PayloadStatus`** 다 — 여기에 문자열을 다시 적지 않는다.
+# 이것이 **완료 게이트의 뒷문을 층에서 막는 자리**다(MF-59 · BE §12 8-c) — `done`·`cancelled` 는 `422` 로 나간다.
+# 액션 payload 에는 상태가 없다(새 업무는 언제나 「시작전」) — 이 타입을 쓰는 것은 **업무 줄의 두 표면뿐**이다
 
 
-class LinePayload(_MeetingRequest):
-    """`payload` — 키는 **`dueDate` · `status` · `note` 만**(M-14-a). `extra="forbid"` 가 넷째 키를, `Literal` 이 `cancelled` 를 막는다.
+class ActionLinePayload(_MeetingRequest):
+    """**액션 줄의 `payload`** — 새로 만들 업무의 **생성분 일곱**(M-14-a · SPEC-008 U-10).
 
-    보냈으면 키가 1개 이상이어야 한다. 값은 `null` 로 비울 수 없다(「보내지 않음」이 곧 「변경 없음」).
+    `title` 만 필수다. **`workTypeId` 는 `null` 이어도 저장된다** — AI 가 못 고르면 비워 두고 「넣기」 때 사람이 고른다
+    (SPEC-008 §4 「페이로드 참조」 · WP OQ-12). 상태는 담지 않는다(새 업무는 언제나 「시작전」).
+    `extra="forbid"` 가 여덟째 키를 막는다. 저장 형태는 **일곱 키가 모두 있는 camelCase JSON** 이다(§4 예시 그대로).
+    """
+
+    title: TaskTitle
+    work_type_id: int | None = None
+    project_id: int | None = None
+    start_date: date | None = None
+    due_date: date | None = None
+    description: TaskDescription | None = None
+    todos: list[TodoText] = []
+
+    _no_newline = field_validator("title")(_reject_newlines)
+
+    def to_json(self) -> dict[str, object]:
+        return {
+            "title": self.title,
+            "workTypeId": self.work_type_id,
+            "projectId": self.project_id,
+            "startDate": None if self.start_date is None else self.start_date.isoformat(),
+            "dueDate": None if self.due_date is None else self.due_date.isoformat(),
+            "description": self.description,
+            "todos": list(self.todos),
+        }
+
+
+# 변경분 일곱 — **필드 이름 → 저장 키**. 한 곳이다(검증도 직렬화도 이 표를 돈다)
+_TASK_CHANGE_KEYS: dict[str, str] = {
+    "due_date": "dueDate",
+    "status": "status",
+    "note": "note",
+    "todos": "todos",
+    "related_task_ids": "relatedTaskIds",
+    "project_id": "projectId",
+    "completion_result": "completionResult",
+}
+
+
+class _TaskChange(_MeetingRequest):
+    """업무 줄의 **변경분 일곱** — `payload` 와 「넣기」 본문이 **같은 키 · 같은 규칙**을 쓰는 자리(WP §Internal Interface).
+
+    「보내지 않음」이 곧 「변경 없음」이라 **보낸 키를 `null` 로 비울 수 없다**(비우는 뜻의 값이 계약에 없다).
+    상태는 `PayloadStatus` 하나로 갈린다 — 그래서 `done` 뒷문이 두 표면에 동시에 없다.
     """
 
     due_date: date | None = None
-    # 허용값의 정본은 `dto.enums.PAYLOAD_STATUSES`(= 업무 상태 − `cancelled`) — 문자열을 여기 다시 적지 않는다
-    status: str | None = None
-    note: PendingNote | None = None
-
-    @field_validator("status")
-    @classmethod
-    def _status_in_allowed_set(cls, value: str | None) -> str | None:
-        if value is not None and value not in PAYLOAD_STATUSES:
-            raise ValueError("payload.status 에 담을 수 없는 상태입니다")
-        return value
+    status: PayloadStatus | None = None
+    note: PayloadNote | None = None
+    todos: list[TodoText] | None = None
+    related_task_ids: list[int] | None = None
+    project_id: int | None = None
+    completion_result: CompletionResult | None = None
 
     @model_validator(mode="after")
-    def _at_least_one_and_no_null(self) -> "LinePayload":
-        if not self.model_fields_set:
-            raise ValueError("payload 에 키가 하나 이상 있어야 합니다")
-        for name in ("due_date", "status", "note"):
+    def _sent_changes_are_not_null(self) -> "_TaskChange":
+        for name in _TASK_CHANGE_KEYS:
             if name in self.model_fields_set and getattr(self, name) is None:
                 raise ValueError(f"{name} 은 비울 수 없습니다")
         return self
 
-    def to_dto(self) -> LinePayloadDTO:
-        return LinePayloadDTO(due_date=self.due_date, status=self.status, note=self.note)
+    def _changes_json(self) -> dict[str, object]:
+        """**보낸 키만** camelCase 로. 저장값과 「넣기」 본문의 모양이 같아야 드로어가 그대로 프리필한다."""
+        changes: dict[str, object] = {}
+        for name, key in _TASK_CHANGE_KEYS.items():
+            if name not in self.model_fields_set:
+                continue
+            value = getattr(self, name)
+            if isinstance(value, date):
+                value = value.isoformat()
+            elif isinstance(value, PayloadStatus):
+                # 저장 형태는 **평범한 문자열**이다 — JSONB 에 enum 표현이 새지 않게 한다
+                value = value.value
+            changes[key] = value
+        return changes
+
+
+class TaskLinePayload(_TaskChange):
+    """**업무 줄의 `payload`** — 아직 반영하지 않은 변경분 일곱(M-14-a). 옛 세 키 모델(기한·상태·메모)의 자리를 대신한다.
+
+    **키가 0개여도 받는다.** 예전에는 이 저장값이 곧 「업무 갱신」 요청이라 빈 값이 뜻을 잃었지만,
+    이제 요청은 드로어가 보내는 `TaskUpdateBody` 다 — `payload` 는 **저장된 초안**일 뿐이라 빈 초안이 계약을 깨지 않는다.
+    """
+
+    def to_json(self) -> dict[str, object]:
+        return self._changes_json()
+
+
+class TaskUpdateBody(_TaskChange):
+    """`PATCH …/lines/{id}/task` 본문 — U-9 「넣기」(SPEC-008 §4 ①~⑧).
+
+    `taskId` 는 **필수**다(헤더 셀렉터의 업무). 변경분은 `TaskLinePayload` 와 같은 키·같은 규칙이고 **0개도 된다** — ⑧ 만 일어난다.
+    """
+
+    task_id: int
+
+    def to_dto(self) -> LineTaskUpdateDTO:
+        sent = self.model_fields_set
+        return LineTaskUpdateDTO(
+            task_id=self.task_id,
+            due_date=self.due_date if "due_date" in sent else UNSET,  # type: ignore[arg-type]
+            status=self.status.value if "status" in sent and self.status is not None else UNSET,  # type: ignore[arg-type]
+            note=self.note if "note" in sent else UNSET,  # type: ignore[arg-type]
+            todos=tuple(self.todos or ()) if "todos" in sent else UNSET,  # type: ignore[arg-type]
+            related_task_ids=(
+                tuple(self.related_task_ids or ()) if "related_task_ids" in sent else UNSET  # type: ignore[arg-type]
+            ),
+            project_id=self.project_id if "project_id" in sent else UNSET,  # type: ignore[arg-type]
+            completion_result=(
+                self.completion_result if "completion_result" in sent else UNSET  # type: ignore[arg-type]
+            ),
+        )
 
 
 class LineNewTask(_MeetingRequest):
-    """`newTask` — 업무 생성 + 줄 한 트랜잭션(U-10 칩 진입). 규칙은 SPEC-003 `POST /api/tasks` 그대로. `POST …/lines/{id}/task` 본문도 같은 모양이다."""
+    """`POST …/lines/{id}/task` 본문 — 액션 줄 「넣기」. 규칙은 SPEC-003 `POST /api/tasks` 그대로(첨부·연관은 받지 않는다).
+
+    **줄을 만들면서 업무까지 만드는 갈래는 폐기됐다**(MF-64 정정) — 새 업무의 값은 `payload` 로 저장되고,
+    업무가 되는 것은 보기 모드의 「넣기」뿐이다. 그래서 `workTypeId` 는 여기서 **필수**다
+    (`payload` 에서는 `null` 이어도 됐다 — 고르는 자리가 여기다).
+    """
 
     title: TaskTitle
     work_type_id: int
     project_id: int | None = None
+    start_date: date | None = None
     due_date: date | None = None
     description: TaskDescription | None = None
+    todos: list[TodoText] = []
+
+    _no_newline = field_validator("title")(_reject_newlines)
 
     def to_dto(self) -> LineNewTaskDTO:
         return LineNewTaskDTO(
             title=self.title,
             work_type_id=self.work_type_id,
             project_id=self.project_id,
+            start_date=self.start_date,
             due_date=self.due_date,
             description=self.description,
+            todos=tuple(self.todos),
         )
+
+
+# `payload` 의 모양은 **줄 종류가 고른다**(SPEC-008 §4) — 액션 = 생성분 · 업무 = 변경분.
+_PAYLOAD_BY_KIND: dict[str, type[ActionLinePayload] | type[TaskLinePayload]] = {
+    "action": ActionLinePayload,
+    "task": TaskLinePayload,
+}
+_PAYLOAD_NOT_HERE = "payload 는 액션 · 업무 줄에만 실을 수 있습니다"
+_TASK_ID_NOT_HERE = "taskId 는 업무 줄에만 실을 수 있습니다"
+
+
+def _payload_kind_of(payload: object) -> str:
+    """스키마가 알아본 모양을 service 가 줄의 `kind` 와 맞춰 볼 수 있게 이름으로 돌려준다."""
+    return "action" if isinstance(payload, ActionLinePayload) else "task"
 
 
 class LineCreate(_MeetingRequest):
     """`POST …/lines` — 회의 중(SPEC-007 §4)과 종료 후 편집(SPEC-008 §4) **한 표면**.
 
-    회의 중은 `agendaId`·`kind`·`content` 만. 종료 후가 더하는 것 — `detail`(U-8) · `taskId`+`payload`(U-9 · `content` 는
-    서버가 업무 제목으로) · `newTask`(U-10). `content` 는 그래서 선택이고, **필수 여부는 service 가 종류로 판정**한다.
-    `recording` 에서 확장 필드가 오면 service 가 `validation_error` 다.
+    회의 중은 `agendaId`·`kind`·`content` 만. 종료 후가 더하는 것 — `detail`(U-8) · **`payload`**(U-9 · U-10 칩 진입) ·
+    업무 줄의 `taskId`. **`content` 는 네 종류 모두 필수**이고 서버가 업무 제목으로 채우지 않는다(MF-64 정정).
+    **줄 추가로 업무를 만드는 필드는 어느 줄에서도 받지 않는다** — `extra="forbid"` 가 `422` 로 막는다.
+
+    `payload`·`taskId` 는 **`kind ∈ {action, task}` 에만**(`taskId` 는 `task` 줄에만) — 논의·결정에 실리면 `422` 다.
+    업무는 생기지 않는다(이 표면은 `task_service` 를 부르지 않는다).
     """
 
     agenda_id: int
     kind: LineKindValue
-    content: LineContent | None = None
+    content: LineContent
     detail: LineDetail | None = None
     task_id: int | None = None
-    payload: LinePayload | None = None
-    new_task: LineNewTask | None = None
+    payload: ActionLinePayload | TaskLinePayload | None = None
 
     _no_newline = field_validator("content")(_reject_newlines)
+
+    @field_validator("task_id")
+    @classmethod
+    def _task_id_only_on_task_lines(cls, value: int | None, info: ValidationInfo) -> int | None:
+        if value is not None and info.data.get("kind") != "task":
+            raise ValueError(_TASK_ID_NOT_HERE)
+        return value
+
+    @field_validator("payload", mode="before")
+    @classmethod
+    def _payload_shape_follows_kind(cls, raw: object, info: ValidationInfo) -> object:
+        """`kind` 를 보고 **한 모양으로만** 검증한다 — 유니온 추론에 맡기면 실패한 쪽 이름이 오류 위치에 섞인다.
+
+        `kind` 는 이 필드보다 먼저 선언돼 있어 `info.data` 로 읽힌다(그것부터 틀렸으면 그 오류가 먼저 나간다).
+        """
+        if raw is None:
+            return raw
+        model = _PAYLOAD_BY_KIND.get(str(info.data.get("kind")))
+        if model is None:
+            raise ValueError(_PAYLOAD_NOT_HERE)
+        return model.model_validate(raw)
 
     def to_dto(self) -> LineCreateDTO:
         return LineCreateDTO(
@@ -200,33 +346,51 @@ class LineCreate(_MeetingRequest):
             content=self.content,
             detail=self.detail,
             task_id=self.task_id,
-            payload=None if self.payload is None else self.payload.to_dto(),
-            new_task=None if self.new_task is None else self.new_task.to_dto(),
+            payload=None if self.payload is None else self.payload.to_json(),
         )
 
 
 class LineUpdate(_MeetingRequest):
-    """`PATCH …/lines/{id}` — 보낸 필드만(SPEC-008 §4). `content` · `kind` 둘 다 `null` 로 비울 수 없고, 하나는 보내야 한다."""
+    """`PATCH …/lines/{id}` — 보낸 필드만(SPEC-008 §4). `content` · `payload` · `taskId` 셋뿐이다.
+
+    **`kind` 를 받지 않는다**(MF-60 — 줄 종류를 바꾸는 표면이 없다). 보내면 `extra="forbid"` 가 `422` 다.
+    `content` 는 비울 수 없고, `payload`·`taskId` 는 **`null` 로 비울 수 있다**(드로어에서 지우거나 업무를 아직 안 골랐을 때).
+
+    본문에 `kind` 가 없어 모양은 **`title` 키 유무로** 가린다 — 액션 생성분은 `title` 이 필수이고 변경분에는 그 키가 없다.
+    고른 모양이 **그 줄의 종류와 맞는지**는 service 가 본다(줄의 `kind` 는 DB 에 있다).
+    """
 
     content: LineContent | None = None
-    kind: LineKindValue | None = None
+    payload: ActionLinePayload | TaskLinePayload | None = None
+    task_id: int | None = None
 
     _no_newline = field_validator("content")(_reject_newlines)
 
+    @field_validator("payload", mode="before")
+    @classmethod
+    def _payload_shape_from_the_title_key(cls, raw: object) -> object:
+        if raw is None or not isinstance(raw, dict):
+            return raw
+        return (ActionLinePayload if "title" in raw else TaskLinePayload).model_validate(raw)
+
     @model_validator(mode="after")
-    def _reject_null_and_empty(self) -> "LineUpdate":
+    def _reject_null_content_and_empty_body(self) -> "LineUpdate":
         if not self.model_fields_set:
             raise ValueError("바꿀 필드가 없습니다")
-        for name in ("content", "kind"):
-            if name in self.model_fields_set and getattr(self, name) is None:
-                raise ValueError(f"{name} 은 비울 수 없습니다")
+        if "content" in self.model_fields_set and self.content is None:
+            raise ValueError("content 는 비울 수 없습니다")
         return self
 
     def to_dto(self) -> LineUpdateDTO:
         sent = self.model_fields_set
+        payload_sent = "payload" in sent
         return LineUpdateDTO(
             content=self.content if "content" in sent else UNSET,  # type: ignore[arg-type]
-            kind=self.kind if "kind" in sent else UNSET,  # type: ignore[arg-type]
+            payload=(None if self.payload is None else self.payload.to_json()) if payload_sent else UNSET,
+            payload_kind=(
+                _payload_kind_of(self.payload) if payload_sent and self.payload is not None else UNSET  # type: ignore[arg-type]
+            ),
+            task_id=self.task_id if "task_id" in sent else UNSET,  # type: ignore[arg-type]
         )
 
 
@@ -355,6 +519,7 @@ class LineItem(CamelModel):
     evidence: list
     order_index: int
     task_id: int | None
+    # 두 모양이다(M-14-a) — 액션 줄 = 생성분 일곱 · 업무 줄 = 변경분(있는 키만). AI 가 채운 것과 사람이 「저장」한 것을 구분하지 않는다
     payload: dict | None
     task: LineTaskSummary | None
     # SPEC-007 §4 — 줄 우측 시각. 안건 우측 시각은 화면이 `min(createdAt)` 으로 파생한다

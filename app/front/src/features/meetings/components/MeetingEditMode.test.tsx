@@ -77,16 +77,18 @@ afterEach(async () => {
 });
 
 describe("진입 · 어포던스", () => {
-  it("「편집」 → 입력 상자 · 셀렉터 · 「제거」 · 「+」 칩 · 안건 제목 입력 · 「되돌리기」 없음 · 안건 추가/삭제 없음 · 「편집 완료」 는 요청 없이 보기 모드", async () => {
+  it("「편집」 → 본문 입력 상자 · **종류 셀렉터 없음** · 「제거」 · 「+」 칩 4 · 안건 제목 입력 · 「되돌리기」 없음 · 안건 추가/삭제 없음 · 「편집 완료」 는 요청 없이 보기 모드", async () => {
     const state = harness(endedSucceeded());
     await enterEdit();
     expect(screen.getByText("변경은 자동 저장됩니다")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "되돌리기" })).not.toBeInTheDocument();
     expect(screen.queryByText("되돌리기")).not.toBeInTheDocument();
-    // 통합본 줄 5개가 전부 입력 상자 · 셀렉터 · 「제거」
+    // 최종 회의록 줄 5개가 전부 **본문만** 입력 상자 + 「제거」 — **라벨 자리에 종류 셀렉터가 없다**(MF-60)
     expect(screen.getAllByRole("textbox", { name: "줄 내용" })).toHaveLength(5);
-    expect(screen.getAllByRole("button", { name: "줄 종류" })).toHaveLength(5);
+    expect(screen.queryByRole("button", { name: "줄 종류" })).not.toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "줄 제거" })).toHaveLength(5);
+    // 라벨은 그대로 라벨이다
+    expect(within(row(300)).getByText("논의")).toBeInTheDocument();
     // 안건 제목 입력 상자(결정 ②) — 4개 · 「안건 n」 라벨 · 배지는 그대로
     expect(screen.getAllByRole("textbox", { name: /안건 \d 제목/ })).toHaveLength(4);
     expect(screen.getByText("다음 논의로")).toBeInTheDocument();
@@ -201,44 +203,26 @@ describe("자동 저장 — 본문 · 종류 · 안건 이름", () => {
     expect(calls).toBe(0);
   });
 
-  it("종류 셀렉터 → 「결정」 → `PATCH {kind:'decision'}` · 「업무」는 업무 없는 줄에서 비활성 + 캡션 · 업무 줄 → 「논의」 는 응답 뒤 배지가 사라진다(낙관적 아님)", async () => {
-    const bodies: string[] = [];
-    let release: () => void = () => undefined;
+  it("**줄 종류를 바꾸는 표면이 없다**(MF-60) — 본문을 고쳐도 `PATCH` 본문에 `kind` 가 실리지 않는다", async () => {
+    const bodies: unknown[] = [];
     const state = harness(endedSucceeded());
     server.use(
-      http.patch(`${API_BASE}/api/meetings/21/lines/:lineId`, async ({ params, request }) => {
-        const body = (await request.json()) as { kind: string };
-        bodies.push(`${params.lineId}:${body.kind}`);
-        if (params.lineId === "305") {
-          await new Promise<void>((resolve) => {
-            release = resolve;
-          });
-          state.detail = withLine(state.detail, 305, (current) => ({ ...current, kind: body.kind, taskId: null, task: null, payload: null }));
-        } else {
-          state.detail = withLine(state.detail, 300, (current) => ({ ...current, kind: body.kind }));
-        }
+      http.patch(`${API_BASE}/api/meetings/21/lines/:lineId`, async ({ request }) => {
+        bodies.push(await request.json());
         return HttpResponse.json(state.detail);
       }),
     );
     await enterEdit();
-    await userEvent.click(within(row(300)).getByRole("button", { name: "줄 종류" }));
-    const task = await screen.findByRole("option", { name: /업무/ });
-    expect(task).toBeDisabled();
-    expect(screen.getByText("연관 업무는 「+ 연관 업무」로 추가합니다")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("option", { name: /결정/ }));
-    await waitFor(() => expect(bodies).toEqual(["300:decision"]));
-    expect(within(row(300)).getByRole("button", { name: "줄 종류" })).toHaveTextContent("결정");
+    // 라벨을 눌러도 아무 일이 없다 — 셀렉터가 아니다
+    await userEvent.click(within(row(300)).getByText("논의"));
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
 
-    // 업무 줄 → 「논의」 — 응답까지 배지 · 라벨이 그대로다
-    expect(within(row(305)).getByText("문서·보고")).toBeInTheDocument();
-    await userEvent.click(within(row(305)).getByRole("button", { name: "줄 종류" }));
-    await userEvent.click(await screen.findByRole("option", { name: /논의/ }));
-    await waitFor(() => expect(bodies).toEqual(["300:decision", "305:discussion"]));
-    expect(within(row(305)).getByRole("button", { name: "줄 종류" })).toHaveTextContent("업무");
-    expect(within(row(305)).getByText("문서·보고")).toBeInTheDocument();
-    release();
-    await waitFor(() => expect(within(row(305)).getByRole("button", { name: "줄 종류" })).toHaveTextContent("논의"));
-    expect(within(row(305)).queryByText("문서·보고")).not.toBeInTheDocument();
+    const input = within(row(300)).getByRole("textbox", { name: "줄 내용" });
+    await userEvent.clear(input);
+    await userEvent.type(input, "고친 본문");
+    await userEvent.click(document.body);
+    await waitFor(() => expect(bodies).toEqual([{ content: "고친 본문" }]));
+    expect(JSON.stringify(bodies)).not.toContain("kind");
   });
 
   it("안건 제목을 고치고 바깥 클릭 → `PATCH …/agendas/71 {title}`(`state` 없음) · 보기 모드에도 같은 이름 · 빈 이름은 되돌림 + 캡션", async () => {
@@ -285,8 +269,11 @@ describe("줄 삭제 — 확인 모달", () => {
     );
     await enterEdit();
     await userEvent.click(within(row(320)).getByRole("button", { name: "줄 제거" }));
-    expect(await screen.findByRole("dialog", { name: "이 줄을 삭제할까요?" })).toHaveTextContent("회의록에서 사라지고 되돌릴 수 없습니다. AI 요약과 스크립트는 그대로 남습니다.");
-    expect(screen.queryByText(/연결된 업무는 삭제되지 않습니다/)).not.toBeInTheDocument();
+    const modal = await screen.findByRole("dialog", { name: "이 줄을 삭제할까요?" });
+    // **한 문장**이다 — 안 지워지는 것(AI 요약 · 스크립트 · 연결된 업무)을 적지 않는다(MF-63)
+    expect(modal).toHaveTextContent("되돌릴 수 없습니다.");
+    expect(modal.textContent).not.toMatch(/AI 요약|스크립트|연결된 업무/);
+    expect(modal).toHaveAttribute("data-modal-size", "light");
     await userEvent.click(screen.getByRole("button", { name: "취소" }));
     await sleep(30);
     expect(calls).toEqual([]);
@@ -302,7 +289,7 @@ describe("줄 삭제 — 확인 모달", () => {
     expect(screen.getByText("AI: 경쟁사 요금제를 비교했다")).toBeInTheDocument();
   });
 
-  it("업무 줄 「제거」 → 경고 슬롯 「연결된 업무는 삭제되지 않습니다」 · 실패(5xx)면 모달은 닫히고 줄은 **그대로** + 「삭제하지 못했습니다」", async () => {
+  it("**업무 줄이어도 같은 420 모달 · 경고 슬롯 없음** · 실패(5xx)면 모달은 닫히고 줄은 **그대로** + 「삭제하지 못했습니다」", async () => {
     let calls = 0;
     harness(endedSucceeded());
     server.use(
@@ -314,7 +301,10 @@ describe("줄 삭제 — 확인 모달", () => {
     await enterEdit();
     await userEvent.click(within(row(305)).getByRole("button", { name: "줄 제거" }));
     const dialog = await screen.findByRole("dialog", { name: "이 줄을 삭제할까요?" });
-    expect(dialog).toHaveTextContent("연결된 업무는 삭제되지 않습니다. 반영하지 않은 변경(기한 · 상태 · 메모)은 함께 사라집니다.");
+    // 업무 줄이어도 **갈래를 만들지 않는다** — 같은 한 문장이다(U-7)
+    expect(dialog).toHaveTextContent("되돌릴 수 없습니다.");
+    expect(dialog.textContent).not.toMatch(/연결된 업무/);
+    expect(dialog).toHaveAttribute("data-modal-size", "light");
     await userEvent.click(screen.getByRole("button", { name: "삭제" }));
     expect(await screen.findByText("삭제하지 못했습니다")).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
@@ -385,3 +375,83 @@ describe("U-8 논의 · 결정 추가 드로어", () => {
     expect(calls).toBe(2);
   });
 });
+
+describe("추가 칩 둘 갈래(U-7 · MF-64 정정)", () => {
+  /** 유형 · 프로젝트가 있어야 payload 드로어의 셀렉터가 값을 그린다. */
+  function chipHarness(detail: MeetingDetail) {
+    const state = { detail, requests: [] as string[], bodies: [] as unknown[] };
+    server.use(
+      http.get(`${API_BASE}/api/meetings/21`, () => HttpResponse.json(state.detail)),
+      http.get(`${API_BASE}/api/meetings/21/transcript`, () => HttpResponse.json(TRANSCRIPT)),
+      http.get(`${API_BASE}/api/work-types`, () =>
+        HttpResponse.json({ items: [{ id: 3, name: "문서·보고", kind: "task", colorToken: "steel", isDefault: true, description: null }] }),
+      ),
+      http.get(`${API_BASE}/api/projects`, () => HttpResponse.json({ items: [{ id: 5, name: "소개서 개정", colorToken: "violet" }] })),
+      http.post(`${API_BASE}/api/meetings/21/lines`, async ({ request }) => {
+        state.bodies.push(await request.json());
+        return HttpResponse.json(line({ id: 900, agendaId: 71, track: "merged", kind: "action", content: "새 액션" }), { status: 201 });
+      }),
+    );
+    server.events.on("request:start", ({ request }) => {
+      const url = new URL(request.url);
+      if (/^\/api\/(tasks|meetings\/21\/lines\/)/.test(url.pathname)) {
+        state.requests.push(`${request.method} ${url.pathname}`);
+      }
+    });
+    renderWithProviders(<MeetingDetailPage />);
+    return state;
+  }
+
+  afterEach(() => server.events.removeAllListeners());
+
+  it("「+ 액션 아이템」 → **줄 추가 드로어를 거치지 않고** 액션 payload 드로어가 바로 뜬다 · 「저장」 = `POST …/lines` **하나** · 업무 요청 0", async () => {
+    const state = chipHarness(endedSucceeded());
+    await enterEdit();
+    await userEvent.click(within(agendaEl(71)).getByRole("button", { name: "액션 아이템" }));
+
+    // **드로어가 연달아 둘 뜨지 않는다** — 「논의/결정 추가」를 거치지 않는다
+    await screen.findByRole("heading", { name: "액션 아이템" });
+    expect(screen.queryByRole("heading", { name: /논의 추가|결정 추가/ })).not.toBeInTheDocument();
+    const drawer = screen.getByRole("dialog");
+    expect(drawer.querySelector("[data-agenda-fixed]")).toHaveTextContent("안건 1 · 개정 대상 섹션 확정");
+    // 편집 모드라 푸터는 「취소 · 저장」 **둘**이다
+    expect(within(drawer).queryByRole("button", { name: "넣기" })).toBeNull();
+
+    await userEvent.type(within(drawer).getByLabelText("제목"), "분리 초안 만들기");
+    await userEvent.click(within(drawer).getByRole("button", { name: "저장" }));
+
+    await waitFor(() => expect(state.bodies).toHaveLength(1));
+    expect(state.bodies[0]).toEqual({
+      agendaId: 71,
+      kind: "action",
+      content: "분리 초안 만들기",
+      payload: { title: "분리 초안 만들기", workTypeId: null, projectId: 5, startDate: null, dueDate: null, description: null, todos: [] },
+    });
+    // **업무는 생기지 않는다** — 「넣기」는 보기 모드의 것이다
+    expect(state.requests.filter((request) => request.startsWith("POST /api/tasks"))).toEqual([]);
+  });
+
+  it("「+ 연관 업무」도 payload 드로어가 바로 뜬다 · **「취소」로 닫으면 줄이 생기지 않는다**", async () => {
+    const state = chipHarness(endedSucceeded());
+    await enterEdit();
+    await userEvent.click(within(agendaEl(71)).getByRole("button", { name: "연관 업무" }));
+
+    await screen.findByRole("heading", { name: "연관 업무" });
+    const drawer = screen.getByRole("dialog");
+    // 업무를 아직 안 골랐으니 본문이 비활성이고, 내용 칸만 입력이다(칩 진입)
+    expect(within(drawer).getByRole("textbox", { name: "내용" })).toBeEnabled();
+    expect(within(drawer).getByRole("button", { name: "상태" })).toBeDisabled();
+
+    await userEvent.click(within(drawer).getByRole("button", { name: "취소" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(state.bodies).toEqual([]);
+  });
+
+  it("회의 삭제 모달은 **600 그대로**다(`heavy`) — 줄 삭제만 420 이다", async () => {
+    chipHarness(endedSucceeded());
+    await userEvent.click(await screen.findByRole("button", { name: "삭제" }));
+    const modal = await screen.findByRole("dialog");
+    expect(modal).toHaveAttribute("data-modal-size", "heavy");
+  });
+});
+

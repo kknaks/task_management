@@ -2,8 +2,8 @@
 
 - 사람 줄(`track='human'`)은 `POST …/lines` 가, AI 줄(`track='ai'`)은 배치가 **INSERT** 한다(M-6 · M-7).
   통합 줄(`track='merged'`)은 종료 파이프라인 ② 가 **한 트랜잭션**에 INSERT 한다(M-8-a).
-- 종료 후 편집(SPEC-008) — `update_line` · **`delete_line`(하드 · 뒤 줄 `order_index` 당김)**. 판정(트랙 · 상태)은 service.
-- `order_index` = 그 안건 안의 마지막 + 1(SPEC-007 §4).
+- 종료 후 편집(SPEC-008) — `update_line` · **`delete_line`(그 행 하나만 하드 삭제 · **자리 유지**)**. 판정(트랙 · 상태)은 service.
+- `order_index` = 그 안건 안의 **마지막 + 1**(SPEC-007 §4). 지운 자리는 그대로 두므로 **구멍이 있어도 마지막 + 1** 이다(MF-36).
 - `commit()` 하지 않는다.
 """
 
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dto.enums import MeetingTrack
@@ -132,21 +132,16 @@ async def update_line(
     await session.flush()
 
 
-async def delete_line(
-    session: AsyncSession, *, meeting_id: int, line_id: int, agenda_id: int, order_index: int
-) -> None:
-    """**그 행 하나만 하드 삭제 + 같은 안건의 뒤 줄 `order_index` 를 하나씩 당긴다**(M-20 · DB §0-1).
+async def delete_line(session: AsyncSession, *, meeting_id: int, line_id: int) -> None:
+    """**그 행 하나만 하드 삭제한다**(M-20 · DB §0-1). **뒤 줄을 당기지 않는다** — `DELETE` 한 문장뿐이다(MF-36).
 
-    `source_*_line_id` 가 가리키던 원본 줄 · 업무 · 트랜스크립트를 건드리는 SQL 이 없다 — 참조는 지워지는 쪽에 있었다.
+    당기면 지울 때마다 같은 안건의 뒤 줄을 전부 UPDATE 해야 하고, 얻는 것은 「번호가 촘촘하다」뿐이다.
+    화면은 번호순으로 그리고 새 줄은 `next_order_index`(= 마지막 + 1)를 받으므로 구멍이 있어도 겹치지 않는다.
+
+    업무 · 트랜스크립트 · 녹음을 건드리는 SQL 이 없다 — 참조는 지워지는 쪽에 있었다.
     """
     await session.execute(
         delete(MeetingLine).where(MeetingLine.id == line_id, MeetingLine.meeting_id == meeting_id)
-    )
-    await session.execute(
-        update(MeetingLine)
-        .where(MeetingLine.agenda_id == agenda_id, MeetingLine.order_index > order_index)
-        .values(order_index=MeetingLine.order_index - 1)
-        .execution_options(synchronize_session="fetch")
     )
     await session.flush()
 

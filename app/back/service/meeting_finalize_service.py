@@ -39,6 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import get_settings
 from core.db import SessionLocal, register_after_commit
 from dto.enums import (
+    PAYLOAD_STATUSES,
     BatchPhase,
     BatchRunStatus,
     JobErrorCode,
@@ -48,7 +49,6 @@ from dto.enums import (
     LineKind,
     MeetingStatus,
     MeetingTrack,
-    TaskStatus,
 )
 from dto.job import JobDTO
 from dto.meeting import TranscriptItemDTO
@@ -76,8 +76,8 @@ from service import (
 
 logger = logging.getLogger(__name__)
 
-# `payload.status` — `done`·`cancelled` 는 회의록이 보내지 않는다(MF-59). 오면 **그 키만 뗀다**
-_PAYLOAD_ALLOWED_STATUSES = frozenset({TaskStatus.TODO.value, TaskStatus.IN_PROGRESS.value})
+# `payload.status` 허용값의 정본은 `dto.enums.PAYLOAD_STATUSES` 다 — 사람이 쓰는 표면(스키마 층 422)과 **같은 집합**이다.
+# AI 가 `done`·`cancelled` 를 실어 오면 시도를 죽이지 않고 **그 키만 뗀다**(MF-59)
 # 용어 보정 등급 — `auto` 만 스크립트 본문에 적용한다(M-9-b)
 _GRADE_AUTO = "auto"
 _GRADES = frozenset({_GRADE_AUTO, "guess"})
@@ -451,7 +451,7 @@ def _clean_payload(
     if isinstance(related, list):
         cleaned["relatedTaskIds"] = [task_id for task_id in related if task_id in task_ids]
     status = cleaned.get("status")
-    if status is not None and status not in _PAYLOAD_ALLOWED_STATUSES:
+    if status is not None and status not in PAYLOAD_STATUSES:
         cleaned.pop("status")
     return cleaned
 

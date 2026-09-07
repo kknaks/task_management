@@ -1,20 +1,30 @@
 "use client";
 
 /**
- * **추가 드로어 — 액션 아이템 = 업무 생성**(SPEC-008 U-10 · 시안 L2600~2882 · [09] L748~749 · BASE-003 #10). `DrawerFrame` 위.
+ * **액션 payload 드로어**(SPEC-008 U-10 · MF-13 · 61 · 64 정정 · 65 · 66 · 67). `DrawerFrame` 위.
  *
- * 두 진입점이 **같은 드로어**를 연다 — 액션 줄의 「업무 생성」(U-6 · `line` 있음) · 안건의 「+ 액션 아이템」(U-7 · `line` 없음).
- * 업무 생성 규칙은 **SPEC-003 U-1 · §4 그대로**(제목 1자 + 유형 필수 → 「시작전」 + 로그 「업무 생성」).
+ * **회의록 것이다**(MF-67) — 업무 탭의 새 업무 드로어를 열지 않고 그 드로어에 슬롯·prop 을 얹지도 않는다.
+ * 시각 규격의 참조는 이미 만들어진 `TaskCreateDrawer`(SPEC-003 U-1)이고 **그 파일은 고치지 않는다**(정적 검사).
  *
- * 필드 순서 — ① 안건(액션 줄에서 열었으면 **고정**, 칩이면 기본값 = 그 안건) ② 업무 제목(액션 줄 본문 **프리필**, 고칠 수 있다)
- * ③ 유형(필수 · 종류=업무) · 프로젝트(선택 · 기본값 = 회의의 프로젝트) 2열 ④ 기한(계획 종료) ⑤ 메모 → 업무의 **`description`**
- * (캡션 「업무의 설명에 들어갑니다」).
+ * ## 드로어는 하나다(MF-65)
  *
- * **없는 것**(§7 제외): 「시작 상태」 셀렉터(L2850~2851 — 생성 시 항상 「시작전」 · DEC-002 §5) · 「회의록 줄을 연관 업무로 바꾸기」 토글
- * (L2863~2866 — 만들면 **항상** 그 줄이 업무 줄이 된다 · ERD M-14).
+ * AI 가 만든 줄이든 사람이 적은 줄이든 **같은 드로어 · 같은 필드 · 같은 저장 경로**다. 다른 것은 **`prefill` 이 차 있나 비어 있나**뿐 —
+ * `line.track` · 「AI 줄인가」를 보는 코드가 없다. 채워진 필드에는 테두리 `#7181F8` + 캡션 「회의에서 반영」이 붙고 사람이 고칠 수 있다.
  *
- * 요청 — 액션 줄: `POST …/lines/{id}/task`(그 줄이 업무 줄로 바뀐다) · 칩: `POST …/lines { newTask }`(안건 맨 아래 업무 줄). 둘 다 업무 + 줄
- * **한 요청 · 한 트랜잭션**이다. 실패는 드로어 열린 채 — 유형 · 프로젝트 오류는 그 셀렉터 옆 인라인 + 목록 갱신(SPEC-003 Case Matrix).
+ * ## 필드는 `payload` 키 그대로 일곱
+ *
+ * ① 안건(맨 위 · **읽기 전용**) ② 제목 ③ 유형 · 프로젝트 ④ 계획 시작 ~ 종료 ⑤ 설명 ⑥ 할일.
+ * **없는 것** — 「시작 상태」(만들면 항상 「시작전」) · 참고자료 · 연관 업무 · 결과자료 · 첨부 · 로그(`payload` 키가 아니다).
+ *
+ * ## 푸터는 모드별 하나씩(MF-66 · 한 푸터에 셋을 두지 않는다)
+ *
+ * | `submitMode` | 버튼 | 뜻 | 조건 |
+ * |---|---|---|---|
+ * | `save`(편집 모드 · 칩 진입) | 「취소 · **저장**」 | `payload` 만 줄에 붙는다 — **업무는 아직 없다** | 제목 1자 |
+ * | `insert`(보기 모드) | 「취소 · **넣기**」 | 업무를 만든다(`POST …/lines/{id}/task`) | 제목 1자 + **유형** |
+ *
+ * **인라인 자동 저장이 없다** — 포커스를 벗어나도 요청이 나가지 않는다. 「취소」·×·`Esc`·스크림은 아무것도 저장하지 않고,
+ * 칩으로 열었으면 **줄이 안 생긴다**(MF-64 정정).
  */
 
 import { useEffect, useId, useRef, useState } from "react";
@@ -26,11 +36,11 @@ import { DrawerFooter } from "@/components/shared/DrawerFrame";
 import { Selector, type SelectorOption } from "@/components/shared/Selector";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { AgendaSelect } from "@/features/meetings/components/AddLineDrawer";
 import { TaskDrawerHeader } from "@/features/meetings/components/LinkTaskDrawer";
+import { PayloadField, SUBMIT_LABEL, TodoDraftList, type SubmitMode } from "@/features/meetings/components/PayloadDrawerParts";
 import { TaskDateField } from "@/features/meetings/components/TaskDateField";
 import { isValidationError, meetingInlineError, validationFieldOf } from "@/features/meetings/errors";
-import type { AddLineInput, MeetingAgenda, MeetingLine, MeetingRefSummary, NewTaskInput } from "@/features/meetings/types";
+import type { ActionLinePayload, MeetingAgenda, MeetingRefSummary } from "@/features/meetings/types";
 import { API_ERROR_CODE, inlineErrorMessage, isApiError } from "@/lib/api/errors";
 import { queryKeys } from "@/lib/api/queryKeys";
 import type { DateKey } from "@/lib/datetime";
@@ -39,54 +49,56 @@ import { isEnterSubmit } from "@/lib/keyboard";
 import type { useOverlay } from "@/lib/overlay/OverlayProvider";
 import { cn } from "@/lib/utils";
 
-export const CREATE_TASK_TITLE = "업무 생성";
-export const CREATE_TASK_SUBTITLE = "액션 아이템을 내 업무로 등록합니다";
-export const MEMO_CAPTION = "업무의 설명에 들어갑니다";
+export const ACTION_PAYLOAD_TITLE = "액션 아이템";
+export const ACTION_PAYLOAD_SUBTITLE = "이 줄로 만들 업무의 값을 적습니다";
 export const INVALID_WORK_TYPE_MESSAGE = "삭제됐거나 쓸 수 없는 유형입니다. 다시 골라 주세요";
 export const INVALID_PROJECT_MESSAGE = "삭제된 프로젝트입니다. 다시 골라 주세요";
 
-type Field = "agenda" | "title" | "workType" | "project" | "due" | "memo" | "form";
+type Field = "title" | "workType" | "project" | "startDate" | "dueDate" | "description" | "todos" | "form";
 
-/** 서버가 짚은 요청 필드 → 드로어 칸. 모르면 폼 전체(W-3 — 엉뚱한 칸을 짚지 않는다). */
+/** 서버가 짚은 요청 필드 → 드로어 칸. 모르면 폼 전체 — 엉뚱한 칸을 짚지 않는다. */
 function fieldOf(raw: string | null): Field {
   switch (raw) {
-    case "agendaId":
-      return "agenda";
     case "title":
       return "title";
     case "workTypeId":
       return "workType";
     case "projectId":
       return "project";
+    case "startDate":
+      return "startDate";
     case "dueDate":
-      return "due";
+      return "dueDate";
     case "description":
-      return "memo";
+      return "description";
+    case "todos":
+      return "todos";
     default:
       return "form";
   }
 }
 
-export function CreateTaskFromLineDrawer({
-  agendas,
-  initialAgendaId,
-  line = null,
+export function ActionPayloadDrawer({
+  agenda,
   meetingProject,
-  onCreateFromLine,
-  onAddNewTask,
+  lineContent,
+  prefill,
+  submitMode,
+  onSubmit,
   onCancel,
-  onCreated,
 }: {
-  /** 편집 대상 트랙의 안건 전량 — 칩 진입의 셀렉터 목록. */
-  agendas: readonly MeetingAgenda[];
-  initialAgendaId: number;
-  /** 액션 줄에서 열었으면 그 줄 — 제목 프리필 · 안건 고정 · `POST …/lines/{id}/task`. */
-  line?: MeetingLine | null;
+  /** 맨 위에 **고정**으로 보이는 안건 — 줄에서 열었으면 그 줄의 안건, 칩이면 칩을 누른 안건(U-10 ①). */
+  agenda: MeetingAgenda;
+  /** `payload` 에 프로젝트가 없을 때의 기본값(MF-61). */
   meetingProject: MeetingRefSummary | null;
-  onCreateFromLine: (line: MeetingLine, input: NewTaskInput) => Promise<unknown>;
-  onAddNewTask: (input: AddLineInput) => Promise<unknown>;
+  /** 줄에서 열었으면 그 본문 — 제목의 출발값. 칩 진입이면 `null`(빈 값). */
+  lineContent: string | null;
+  /** 줄의 `payload`. **이것이 차 있나 비어 있나가 유일한 갈래다**(MF-65). */
+  prefill: ActionLinePayload | null;
+  submitMode: SubmitMode;
+  /** 「저장」/「넣기」 — 어떤 요청인지는 **호출자가** 정한다. 거절은 던진다(드로어가 인라인으로 받는다). */
+  onSubmit: (payload: ActionLinePayload) => Promise<unknown>;
   onCancel: () => void;
-  onCreated: () => void;
 }) {
   const client = useQueryClient();
   const { data: workTypes = [] } = useWorkTypesQuery();
@@ -95,14 +107,15 @@ export function CreateTaskFromLineDrawer({
   const ids = useId();
   const titleRef = useRef<HTMLInputElement>(null);
 
-  const [agendaId, setAgendaId] = useState(line?.agendaId ?? initialAgendaId);
-  const [title, setTitle] = useState(line?.content ?? "");
-  const [workType, setWorkType] = useState<SelectorOption | null>(null);
-  const [project, setProject] = useState<SelectorOption | null>(
-    meetingProject && !meetingProject.isDeleted ? { id: meetingProject.id, name: meetingProject.name, colorToken: meetingProject.colorToken } : null,
+  const [title, setTitle] = useState(prefill?.title ?? lineContent ?? "");
+  const [workTypeId, setWorkTypeId] = useState<number | null>(prefill?.workTypeId ?? null);
+  const [projectId, setProjectId] = useState<number | null>(
+    prefill ? (prefill.projectId ?? null) : (meetingProject && !meetingProject.isDeleted ? meetingProject.id : null),
   );
-  const [dueDate, setDueDate] = useState<DateKey | null>(null);
-  const [memo, setMemo] = useState("");
+  const [startDate, setStartDate] = useState<DateKey | null>((prefill?.startDate ?? null) as DateKey | null);
+  const [dueDate, setDueDate] = useState<DateKey | null>((prefill?.dueDate ?? null) as DateKey | null);
+  const [description, setDescription] = useState(prefill?.description ?? "");
+  const [todos, setTodos] = useState<string[]>(prefill?.todos ?? []);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<{ field: Field; message: string } | null>(null);
 
@@ -110,37 +123,38 @@ export function CreateTaskFromLineDrawer({
     titleRef.current?.focus();
   }, []);
 
-  const sorted = [...agendas].sort((a, b) => a.orderIndex - b.orderIndex || a.id - b.id);
-  const agenda = sorted.find((item) => item.id === agendaId) ?? sorted[0] ?? null;
   // 유형은 **종류=업무**만(SPEC-002 목록). 회의 유형으로 업무를 만들 수 없다
-  const taskTypeOptions: SelectorOption[] = workTypes.filter((item) => item.kind === "task").map((item) => ({ id: item.id, name: item.name, colorToken: item.colorToken }));
+  const taskTypeOptions: SelectorOption[] = workTypes
+    .filter((item) => item.kind === "task")
+    .map((item) => ({ id: item.id, name: item.name, colorToken: item.colorToken }));
   const projectOptions: SelectorOption[] = projects.map((item) => ({ id: item.id, name: item.name, colorToken: item.colorToken }));
+  const workType = taskTypeOptions.find((item) => item.id === workTypeId) ?? null;
+  const project = projectOptions.find((item) => item.id === projectId) ?? null;
 
-  // **제목 1자 이상 + 유형 선택됨**(SPEC-003 U-1). 아니면 「업무 생성」 비활성
-  const canSubmit = !submitting && title.trim().length > 0 && workType !== null && (line !== null || agenda !== null);
+  /** 「회의에서 반영」 — `payload` 가 채운 칸만. 사람이 고치면 그대로 두고 표시만 남긴다(값의 출처를 말하는 표시다). */
+  const filled = (key: keyof ActionLinePayload) => prefill !== null && prefill[key] !== null && prefill[key] !== undefined;
+
+  // **「저장」은 제목만 · 「넣기」는 제목 + 유형**(U-10 푸터 조건 · `payload.workTypeId=null` 이어도 저장은 된다)
+  const canSubmit = !submitting && title.trim().length > 0 && (submitMode === "save" || workTypeId !== null);
 
   const submit = async () => {
-    if (!canSubmit || workType === null) {
+    if (!canSubmit) {
       return;
     }
-    const input: NewTaskInput = {
-      title: title.trim(),
-      workTypeId: workType.id,
-      projectId: project?.id ?? null,
-      dueDate,
-      description: memo.trim().length > 0 ? memo.trim() : null,
-    };
     setSubmitting(true);
     setError(null);
     try {
-      if (line) {
-        await onCreateFromLine(line, input);
-      } else if (agenda) {
-        await onAddNewTask({ agendaId: agenda.id, kind: "task", newTask: input });
-      }
-      onCreated();
+      await onSubmit({
+        title: title.trim(),
+        workTypeId,
+        projectId,
+        startDate,
+        dueDate,
+        description: description.trim().length > 0 ? description.trim() : null,
+        todos,
+      });
     } catch (caught) {
-      // **드로어는 열린 채** — 유형 · 프로젝트 오류는 그 셀렉터 옆 인라인 + 목록 갱신(SPEC-003 Case Matrix). 422 는 그 필드. 그 밖은 문구 + 「업무 생성」이 곧 「다시 시도」
+      // **드로어는 열린 채** — 유형 · 프로젝트 오류는 그 셀렉터 옆 인라인 + 목록 갱신(SPEC-003 Case Matrix)
       if (isApiError(caught) && caught.code === API_ERROR_CODE.INVALID_WORK_TYPE) {
         setError({ field: "workType", message: INVALID_WORK_TYPE_MESSAGE });
         void client.invalidateQueries({ queryKey: queryKeys.workTypes() });
@@ -154,7 +168,7 @@ export function CreateTaskFromLineDrawer({
         }
         setError({
           field: isValidationError(caught) ? fieldOf(validationFieldOf(caught)) : "form",
-          message: inline?.message ?? "업무를 만들지 못했습니다 · 다시 시도해 주세요",
+          message: inline?.message ?? "저장하지 못했습니다 · 다시 시도해 주세요",
         });
       }
     } finally {
@@ -171,18 +185,15 @@ export function CreateTaskFromLineDrawer({
 
   return (
     <div className="flex flex-col gap-[22px]">
-      {/* ① 안건 — 액션 줄에서 열었으면 고정 */}
-      <div className="flex flex-col gap-2">
-        <span className="text-meta font-semibold text-foreground">안건</span>
-        <AgendaSelect listboxId={`${ids}-agenda`} agendas={sorted} value={agenda} onSelect={(next) => setAgendaId(next.id)} invalid={error?.field === "agenda"} disabled={line !== null} />
-        {message("agenda")}
-      </div>
+      {/* ① 안건 — 맨 위 고정 · 읽기 전용(U-10) */}
+      <PayloadField label="안건">
+        <p data-agenda-fixed className="flex h-11 items-center rounded-control border border-border bg-muted px-3.5 text-control-label text-fg-meta">
+          안건 {agenda.orderIndex + 1} · {agenda.title}
+        </p>
+      </PayloadField>
 
-      {/* ② 업무 제목 — 액션 줄 본문 프리필 */}
-      <div className="flex flex-col gap-2">
-        <label htmlFor={`${ids}-title`} className="text-meta font-semibold text-foreground">
-          업무 제목
-        </label>
+      {/* ② 제목 — 「저장」이면 이 값이 줄 본문이 된다(칩 진입) */}
+      <PayloadField label="제목" htmlFor={`${ids}-title`} fromMeeting={filled("title")}>
         <Input
           id={`${ids}-title`}
           ref={titleRef}
@@ -199,20 +210,29 @@ export function CreateTaskFromLineDrawer({
               void submit();
             }
           }}
-          className={cn("h-11 text-body", error?.field === "title" && "border-destructive")}
+          className={cn("h-11 text-body", filled("title") && "border-primary", error?.field === "title" && "border-destructive")}
         />
         {message("title")}
-      </div>
+      </PayloadField>
 
-      {/* ③ 유형(필수) · 프로젝트(선택) 2열 */}
+      {/* ③ 유형 · 프로젝트 */}
       <div className="grid grid-cols-2 gap-3">
-        <div className="flex flex-col gap-2">
-          <span className="text-meta font-semibold text-foreground">유형</span>
-          <Selector label="유형" placeholder="유형 (필수)" value={workType} options={taskTypeOptions} onSelect={(next) => { setWorkType(next); setError(null); }} saveFailed={error?.field === "workType"} />
+        <PayloadField label="유형" fromMeeting={filled("workTypeId")}>
+          <Selector
+            label="유형"
+            placeholder={submitMode === "insert" ? "유형 (필수)" : "유형"}
+            value={workType}
+            options={taskTypeOptions}
+            clearable
+            onSelect={(next) => {
+              setWorkTypeId(next?.id ?? null);
+              setError(null);
+            }}
+            saveFailed={error?.field === "workType"}
+          />
           {message("workType")}
-        </div>
-        <div className="flex flex-col gap-2">
-          <span className="text-meta font-semibold text-foreground">프로젝트</span>
+        </PayloadField>
+        <PayloadField label="프로젝트" fromMeeting={filled("projectId")}>
           <Selector
             label="프로젝트"
             placeholder="프로젝트 (선택)"
@@ -220,7 +240,7 @@ export function CreateTaskFromLineDrawer({
             options={projectOptions}
             clearable
             onSelect={(next) => {
-              setProject(next);
+              setProjectId(next?.id ?? null);
               setError(null);
             }}
             saveFailed={error?.field === "project"}
@@ -232,39 +252,73 @@ export function CreateTaskFromLineDrawer({
             createErrorMessage={(caught) => inlineErrorMessage(caught, "project")}
           />
           {message("project")}
-        </div>
+        </PayloadField>
       </div>
 
-      {/* ④ 기한 — 계획 종료. 「시작 상태」 칸은 **없다**(생성 시 항상 「시작전」) */}
-      <div className="flex flex-col gap-2">
-        <span className="text-meta font-semibold text-foreground">기한</span>
-        <TaskDateField value={dueDate} onChange={(next) => { setDueDate(next); setError(null); }} placeholder="미정" ariaLabel="기한" invalid={error?.field === "due"} />
-        {message("due")}
+      {/* ④ 계획 시작 ~ 종료 — 시작일이 비던 자리를 둘로 둔다(U-10) */}
+      <div className="grid grid-cols-2 gap-3">
+        <PayloadField label="계획 시작" fromMeeting={filled("startDate")}>
+          <TaskDateField
+            value={startDate}
+            onChange={(next) => {
+              setStartDate(next);
+              setError(null);
+            }}
+            placeholder="미정"
+            ariaLabel="계획 시작"
+            invalid={error?.field === "startDate"}
+          />
+          {message("startDate")}
+        </PayloadField>
+        <PayloadField label="계획 종료" fromMeeting={filled("dueDate")}>
+          <TaskDateField
+            value={dueDate}
+            onChange={(next) => {
+              setDueDate(next);
+              setError(null);
+            }}
+            placeholder="미정"
+            ariaLabel="계획 종료"
+            invalid={error?.field === "dueDate"}
+          />
+          {message("dueDate")}
+        </PayloadField>
       </div>
 
-      {/* ⑤ 메모 → `description` */}
-      <div className="flex flex-col gap-2">
-        <label htmlFor={`${ids}-memo`} className="text-meta font-semibold text-foreground">
-          메모
-        </label>
+      {/* ⑤ 설명 */}
+      <PayloadField label="설명" htmlFor={`${ids}-description`} fromMeeting={filled("description")}>
         <Textarea
-          id={`${ids}-memo`}
-          value={memo}
-          aria-invalid={error?.field === "memo"}
+          id={`${ids}-description`}
+          value={description}
+          aria-invalid={error?.field === "description"}
           onChange={(event) => {
-            setMemo(event.target.value);
+            setDescription(event.target.value);
             setError(null);
           }}
-          className={cn("min-h-[88px] resize-none rounded-control text-control-label", error?.field === "memo" && "border-destructive")}
+          className={cn(
+            "min-h-[88px] resize-none rounded-control text-control-label",
+            filled("description") && "border-primary",
+            error?.field === "description" && "border-destructive",
+          )}
         />
-        <span className="text-caption text-fg-caption">{MEMO_CAPTION}</span>
-        {message("memo")}
-      </div>
+        {message("description")}
+      </PayloadField>
+
+      {/* ⑥ 할일 */}
+      <PayloadField label="할일" fromMeeting={filled("todos") && (prefill?.todos?.length ?? 0) > 0}>
+        <TodoDraftList todos={todos} onChange={setTodos} />
+        {message("todos")}
+      </PayloadField>
 
       {message("form")}
 
       <DrawerFooter>
-        <button type="button" onClick={onCancel} disabled={submitting} className="flex h-11 items-center rounded-control border border-border px-5 text-control-label text-fg-meta hover:bg-muted disabled:opacity-50">
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={submitting}
+          className="flex h-11 items-center rounded-control border border-border px-5 text-control-label text-fg-meta hover:bg-muted disabled:opacity-50"
+        >
           취소
         </button>
         <button
@@ -274,39 +328,43 @@ export function CreateTaskFromLineDrawer({
           className="flex h-11 items-center gap-2 rounded-control bg-primary px-6 text-control-label font-semibold text-primary-foreground hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
         >
           {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
-          {CREATE_TASK_TITLE}
+          {SUBMIT_LABEL[submitMode]}
         </button>
       </DrawerFooter>
     </div>
   );
 }
 
-/** 액션 줄의 「업무 생성」(U-6) · 편집 모드의 「+ 액션 아이템」 칩이 부른다 — 전체 페이지에서만. `openMeetingDrawers` 가 다시 내보낸다. */
-export function openCreateTaskFromLineDrawer(
+/** 액션 줄의 「업무 생성」(U-6) · 편집 모드의 「+ 액션 아이템」 칩(U-7)이 부른다 — 전체 페이지에서만. */
+export function openActionPayloadDrawer(
   overlay: ReturnType<typeof useOverlay>,
   options: {
-    agendas: readonly MeetingAgenda[];
-    agendaId: number;
-    line?: MeetingLine | null;
+    agenda: MeetingAgenda;
     meetingProject: MeetingRefSummary | null;
-    onCreateFromLine: (line: MeetingLine, input: NewTaskInput) => Promise<unknown>;
-    onAddNewTask: (input: AddLineInput) => Promise<unknown>;
+    lineContent: string | null;
+    prefill: ActionLinePayload | null;
+    submitMode: SubmitMode;
+    onSubmit: (payload: ActionLinePayload) => Promise<unknown>;
   },
 ): void {
   overlay.openDrawer({
-    key: "meeting-create-task",
-    title: CREATE_TASK_TITLE,
-    renderHeader: ({ fullscreen, onClose }) => <TaskDrawerHeader title={CREATE_TASK_TITLE} subtitle={CREATE_TASK_SUBTITLE} fullscreen={fullscreen} onClose={onClose} />,
+    key: "meeting-action-payload",
+    title: ACTION_PAYLOAD_TITLE,
+    renderHeader: ({ fullscreen, onClose }) => (
+      <TaskDrawerHeader title={ACTION_PAYLOAD_TITLE} subtitle={ACTION_PAYLOAD_SUBTITLE} fullscreen={fullscreen} onClose={onClose} />
+    ),
     content: (
-      <CreateTaskFromLineDrawer
-        agendas={options.agendas}
-        initialAgendaId={options.agendaId}
-        line={options.line ?? null}
+      <ActionPayloadDrawer
+        agenda={options.agenda}
         meetingProject={options.meetingProject}
-        onCreateFromLine={options.onCreateFromLine}
-        onAddNewTask={options.onAddNewTask}
+        lineContent={options.lineContent}
+        prefill={options.prefill}
+        submitMode={options.submitMode}
+        onSubmit={async (payload) => {
+          await options.onSubmit(payload);
+          overlay.closeDrawer();
+        }}
         onCancel={overlay.closeDrawer}
-        onCreated={overlay.closeDrawer}
       />
     ),
   });

@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, ClassVar, Literal
 
 from pydantic import ConfigDict, StringConstraints, field_validator, model_validator
 
@@ -24,6 +24,8 @@ from schemas.base import CamelModel
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=30)]
 # `meeting` 또는 `task` 둘 중 하나. **생성 시에만** 받는다.
 Kind = Literal["meeting", "task"]
+# 유형 설명(A-12 · MF-21) — 앞뒤 공백 제거 후 **0~200자 · 줄바꿈 불가**. 빈 문자열도 값이다(화면은 「설명 없음」으로 그린다).
+Description = Annotated[str, StringConstraints(strip_whitespace=True, max_length=200)]
 
 _NEWLINES = ("\n", "\r")
 
@@ -41,6 +43,13 @@ def _reject_newlines(value: str | None) -> str | None:
     return value
 
 
+def _reject_description_newlines(value: str | None) -> str | None:
+    """설명도 **한 줄**이다(§4 Validation). 인라인 행에 들어가는 값이라 줄바꿈을 지우지 않고 거부한다."""
+    if value is not None and any(character in value for character in _NEWLINES):
+        raise ValueError("설명에 줄바꿈을 넣을 수 없습니다")
+    return value
+
+
 class _SettingRequest(CamelModel):
     """요청 공통 — **모르는 필드를 조용히 무시하지 않는다.**
 
@@ -55,14 +64,17 @@ class _SettingRequest(CamelModel):
 class _PartialUpdate(_SettingRequest):
     """부분 수정 공통 — 보낸 필드만 바꾼다(§4).
 
-    두 필드 모두 **비울 수 없는 값**이라, 명시적으로 `null` 을 보내면 거부한다 —
+    이름·색은 **비울 수 없는 값**이라, 명시적으로 `null` 을 보내면 거부한다 —
     「보내지 않음」과 「null 로 지움」의 구분을 계약에 드러내기 위해서다(§3 규칙 4).
+    `_NULLABLE` 에 적힌 필드만 예외다 — **지운다는 뜻이 계약에 있는 필드**(유형 설명 — A-12).
     """
+
+    _NULLABLE: ClassVar[frozenset[str]] = frozenset()
 
     @model_validator(mode="after")
     def _reject_explicit_null(self) -> "_PartialUpdate":
         for field in self.model_fields_set:
-            if getattr(self, field) is None:
+            if getattr(self, field) is None and field not in self._NULLABLE:
                 raise ValueError(f"{field} 는 비울 수 없습니다")
         return self
 
@@ -77,27 +89,41 @@ class WorkTypeCreate(_SettingRequest):
     kind: Kind
     name: Name
     color_token: str
+    # 선택 — 안 보내면 `null` 로 생긴다(A-12 · 미팅·회의 기본 유형이 그 상태다)
+    description: Description | None = None
 
     _no_newline = field_validator("name")(_reject_newlines)
+    _no_description_newline = field_validator("description")(_reject_description_newlines)
 
     def to_dto(self) -> WorkTypeCreateDTO:
         return WorkTypeCreateDTO(
-            kind=self.kind, name=self.name, color_token=self.color_token
+            kind=self.kind,
+            name=self.name,
+            color_token=self.color_token,
+            description=self.description,
         )
 
 
 class WorkTypeUpdate(_PartialUpdate):
-    """이름·색만 받는다. `kind` 는 계약에 없어 `extra="forbid"` 가 걸러낸다."""
+    """이름·색·설명을 받는다. `kind` 는 계약에 없어 `extra="forbid"` 가 걸러낸다.
+
+    **`description` 만 `null` 을 받는다** — 「설명을 지운다」(§4). 기본 유형 3종도 색과 설명은 바꿀 수 있다(A-4 판정은 service).
+    """
+
+    _NULLABLE: ClassVar[frozenset[str]] = frozenset({"description"})
 
     name: Name | None = None
     color_token: str | None = None
+    description: Description | None = None
 
     _no_newline = field_validator("name")(_reject_newlines)
+    _no_description_newline = field_validator("description")(_reject_description_newlines)
 
     def to_dto(self) -> WorkTypeUpdateDTO:
         return WorkTypeUpdateDTO(
             name=self._sent("name"),  # type: ignore[arg-type]
             color_token=self._sent("color_token"),  # type: ignore[arg-type]
+            description=self._sent("description"),  # type: ignore[arg-type]
         )
 
 
@@ -106,6 +132,8 @@ class WorkTypeItem(CamelModel):
     kind: Kind
     name: str
     color_token: str
+    # A-12 — 목록 응답에 그대로 실린다. MCP `list_work_types()` 가 이 응답을 통과시키므로 AI 도 같은 값을 본다(MF-21)
+    description: str | None
     is_default: bool
 
     @classmethod
@@ -115,6 +143,7 @@ class WorkTypeItem(CamelModel):
             kind=dto.kind,  # type: ignore[arg-type]
             name=dto.name,
             color_token=dto.color_token,
+            description=dto.description,
             is_default=dto.is_default,
         )
 

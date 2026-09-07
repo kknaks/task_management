@@ -10,13 +10,14 @@
 | `ai` 트랙 | **어느 표면에서도 거부** — `422 validation_error`(M-6 · M-20) |
 
 줄 표면 — `add_line`(`POST …/lines` 의 `ended` 확장 갈래 · `recording` 은 `meeting_service.add_line` 으로 넘긴다) ·
-`update_line`(본문 · 종류 — `task` 이탈 시 `task_id`·`payload` NULL · `task` 진입은 `task_id` 있을 때만) ·
-**`delete_line`(하드 · 뒤 줄 `order_index` 당김 — 원본 줄 · `ai` · 트랜스크립트 · 녹음 · 업무를 건드리는 코드가 이 경로에 없다)**.
+`update_line`(`content` · `payload` · `task_id` 셋뿐 — **종류 전환이 없다**, MF-60) ·
+**`delete_line`(그 행 하나만 하드 삭제 · **자리 유지** — 원본 줄 · `ai` · 트랜스크립트 · 녹음 · 업무를 건드리는 코드가 이 경로에 없다)**.
 안건 표면 — `update_agenda`(`ended` 갈래 — 이름만 · `state` 동봉 거부 · `merged`/`human` 안건만).
 
+**`payload` 를 쓰는 표면 둘이 이 파일에 있다**(`add_line` · `update_line` — M-14-a). 둘 다 **업무를 만들거나 바꾸지 않는다** —
 이 파일은 `task_service` · `meeting_transcript_repository` · `integrations/` 를 import 하지 않는다(정적 검사 대상).
-`newTask` 갈래(업무 생성 + 줄)와 `.../lines/{id}/task` 둘은 **`meeting_task_link_service`** 다 — 그쪽이 이 파일의
-`require_editable_line` · `editable_track` 을 쓰므로 여기서는 그 갈래 하나만 **함수 안에서** 가져온다(순환 import 회피).
+업무를 건드리는 두 표면(`.../lines/{id}/task`)은 **`meeting_task_link_service`** 다 — 그쪽이 이 파일의
+`require_editable_line` · `editable_track` 을 쓴다(그래서 여기서 그쪽을 import 하지 않는다 — 순환 회피).
 """
 
 from __future__ import annotations
@@ -37,13 +38,15 @@ from dto.unset import UNSET
 from repository import meeting_child_repository, meeting_line_repository, task_repository
 from service import meeting_service
 
+# `payload` 가 뜻을 갖는 줄 종류(SPEC-008 §4 「`payload` 자리」 · DB CHECK 와 같은 값)
+_PAYLOAD_KINDS = frozenset({LineKind.ACTION.value, LineKind.TASK.value})
+
 _INVALID_INPUT = "입력값을 확인해 주세요"
 _NOT_FOUND_LINE = "줄을 찾을 수 없습니다"
 _NOT_FOUND_TASK = "업무를 찾을 수 없습니다"
 
 # `ended` 에서만 받는 확장 필드(SPEC-008 §4 `POST …/lines`) — `recording` 에 오면 거부(SPEC-007 규칙 유지)
-_ENDED_ONLY_FIELDS = ("detail", "task_id", "payload", "new_task")
-_FIELD_NAMES = {"detail": "detail", "task_id": "taskId", "payload": "payload", "new_task": "newTask"}
+_ENDED_ONLY_FIELDS = {"detail": "detail", "task_id": "taskId", "payload": "payload"}
 
 
 def _invalid_input(field: str | None = None) -> ValidationError:
@@ -86,16 +89,18 @@ async def add_line(
 ) -> MeetingLineDTO:
     """`recording` 이면 확장 필드를 거부하고 `meeting_service.add_line`(SPEC-007) 으로 · `ended` 면 편집 갈래(SPEC-008 U-8~U-10).
 
-    `ended` 갈래 — `agendaId` 는 **편집 대상 트랙** 안건 · `task` 는 `taskId`/`newTask` 중 정확히 하나(`content` 는 서버가 업무 제목으로) ·
-    그 밖의 종류는 `content` 필수 + 업무 필드 없음. `newTask` 는 업무 생성 + 줄 한 트랜잭션(`meeting_task_link_service`).
+    `ended` 갈래 — `agendaId` 는 **편집 대상 트랙** 안건이어야 하고, `taskId` 는 **본인의 삭제되지 않은 업무**여야 한다.
+    `payload` 가 어느 종류에 실릴 수 있는지(액션 = 생성분 · 업무 = 변경분 · 논의·결정은 422)는 **스키마가 이미 갈랐다**.
+
+    **업무는 생기지 않는다** — 칩 진입의 「저장」도 줄과 `payload` 를 만들 뿐이다(M-14-a · MF-64 정정).
     """
     meeting = await meeting_service.require_meeting(session, account_id=account_id, meeting_id=meeting_id)
     meeting_service.assert_allowed(meeting, "line_write")
 
     if meeting.status == MeetingStatus.RECORDING.value:
-        for name in _ENDED_ONLY_FIELDS:
+        for name, field in _ENDED_ONLY_FIELDS.items():
             if getattr(command, name) is not None:
-                raise _invalid_input(_FIELD_NAMES[name])
+                raise _invalid_input(field)
         return await meeting_service.add_line(
             session, account_id=account_id, meeting_id=meeting_id, command=command
         )
@@ -107,37 +112,13 @@ async def add_line(
     if agenda is None or agenda.track != track:
         raise _invalid_input("agendaId")
 
-    content = command.content
     task_id: int | None = None
-    payload: dict | None = None
-    if command.kind == LineKind.TASK.value:
-        if (command.task_id is None) == (command.new_task is None):
-            raise _invalid_input("taskId")
-        if command.new_task is not None:
-            if command.payload is not None:
-                # 새로 만든 업무에 반영할 「변경」은 없다 — 값은 생성 본문에 이미 들어 있다(U-10)
-                raise _invalid_input("payload")
-            # 순환 회피 — link service 가 이 파일의 트랙 규칙을 쓴다. 업무 생성 + 줄은 그쪽이 한 트랜잭션으로 만든다
-            from service import meeting_task_link_service
-
-            return await meeting_task_link_service.add_task_line(
-                session, account_id=account_id, meeting_id=meeting_id, agenda_id=agenda.id, track=track, command=command.new_task
-            )
-        assert command.task_id is not None
+    if command.task_id is not None:
         task = await task_repository.find_active(session, account_id=account_id, task_id=command.task_id)
         if task is None:
             # 남의 것 · 삭제된 것 · 없는 것 — 같은 응답(§9)
             raise NotFoundError(_NOT_FOUND_TASK)
         task_id = task.id
-        content = task.title
-        payload = None if command.payload is None else command.payload.to_json()
-    else:
-        if command.task_id is not None or command.new_task is not None:
-            raise _invalid_input("taskId")
-        if command.payload is not None:
-            raise _invalid_input("payload")
-        if content is None:
-            raise _invalid_input("content")
 
     line_id = await meeting_line_repository.create_line(
         session,
@@ -145,11 +126,12 @@ async def add_line(
         agenda_id=agenda.id,
         track=track,
         kind=command.kind,
-        content=content,
+        # **본문은 사람이 적은 것이다** — 업무 제목으로 덮어쓰지 않는다(WP §Internal Interface 「줄 본문의 출처」)
+        content=command.content,
         order_index=await meeting_line_repository.next_order_index(session, agenda_id=agenda.id),
         detail=command.detail,
         task_id=task_id,
-        payload=payload,
+        payload=command.payload,
     )
     (line,) = await meeting_line_repository.find_by_ids(session, line_ids=[line_id])
     return line
@@ -161,8 +143,12 @@ async def add_line(
 async def update_line(
     session: AsyncSession, *, account_id: int, meeting_id: int, line_id: int, command: LineUpdateDTO
 ) -> MeetingDetailDTO:
-    """`PATCH …/lines/{id}` — 보낸 필드만. `kind` 전환 규칙(SPEC-008 §4 · §7 「`task` 이탈」) —
-    `task` 로 가려면 줄에 `task_id` 가 있어야 하고(422), `task` 에서 벗어나면 `task_id`·`payload` 가 비워진다(업무는 그대로).
+    """`PATCH …/lines/{id}` — 보낸 필드만. **`kind` 는 오지 않는다**(스키마가 막는다 — MF-60).
+
+    `payload` 의 모양이 그 줄의 종류와 맞아야 한다(액션 줄에 변경분, 업무 줄에 생성분은 `422`) — 본문에 `kind` 가 없어
+    스키마가 볼 수 없는 판정이 이것 하나다. `taskId` 는 `task` 줄에만 오고 **본인의 삭제되지 않은 업무**여야 한다(`null` 은 「아직 안 골랐다」).
+
+    **업무는 바뀌지 않는다** — 이 표면은 `task_service` 를 부르지 않는다(M-14-a).
     """
     meeting = await meeting_service.require_meeting(session, account_id=account_id, meeting_id=meeting_id)
     meeting_service.assert_allowed(meeting, "line_edit")
@@ -171,13 +157,20 @@ async def update_line(
     values: dict[str, object] = {}
     if command.content is not UNSET:
         values["content"] = command.content
-    if command.kind is not UNSET and command.kind != line.kind:
-        if command.kind == LineKind.TASK.value and line.task_id is None:
-            raise _invalid_input("kind")
-        values["kind"] = command.kind
-        if line.kind == LineKind.TASK.value:
-            values["task_id"] = None
-            values["payload"] = None
+    if command.payload is not UNSET:
+        if line.kind not in _PAYLOAD_KINDS:
+            raise _invalid_input("payload")
+        if command.payload is not None and command.payload_kind != line.kind:
+            raise _invalid_input("payload")
+        values["payload"] = command.payload
+    if command.task_id is not UNSET:
+        if line.kind != LineKind.TASK.value:
+            raise _invalid_input("taskId")
+        if command.task_id is not None:
+            task = await task_repository.find_active(session, account_id=account_id, task_id=command.task_id)
+            if task is None:
+                raise NotFoundError(_NOT_FOUND_TASK)
+        values["task_id"] = command.task_id
     if values:
         await meeting_line_repository.update_line(
             session, meeting_id=meeting_id, line_id=line_id, values=values
@@ -188,7 +181,10 @@ async def update_line(
 async def delete_line(
     session: AsyncSession, *, account_id: int, meeting_id: int, line_id: int
 ) -> None:
-    """`DELETE …/lines/{id}` — **그 행 하나만 하드 삭제 + 뒤 줄 당김**(M-20 · DB §0-1).
+    """`DELETE …/lines/{id}` — **그 행 하나만 하드 삭제. 자리는 그대로 둔다**(M-20 · MF-36 · DB §0-1).
+
+    `order_index` 를 당기지 않는다 — 당기면 지울 때마다 뒤 줄을 전부 UPDATE 해야 한다. 화면은 번호순으로 그리고
+    새 줄은 「그 안건의 마지막 + 1」이라 구멍이 있어도 상관없다.
 
     남는 것 — 사람 트랙 원본 줄 · `ai` 트랙 · 트랜스크립트 · 녹음 · **업무**(`task_id` 가 가리키던
     업무와 그 로그·메모). `payload` 는 줄과 함께 사라진다(업무에 반영된 적이 없다). 없는 줄은 404 — 멱등이 아니다.
@@ -197,13 +193,7 @@ async def delete_line(
     meeting_service.assert_allowed(meeting, "line_edit")
     line = await require_editable_line(session, meeting=meeting, line_id=line_id)
 
-    await meeting_line_repository.delete_line(
-        session,
-        meeting_id=meeting_id,
-        line_id=line.id,
-        agenda_id=line.agenda_id,
-        order_index=line.order_index,
-    )
+    await meeting_line_repository.delete_line(session, meeting_id=meeting_id, line_id=line.id)
 
 
 # --- 안건 이름 (`PATCH …/agendas/{id}` — 세 SPEC 이 공유하는 표면의 `ended` 갈래) ----------------------------

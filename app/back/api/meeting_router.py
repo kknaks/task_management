@@ -8,6 +8,8 @@
 `POST …/lines` 의 `ended` 확장 갈래 · `PATCH …/agendas/{id} {title}` 의 `ended` 갈래. 줄·안건 쓰기는 **`meeting_edit_service`** 가 앞문이고
 (트랙 규칙 · 상태 잠금 한 곳) 회의 중·시작 전 갈래는 거기서 `meeting_service` 로 넘긴다 — 라우터는 상태를 보지 않는다.
 `.../lines/{id}/task` 둘(업무 생성 · 업무 갱신)은 **`meeting_task_link_service`** — 줄과 업무를 한 트랜잭션으로 묶는 입구이고 판정은 `task_service` 다.
+**WORK-013 이 바꾼 것** — `PATCH …/lines/{id}/task` 가 **본문(`TaskUpdateBody`)을 받는다**(줄의 저장값이 요청이 아니다 · MF-59) ·
+`PATCH …/lines/{id}` 는 `kind` 를 받지 않고 `payload`·`taskId` 를 받는다(MF-60 · MF-64 정정).
 
 **`PATCH /api/schedules` 는 없다** — 파생은 단방향이라 원본(`PATCH /api/meetings/{id}`)을 고친다(BE-10).
 쓰기 응답은 **전부 `MeetingDetail`**(같은 빌더) · 삭제만 204.
@@ -38,6 +40,7 @@ from schemas.meeting import (
     MeetingListResponse,
     MeetingTaskListResponse,
     MeetingUpdate,
+    TaskUpdateBody,
     TranscriptResponse,
 )
 from service import meeting_edit_service, meeting_finalize_service, meeting_service, meeting_task_link_service
@@ -376,7 +379,10 @@ async def update_line(
     account_id: int = Depends(require_account),
     session: AsyncSession = Depends(get_db),
 ) -> MeetingDetail:
-    """인라인 수정 · 종류 전환(SPEC-008 U-7). `ended` 에서 편집 대상 트랙의 줄만. 응답은 `MeetingDetail` 전체."""
+    """인라인 수정 · 드로어 「저장」(SPEC-008 U-7 · U-9 · U-10). `ended` 에서 편집 대상 트랙의 줄만. 응답은 `MeetingDetail` 전체.
+
+    **`kind` 를 받지 않는다**(MF-60) · **업무는 바뀌지 않는다** — 줄의 `content`·`payload`·`task_id` 만 쓴다.
+    """
     return MeetingDetail.from_dto(
         await meeting_edit_service.update_line(
             session,
@@ -434,13 +440,18 @@ async def create_task_from_line(
 async def apply_line_task_change(
     meeting_id: int,
     line_id: int,
+    body: TaskUpdateBody,
     account_id: int = Depends(require_account),
     session: AsyncSession = Depends(get_db),
 ) -> MeetingDetail:
-    """업무 줄 → 「업무 갱신」(U-6). **본문 없음** — 줄의 `payload` 가 요청이다. 거부되면 전부 롤백 · `payload` 유지."""
+    """업무 줄 → 「업무 갱신」(U-6 · U-9 「넣기」).
+
+    **본문이 요청이다** — `taskId`(헤더 셀렉터의 업무) 필수 + 변경분 0~7. 줄에 저장된 `payload` 를 서버가 그대로 쓰지 않는다
+    (사람이 드로어에서 고쳤을 수 있다 — MF-59). 거부되면 ①~⑧ 이 전부 롤백되고 `payload` 가 남는다.
+    """
     return MeetingDetail.from_dto(
-        await meeting_task_link_service.apply_payload(
-            session, account_id=account_id, meeting_id=meeting_id, line_id=line_id
+        await meeting_task_link_service.apply_task_update(
+            session, account_id=account_id, meeting_id=meeting_id, line_id=line_id, command=body.to_dto()
         )
     )
 

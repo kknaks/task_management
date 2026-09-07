@@ -46,6 +46,7 @@ const CHIPS: readonly { scope: RelationScope; label: string }[] = [
 ];
 
 export function RelationPopover({
+  mode = "multi",
   excludeId = null,
   projectId = null,
   dueDate = null,
@@ -54,6 +55,12 @@ export function RelationPopover({
   onChange,
   trigger,
 }: {
+  /**
+   * `multi`(기본) = 업무 화면 그대로 — 체크로 모아서 「연결」로 확정한다.
+   * `single` = **회의록 payload 드로어의 헤더 셀렉터**(SPEC-008 U-9) — 행을 누르면 그 하나로 확정하고 닫힌다.
+   * **업무 화면의 다중 선택 동작이 바뀌지 않는다** — 이 prop 이 유일한 차이다.
+   */
+  mode?: "single" | "multi";
   /** 상세 드로어가 자기 id 를 준다. **생성 드로어는 보내지 않는다.** */
   excludeId?: number | null;
   /** 생성 드로어가 **폼에 입력 중인** 값을 준다. 상세 드로어는 서버가 쓴다. */
@@ -182,17 +189,34 @@ export function RelationPopover({
                 <li key={candidate.id}>
                   <button
                     type="button"
-                    onClick={() =>
+                    role={mode === "single" ? "radio" : undefined}
+                    aria-checked={mode === "single" ? checked : undefined}
+                    onClick={() => {
+                      if (mode === "single") {
+                        // **단일 선택** — 모아 두지 않고 그 자리에서 확정하고 닫는다(U-9 헤더 셀렉터).
+                        onChange([candidate.id], [candidate]);
+                        setOpen(false);
+                        return;
+                      }
                       setDraft((prev) =>
                         checked ? prev.filter((id) => id !== candidate.id) : [...prev, candidate.id],
-                      )
-                    }
+                      );
+                    }}
                     className={cn(
                       "flex h-row w-full items-center gap-2 rounded-control px-2 text-left",
                       checked ? "bg-secondary" : "hover:bg-muted",
                     )}
                   >
-                    <Checkbox checked={checked} tabIndex={-1} aria-hidden />
+                    {mode === "single" ? (
+                      <span
+                        aria-hidden
+                        className={cn("flex h-4 w-4 shrink-0 items-center justify-center rounded-full border", checked ? "border-primary" : "border-border")}
+                      >
+                        {checked ? <span className="h-2 w-2 rounded-full bg-primary" /> : null}
+                      </span>
+                    ) : (
+                      <Checkbox checked={checked} tabIndex={-1} aria-hidden />
+                    )}
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-body text-foreground">
                         <HighlightedTitle title={candidate.title} keyword={keyword} />
@@ -215,7 +239,7 @@ export function RelationPopover({
           )}
         </ul>
 
-        <div className="mt-2 flex items-center justify-between border-t border-divider pt-2">
+        <div className={cn("mt-2 flex items-center justify-between border-t border-divider pt-2", mode === "single" && "hidden")}>
           <span className="text-caption text-fg-caption">{draft.length}건 선택됨</span>
           <Button
             type="button"

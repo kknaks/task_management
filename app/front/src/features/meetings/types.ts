@@ -53,14 +53,45 @@ export interface LineEvidence {
 }
 
 /**
- * 업무 줄이 들고 있는 **반영 대기 변경** — 키는 `dueDate` · `status` · `note` **셋뿐**(DEC-003 §4 · M-14-a).
- * `cancelled` 는 담을 수 없다(사유 필수). 적용은 「업무 갱신」 버튼(U-6) — `PATCH …/lines/{id}/task` 본문 없이 이것이 요청이다.
+ * `payload.status` 가 담을 수 있는 값 — **둘뿐**(MF-59 · 백엔드 `dto.enums.PayloadStatus` 와 같다).
+ * 「완료」·「취소」가 없다 — 완료 게이트에 뒷문을 만들지 않는다.
  */
-export interface LinePayload {
-  dueDate?: string;
-  status?: "todo" | "in_progress" | "done";
-  note?: string;
+export type PayloadStatus = "todo" | "in_progress";
+
+/**
+ * **액션 줄의 `payload`** — 새로 만들 업무의 **생성분 일곱**(SPEC-008 U-10 · M-14-a).
+ *
+ * `title` 만 필수다. `workTypeId` 가 `null` 이어도 저장된다 — AI 가 못 고르면 비워 두고 「넣기」 때 사람이 고른다.
+ * 상태 키가 없다(새 업무는 언제나 「시작전」). 서버는 일곱 키를 모두 채워 돌려준다.
+ */
+export interface ActionLinePayload {
+  title: string;
+  workTypeId?: number | null;
+  projectId?: number | null;
+  startDate?: string | null;
+  dueDate?: string | null;
+  description?: string | null;
+  todos?: string[];
 }
+
+/**
+ * **업무 줄의 `payload`** — 아직 반영하지 않은 **변경분 일곱**(SPEC-008 U-9 · M-14-a).
+ *
+ * **키가 있는 것만 뜻이 있다** — 「보내지 않음」이 곧 「변경 없음」이고 **비우는 뜻의 값이 계약에 없다**(서버가 `null` 을 422 로 막는다).
+ * 그래서 드로어는 `prefill` 을 그대로 되돌려 보내지 않고 **채워진 키만** 싣는다. 저장된 값에 `null` 이 섞여 와도 읽을 때 무시한다.
+ */
+export interface TaskLinePayload {
+  dueDate?: string | null;
+  status?: PayloadStatus | null;
+  note?: string | null;
+  todos?: string[] | null;
+  relatedTaskIds?: number[] | null;
+  projectId?: number | null;
+  completionResult?: string | null;
+}
+
+/** 줄에 붙는 `payload` — 모양은 **줄 종류가 고른다**(액션 = 생성분 · 업무 = 변경분). 가리는 것은 `title` 키 유무다. */
+export type LinePayload = ActionLinePayload | TaskLinePayload;
 
 /** 줄 — 형태만 고정한다. **의미·표시·쓰기 표면은 SPEC-007·008**(§4). */
 export interface MeetingLine {
@@ -227,32 +258,51 @@ export interface AddMeetingAttachmentInput {
 // --- 회의 중(SPEC-007 §4) ----------------------------------------------------
 
 /**
- * `POST /api/meetings/{id}/lines/{lineId}/task` · `newTask` 본문 — **SPEC-003 `POST /api/tasks` 규칙 그대로**(제목 1~200 · 유형 필수 ·
- * 프로젝트 · 기한 · 설명 4000 이하). 할일 · 첨부 · 연관은 받지 않는다(SPEC-008 §4 Validation). 「시작 상태」는 **없다** — 항상 「시작전」이다.
+ * `POST …/lines/{id}/task` 본문 — 액션 줄 **「넣기」**(U-10 보기 모드). 규칙은 SPEC-003 `POST /api/tasks` 그대로다
+ * (제목 1~200 · 유형 필수 · 프로젝트 · 계획 시작~종료 · 설명 4000 이하 · 할일). 첨부 · 연관은 받지 않고 「시작 상태」도 없다 — 항상 「시작전」이다.
+ * **`workTypeId` 가 여기서는 필수**다(`payload` 에서는 비어 있어도 저장된다 — 고르는 자리가 「넣기」다).
  */
 export interface NewTaskInput {
   title: string;
   workTypeId: number;
   projectId?: number | null;
+  startDate?: string | null;
   dueDate?: string | null;
-  /** U-10 「메모」 — 업무의 `description` 으로 간다(§7 판단). */
   description?: string | null;
+  todos?: string[];
 }
 
 /**
- * `POST /api/meetings/{id}/lines` — 사람 줄 하나. 응답은 `MeetingLine`(201 — 코디 판정, 상세 전체가 아니다).
- * `detail` 은 **종료 후 편집(SPEC-008 U-8)만** 보낸다 — 회의 중에 실으면 서버가 `validation_error` 다.
- *
- * 세 갈래(§4) — 본문 줄(`content` — 회의 중은 네 종류 전부 · 종료 후 논의/결정/액션) · 연관 업무(`taskId` + 선택 `payload`,
- * `content` 는 서버가 업무 제목으로 — U-9) · 액션 아이템 = 업무 생성(`newTask`, 업무 + 줄 한 트랜잭션 — U-10 칩 진입).
+ * `PATCH …/lines/{id}/task` 본문 — 업무 줄 **「넣기」**(U-9 보기 모드).
+ * `taskId` 는 헤더 셀렉터의 업무(필수) · 변경분은 `TaskLinePayload` 와 **같은 키 · 같은 규칙**이고 0개도 된다.
  */
-export type AddLineInput =
-  | { agendaId: number; kind: LineKind; content: string; detail?: string | null }
-  | { agendaId: number; kind: "task"; taskId: number; payload?: LinePayload | null }
-  | { agendaId: number; kind: "task"; newTask: NewTaskInput };
+export type TaskUpdateInput = { taskId: number } & TaskLinePayload;
 
-/** `PATCH /api/meetings/{id}/lines/{lineId}` — 보낸 필드만(SPEC-008 §4). 응답은 `MeetingDetail` 전체. */
-export type UpdateLineInput = { content: string } | { kind: LineKind };
+/**
+ * `POST /api/meetings/{id}/lines` — 사람 줄 하나. 응답은 `MeetingLine`(201 — 코디 판정, 상세 전체가 아니다).
+ *
+ * **`content` 는 네 종류 모두 필수**다 — 서버가 업무 제목으로 채우지 않는다(MF-64 정정).
+ * `detail` 은 종료 후 편집(U-8)만 · `payload` 는 **액션 · 업무 줄에만** · `taskId` 는 업무 줄에만 실린다(그 밖은 `422`).
+ * **줄을 만들면서 업무까지 만드는 갈래는 없다**(옛 `newTask` 폐기 — 업무는 「넣기」에서만 생긴다).
+ */
+export interface AddLineInput {
+  agendaId: number;
+  kind: LineKind;
+  content: string;
+  detail?: string | null;
+  taskId?: number | null;
+  payload?: LinePayload | null;
+}
+
+/**
+ * `PATCH /api/meetings/{id}/lines/{lineId}` — 보낸 필드만(SPEC-008 §4). 응답은 `MeetingDetail` 전체.
+ *
+ * **`kind` 가 없다**(MF-60 — 줄 종류를 바꾸는 표면이 사라졌다). `payload`·`taskId` 는 `null` 로 비울 수 있다.
+ */
+export type UpdateLineInput =
+  | { content: string }
+  | { payload: ActionLinePayload | null }
+  | { taskId: number | null; payload: TaskLinePayload | null };
 
 /**
  * `PATCH …/agendas/{agendaId}` 는 **한 표면**이다 — 시작 전 `title`(SPEC-006) · 회의 중 `state`(SPEC-007).

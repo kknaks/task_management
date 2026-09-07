@@ -1,4 +1,4 @@
-"""리비전 왕복 — `0008`(WORK-012) · `0007`(WORK-009).
+"""리비전 왕복 — `0009`(WORK-013) · `0008`(WORK-012) · `0007`(WORK-009).
 
 `conftest.py` 는 `upgrade head` 만 돈다. **되감기가 도는지는 아무도 안 봤다** — 여기서 본다.
 
@@ -7,6 +7,9 @@
 - `upgrade head → downgrade -1 → upgrade head` 가 **예외 없이** 돈다
 - 되감기 뒤에도 **`kind='refresh'` 행이 살아 있다**(A-7 회귀 없음). 다시 올린 뒤 `kind` 가 `'refresh'` 로 돌아온다
 - 되감기가 **`kind='meeting'` 행을 지운다** — 그래야 `refresh_token_hash` NOT NULL 복구가 성립한다(리비전 머리 주석)
+
+**되감기 목표는 상대 번호(`-1`)가 아니라 리비전 id 로 적는다** — 위에 리비전이 하나 얹힐 때마다 `-1` 이 다른 곳을 가리킨다.
+
 
 **공유 테스트 DB 에 커밋한다**(alembic 은 트랜잭션 롤백 밖이다) — 그래서 `finally` 에서 심은 행을 전부 지운다.
 남겨 두면 「회의 토큰 행이 정확히 하나」를 세는 테스트(`test_meeting_token.py`)가 남의 행을 본다.
@@ -26,6 +29,15 @@ BACK_DIR = Path(__file__).resolve().parents[1]
 
 _REFRESH_HASH = "work009-roundtrip-refresh-hash"
 _MEETING_TOKEN = "work009-roundtrip-meeting-token"
+
+
+def _columns(conn, table: str) -> set[str]:  # type: ignore[no-untyped-def]
+    return set(
+        conn.execute(
+            text("SELECT column_name FROM information_schema.columns WHERE table_name = :t"),
+            {"t": table},
+        ).scalars()
+    )
 
 
 def _alembic() -> Config:
@@ -120,7 +132,7 @@ def test_revision_0008_round_trip(sync_engine: Engine) -> None:
                 {"p": '{"note": "이 값이 살아 옮겨져야 한다"}', "i": seeded["line_id"]},
             )
 
-        command.downgrade(config, "-1")
+        command.downgrade(config, "0007_auth_session_meeting_token")
 
         with sync_engine.connect() as conn:
             columns = set(
@@ -201,7 +213,7 @@ def test_revision_0007_round_trip(sync_engine: Engine) -> None:
     config = _alembic()
     seeded = _seed(sync_engine)
     try:
-        command.downgrade(config, "-2")
+        command.downgrade(config, "0006_job")
 
         with sync_engine.connect() as conn:
             # 되감긴 스키마에는 세 컬럼이 없다
@@ -252,4 +264,95 @@ def test_revision_0007_round_trip(sync_engine: Engine) -> None:
                 == 0
             )
     finally:
+        _cleanup(sync_engine, seeded)
+
+
+@pytest.mark.slow
+def test_revision_0009_round_trip(sync_engine: Engine) -> None:
+    """`0009` 왕복 — `work_type.description` 이 생기고 **기본 2건**에 시드 문구가 들어간다(WORK-013 Phase 2).
+
+    **미팅·회의는 빈 값**(A-12 · DEC-003 OQ-11)이고, **사람이 적어 둔 설명은 다시 올려도 덮이지 않는다**.
+    되감으면 컬럼과 값이 함께 사라진다.
+    """
+    config = _alembic()
+    seeded = _seed(sync_engine)
+    try:
+        with sync_engine.begin() as conn:
+            conn.execute(
+                text("UPDATE work_type SET description = :d WHERE id = :i"),
+                {"d": "사람이 적은 설명", "i": seeded["work_type_id"]},
+            )
+
+        command.downgrade(config, "-1")
+
+        with sync_engine.connect() as conn:
+            assert "description" not in _columns(conn, "work_type")
+
+        command.upgrade(config, "head")
+
+        with sync_engine.connect() as conn:
+            assert "description" in _columns(conn, "work_type")
+            # 되감기가 값을 지웠다 — 되살아나지 않는다(컬럼째 사라졌다)
+            assert (
+                conn.execute(
+                    text("SELECT description FROM work_type WHERE id = :i"),
+                    {"i": seeded["work_type_id"]},
+                ).scalar_one()
+                is None
+            )
+            seeded_descriptions = dict(
+                conn.execute(
+                    text(
+                        "SELECT name, description FROM work_type"
+                        " WHERE is_default = true AND account_id = :a"
+                    ),
+                    {"a": seeded["account_id"]},
+                ).all()
+            )
+        # 이 계정에는 기본 유형이 없다(시드를 돌리지 않았다) — 문구는 **기본 유형에만** 들어간다
+        assert seeded_descriptions == {}
+    finally:
+        _cleanup(sync_engine, seeded)
+
+
+@pytest.mark.slow
+def test_revision_0009_fills_the_two_default_descriptions(sync_engine: Engine) -> None:
+    """기본 유형 3종을 심어 두고 왕복 — **개인 업무 · 문서·보고 두 건만** 채워지고 미팅·회의는 `NULL` 이다."""
+    config = _alembic()
+    seeded = _seed(sync_engine)
+    try:
+        with sync_engine.begin() as conn:
+            for name, kind in (("미팅·회의", "meeting"), ("개인 업무", "task"), ("문서·보고", "task")):
+                conn.execute(
+                    text(
+                        "INSERT INTO work_type (account_id, kind, name, color_token, is_default)"
+                        " VALUES (:a, :k, :n, 'indigo', true)"
+                    ),
+                    {"a": seeded["account_id"], "k": kind, "n": name},
+                )
+
+        command.downgrade(config, "-1")
+        command.upgrade(config, "head")
+
+        with sync_engine.connect() as conn:
+            filled = dict(
+                conn.execute(
+                    text(
+                        "SELECT name, description FROM work_type"
+                        " WHERE is_default = true AND account_id = :a"
+                    ),
+                    {"a": seeded["account_id"]},
+                ).all()
+            )
+        assert filled == {
+            "미팅·회의": None,
+            "개인 업무": "혼자 처리하는 실무. 개발·수정·확인 등",
+            "문서·보고": "산출물이 문서인 것. 기획서·보고서·회의록 정리",
+        }
+    finally:
+        with sync_engine.begin() as conn:
+            conn.execute(
+                text("DELETE FROM work_type WHERE account_id = :a AND is_default = true"),
+                {"a": seeded["account_id"]},
+            )
         _cleanup(sync_engine, seeded)

@@ -13,6 +13,7 @@ from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dto.setting import WorkTypeDTO
+from dto.unset import UNSET, Unset
 from models.account import WorkType
 from repository.name_match import normalize_for_compare, normalized_column
 
@@ -23,6 +24,7 @@ def _to_dto(row: WorkType) -> WorkTypeDTO:
         kind=row.kind,
         name=row.name,
         color_token=row.color_token,
+        description=row.description,
         is_default=row.is_default,
     )
 
@@ -87,7 +89,13 @@ async def exists_active_name(
 
 
 async def create(
-    session: AsyncSession, *, account_id: int, kind: str, name: str, color_token: str
+    session: AsyncSession,
+    *,
+    account_id: int,
+    kind: str,
+    name: str,
+    color_token: str,
+    description: str | None = None,
 ) -> WorkTypeDTO:
     """`is_default` 는 **시드만** 켠다 — 앱으로 만든 유형은 언제나 커스텀이다(A-4)."""
     row = WorkType(
@@ -95,6 +103,7 @@ async def create(
         kind=kind,
         name=name,
         color_token=color_token,
+        description=description,
         is_default=False,
     )
     session.add(row)
@@ -107,20 +116,25 @@ async def update(
     *,
     account_id: int,
     work_type_id: int,
-    name: str | None = None,
-    color_token: str | None = None,
+    name: str | Unset = UNSET,
+    color_token: str | Unset = UNSET,
+    description: str | None | Unset = UNSET,
 ) -> WorkTypeDTO:
-    """**보낸 값만** 바꾼다. `None` 은 「이 필드는 안 바꾼다」는 뜻이다 —
-    service 가 `Unset` 을 이미 걸러 냈고, 두 필드 다 비울 수 없는 값이다.
+    """**보낸 값만** 바꾼다 — 「보내지 않음」은 `UNSET` 이다.
+
+    `None` 을 「안 바꾼다」로 읽던 옛 규약을 바꿨다 — `description` 은 **`None` 이 「지운다」는 뜻**이라(A-12)
+    그 구분이 필요해졌다. 이름·색은 여전히 비울 수 없는 값이고, 그 판정은 service·스키마가 한다.
     """
     row = (
         await session.scalars(_active(account_id).where(WorkType.id == work_type_id))
     ).one()
 
-    if name is not None:
+    if name is not UNSET:
         row.name = name
-    if color_token is not None:
+    if color_token is not UNSET:
         row.color_token = color_token
+    if description is not UNSET:
+        row.description = description
 
     await session.flush()
     return _to_dto(row)

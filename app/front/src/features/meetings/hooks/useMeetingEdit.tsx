@@ -34,12 +34,13 @@ import {
   isMeetingNotFound,
   LINE_DELETE_FAILED_MESSAGE,
 } from "@/features/meetings/errors";
-import type { AddLineInput, LineKind, MeetingAgenda, MeetingDetail, MeetingLine } from "@/features/meetings/types";
+import type { AddLineInput, MeetingAgenda, MeetingDetail, MeetingLine, UpdateLineInput } from "@/features/meetings/types";
 import { queryKeys } from "@/lib/api/queryKeys";
 import { useRowFailures } from "@/lib/hooks/useRowFailures";
 
 /** U-7 토스트 · 캡션에 들어가는 필드 이름. */
-export const LINE_FIELD_LABEL = { content: "줄 내용", kind: "줄 종류" } as const;
+/** 자동 저장 실패 표시의 라벨 — **줄 본문 하나뿐**이다(줄 종류를 바꾸는 표면이 없다 — MF-60). */
+export const LINE_FIELD_LABEL = { content: "줄 내용" } as const;
 export const AGENDA_TITLE_LABEL = "안건 이름";
 
 type Agendas = MeetingAgenda[];
@@ -122,16 +123,15 @@ export function useMeetingEdit(meeting: MeetingDetail) {
     onSuccess: afterWrite,
   });
 
-  const updateKind = useMutation({
-    mutationFn: ({ lineId, kind }: { lineId: number; kind: LineKind; leavingTask: boolean }) => updateLine(meeting.id, lineId, { kind }),
-    /**
-     * 종류 전환 — 낙관적. 단 **`task` 에서 벗어나는 전환은 아니다**(§5) — `taskId`·`payload` 가 풀리는 것을
-     * 서버 응답으로 확인한다. 배지·버튼이 사라지는 것도 응답 뒤다.
-     */
-    onMutate: ({ lineId, kind, leavingTask }) =>
-      track && !leavingTask
-        ? snapshotAndPatch((detail) => patchTrack(detail, track, (agendas) => patchLine(agendas, lineId, (line) => ({ ...line, kind }))))
-        : undefined,
+  /**
+   * **`payload` 저장**(U-9 · U-10 「저장」) — 줄에 값을 붙이는 것이라 **업무 API 를 지나지 않는다**.
+   * 낙관적이다(§5 표) — 거부할 규칙이 모양뿐이고 dot 이 바로 켜져야 한다. `taskId` 를 함께 보내면 그것도 낙관적으로 넣는다.
+   */
+  const savePayloadMutation = useMutation({
+    mutationFn: ({ lineId, input }: { lineId: number; input: UpdateLineInput; patch: Partial<MeetingLine> }) =>
+      updateLine(meeting.id, lineId, input),
+    onMutate: ({ lineId, patch }) =>
+      track ? snapshotAndPatch((detail) => patchTrack(detail, track, (agendas) => patchLine(agendas, lineId, (line) => ({ ...line, ...patch })))) : undefined,
     onError: (_error, _variables, context) => rollback(context),
     onSuccess: afterWrite,
   });
@@ -211,22 +211,15 @@ export function useMeetingEdit(meeting: MeetingDetail) {
     [handleStale, lineFailures, updateContent],
   );
 
-  const changeLineKind = useCallback(
-    async (line: MeetingLine, kind: LineKind): Promise<void> => {
-      const leavingTask = line.kind === "task" && kind !== "task";
-      try {
-        await updateKind.mutateAsync({ lineId: line.id, kind, leavingTask });
-        lineFailures.clearFailed(line.id, "kind");
-      } catch (error) {
-        if (handleStale(error, "이미 없는 줄입니다")) {
-          lineFailures.clearFailed(line.id, "kind");
-          return;
-        }
-        toast.error(autoSaveErrorToast(LINE_FIELD_LABEL.kind));
-        lineFailures.markFailed(line.id, "kind", { retry: () => changeLineKind(line, kind), attempted: kind });
-      }
+  /**
+   * 드로어 「저장」(U-9 · U-10 편집 모드) — **있는 줄**에 `payload`(+ 업무 줄이면 `taskId`)를 붙인다.
+   * 거절은 **그대로 던진다** — 드로어가 열린 채 인라인으로 붙인다(자동 저장이 아니라 버튼을 누른 요청이다).
+   */
+  const savePayload = useCallback(
+    async (line: MeetingLine, input: UpdateLineInput, patch: Partial<MeetingLine>): Promise<void> => {
+      await savePayloadMutation.mutateAsync({ lineId: line.id, input, patch });
     },
-    [handleStale, lineFailures, updateKind],
+    [savePayloadMutation],
   );
 
   const renameAgendaTitle = useCallback(
@@ -290,22 +283,22 @@ export function useMeetingEdit(meeting: MeetingDetail) {
     ),
   ];
 
-  const busy = updateContent.isPending || updateKind.isPending || renameAgenda.isPending;
+  const busy = updateContent.isPending || savePayloadMutation.isPending || renameAgenda.isPending;
 
   return {
     /** 편집 대상 트랙 — `null` 이면 편집이 없다(`generating` 잠금 · 그 밖 상태). */
     track,
     saveLineContent,
-    changeLineKind,
+    savePayload,
     renameAgendaTitle,
     deleteLineConfirmed,
     addLineFromDrawer,
     adding: appendLine.isPending,
     deleting: removeLine.isPending,
-    lineSaveFailed: (line: MeetingLine, field: "content" | "kind") => lineFailures.hasFailed(line.id, field),
+    lineSaveFailed: (line: MeetingLine, field: "content") => lineFailures.hasFailed(line.id, field),
     agendaSaveFailed: (agenda: MeetingAgenda) => agendaFailures.hasFailed(agenda.id, "title"),
     /** U-7 「값 유지」 — 실패 뒤 캐시는 서버 값으로 돌아가므로 넣으려던 값을 따로 든다. */
-    lineAttempted: (line: MeetingLine, field: "content" | "kind") => lineFailures.attemptedValue(line.id, field),
+    lineAttempted: (line: MeetingLine, field: "content") => lineFailures.attemptedValue(line.id, field),
     agendaAttempted: (agenda: MeetingAgenda) => agendaFailures.attemptedValue(agenda.id, "title"),
     /** 캡션·「다시 저장」의 **블록당 하나뿐인 자리**. */
     notice: <AutoSaveFailureNotice busy={busy} failures={failureList} />,

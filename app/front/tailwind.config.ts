@@ -258,6 +258,8 @@ const config: Config = {
       width: {
         drawer: "var(--tm-drawer-width)",
         modal: "var(--tm-modal-width)",
+        /* 확인 모달 420 — 한 문장짜리 결정(SPEC-008 U-7) */
+        "modal-light": "var(--tm-modal-light-width)",
         sidebar: "var(--tm-sidebar-width)",
         /* 첨부 팝오버 360 · 연관업무 팝오버 382 — 팝오버 200–400 범위(§6) */
         "popover-attach": "var(--tm-popover-attach-width)",
@@ -275,6 +277,7 @@ const config: Config = {
       maxWidth: {
         drawer: "var(--tm-drawer-width)",
         modal: "var(--tm-modal-width)",
+        "modal-light": "var(--tm-modal-light-width)",
       },
 
       /**

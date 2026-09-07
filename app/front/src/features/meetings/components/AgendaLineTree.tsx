@@ -33,7 +33,8 @@ import { cn } from "@/lib/utils";
 export type { AgendaBadge } from "@/features/meetings/components/AgendaHeader";
 
 /** 편집 모드에서 실패 표시를 묻는 필드 — 줄 본문 · 줄 종류. 안건 제목은 `agendaSaveFailed`. */
-export type LineEditField = "content" | "kind";
+/** 편집 모드에서 저장하는 줄 필드 — **본문 하나뿐**이다(종류를 바꾸는 표면이 없다 — MF-60). */
+export type LineEditField = "content";
 
 export interface AgendaLineTreeProps {
   agendas: readonly MeetingAgenda[];
@@ -66,7 +67,6 @@ export interface AgendaLineTreeProps {
   /** 줄 본문 저장(포커스 해제). 거절은 throw — 소유자가 `lineSaveFailed` 로 표시한다. */
   onSaveLineContent?: (line: MeetingLine, next: string) => Promise<void>;
   /** 종류 전환(고르면 즉시 저장). */
-  onChangeKind?: (line: MeetingLine, kind: LineKind) => void;
   /** 안건 이름 저장(포커스 해제). */
   onRenameAgenda?: (agenda: MeetingAgenda, title: string) => Promise<void>;
   /** 줄 우측 끝 고스트 버튼(「제거」). 편집 대상 트랙의 줄 전부에 붙는다. */
@@ -108,7 +108,6 @@ export function AgendaLineTree({
   className,
   editable = false,
   onSaveLineContent,
-  onChangeKind,
   onRenameAgenda,
   renderLineAction,
   renderAgendaFooter,
@@ -169,9 +168,7 @@ export function AgendaLineTree({
                     actions={renderLineActions?.(line, agenda)}
                     editable={editable}
                     onSaveContent={editable && onSaveLineContent ? (next) => onSaveLineContent(line, next) : undefined}
-                    onChangeKind={editable && onChangeKind ? (kind) => onChangeKind(line, kind) : undefined}
                     contentSaveFailed={lineSaveFailed?.(line, "content") ?? false}
-                    kindSaveFailed={lineSaveFailed?.(line, "kind") ?? false}
                     attemptedContent={lineAttempted?.(line, "content")}
                     lineAction={editable ? renderLineAction?.(line, agenda) : undefined}
                   />

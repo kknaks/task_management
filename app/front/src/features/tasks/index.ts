@@ -11,6 +11,11 @@
  */
 
 export { openTaskCreateDrawer, openTaskDetailDrawer } from "@/features/tasks/openTaskDrawers";
+/**
+ * **연관업무 팝오버**(SPEC-003 U-8) — SPEC-008 U-9 가 「업무 화면의 `RelationPopover` 그대로 뜬다 · 그대로 재사용한다」고 못박아
+ * 회의록 payload 드로어가 **같은 부품**을 쓴다(단일 선택 prop 하나만 더했다). 두 벌을 만들지 않으려고 배럴로 내준다 — §2 규칙 4 의 예외 둘째.
+ */
+export { RelationPopover } from "@/features/tasks/components/RelationPopover";
 export { useCompletionCardFocus } from "@/features/tasks/hooks/useCompletionCardFocus";
 export type { CompletionCardFocus } from "@/features/tasks/hooks/useCompletionCardFocus";
 export { useTaskDetailQuery, useTaskMutations } from "@/features/tasks/hooks/useTaskMutations";

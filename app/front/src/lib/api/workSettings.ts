@@ -26,6 +26,8 @@ export interface CreateWorkTypeInput {
   kind: WorkTypeKind;
   name: string;
   colorToken: ColorToken;
+  /** 선택 — 안 보내면 `null` 로 생긴다(A-12 · MF-21). */
+  description?: string | null;
 }
 
 export function createWorkType(input: CreateWorkTypeInput): Promise<WorkType> {
@@ -36,7 +38,11 @@ export function createWorkType(input: CreateWorkTypeInput): Promise<WorkType> {
  * 부분 수정. **보낸 필드만 바뀐다** — 인라인 자동 저장이 필드 하나만 보내기 때문이다(§4).
  * `kind` 를 받지 않는 것이 계약이다.
  */
-export type UpdateWorkTypeInput = { name: string } | { colorToken: ColorToken };
+export type UpdateWorkTypeInput =
+  | { name: string }
+  | { colorToken: ColorToken }
+  /** **`description` 만 `null` 을 받는다** — 「설명을 지운다」(SPEC-002 §4). 기본 유형 3종도 색과 설명은 바꿀 수 있다. */
+  | { description: string | null };
 
 export function updateWorkType(id: number, input: UpdateWorkTypeInput): Promise<WorkType> {
   return apiFetch<WorkType>(`/api/work-types/${id}`, { method: "PATCH", body: input });

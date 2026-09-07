@@ -6,8 +6,8 @@
  * 전에는 두 패널에 40여 줄이 통째로 복제돼 있었다. 그래서 규격 하나를 고치려면 두 곳을
  * 같이 고쳐야 했고, 다음 영역(업무 생성 인라인 추가)이 **세 번째 사본**을 만들 자리였다.
  *
- * 필드가 셋 이하라 **드로어를 열지 않는다** — 「한 줄짜리 개체는 인라인」·「필드가 4개
- * 이하면 드로어를 열지 않는다」([10] RULES).
+ * 필드가 넷 이하라 **드로어를 열지 않는다** — 「한 줄짜리 개체는 인라인」·「필드가 4개
+ * 이하면 드로어를 열지 않는다」([10] RULES). 유형 행은 [종류][이름][**설명**][색] **넷**이다(MF-21 · SPEC-002 U-3).
  *
  * 규격(U-2 *열림*) — **56px 한 줄 · 배경 `--tm-row-add-bg` · 컨트롤 36px.**
  * 앞에 붙는 것만 다르다: 유형은 [종류 셀렉터 136], 프로젝트는 [색 트리거].
@@ -36,6 +36,10 @@ export function InlineAddRow({
   namePlaceholder,
   name,
   onNameChange,
+  description,
+  descriptionLabel,
+  descriptionPlaceholder,
+  onDescriptionChange,
   onSubmit,
   onCancel,
   canSubmit,
@@ -47,6 +51,14 @@ export function InlineAddRow({
   namePlaceholder: string;
   name: string;
   onNameChange: (next: string) => void;
+  /**
+   * **설명 — 선택 필드**(유형만 쓴다 · MF-21). `undefined` 면 칸 자체가 없다(프로젝트 행은 그대로 셋이다).
+   * 비어도 「추가」가 활성이다 — 제출 조건은 호출자의 `canSubmit` 이 정한다.
+   */
+  description?: string;
+  descriptionLabel?: string;
+  descriptionPlaceholder?: string;
+  onDescriptionChange?: (next: string) => void;
   onSubmit: () => void;
   onCancel: () => void;
   canSubmit: boolean;
@@ -74,6 +86,20 @@ export function InlineAddRow({
             errorMessage && "border-destructive",
           )}
         />
+
+        {onDescriptionChange ? (
+          <Input
+            aria-label={descriptionLabel ?? "설명"}
+            placeholder={descriptionPlaceholder ?? "설명 (선택)"}
+            value={description ?? ""}
+            onChange={(event) => onDescriptionChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (isEnterSubmit(event)) onSubmit();
+              if (event.key === "Escape") onCancel();
+            }}
+            className={cn(ADD_ROW_CONTROL_HEIGHT, "min-w-[200px] flex-1")}
+          />
+        ) : null}
 
         {trailing}
 

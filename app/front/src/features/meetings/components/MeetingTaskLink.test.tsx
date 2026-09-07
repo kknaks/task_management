@@ -1,14 +1,13 @@
 /**
- * **업무 연동 — 줄 버튼(U-6) · 연관 업무 드로어(U-9) · 업무 생성 드로어(U-10) — 앱 창 확인 항목의 테스트 판**(WP Phase 5 검증).
+ * **payload 드로어 둘 — 줄 버튼(U-6) · 업무 payload(U-9) · 액션 payload(U-10)**(WORK-013 Phase 3 검증).
  *
- * - 업무 줄 「업무 갱신」(툴팁 = `payload` 키 · **같은 상태 제외**) · 변경 없는 줄 「갱신 완료」 비활성 · 삭제된 업무 「삭제된 업무」 비활성 · 액션 줄 「업무 생성」
- * - 「업무 갱신」 한 번 = **요청 하나**(`PATCH …/lines/{id}/task`) — 업무 API(`/api/tasks/...`)로 나가는 요청 **0**(MSW 가 미등록 요청을 에러로 세운다)
- * - 게이트 거부(422) → 토스트 「완료하려면 …」 + 「결과 입력」 → 업무 상세 드로어 · 줄은 「업무 갱신」 그대로
- * - 통과(200) → 「갱신 완료」 + 「완료 처리했습니다 · 실행취소」 → 실행취소 = `POST /api/tasks/{id}/status/undo`(SPEC-004 그대로)
- * - 전이 거부(409) 토스트 · 5xx 토스트 + 버튼 복귀
- * - 액션 줄 「업무 생성」 → 드로어(제목 프리필 · 안건 고정 · **「시작 상태」 없음 · 토글 없음**) → `POST …/lines/{id}/task` → 줄이 업무 줄
- * - 「+ 연관 업무」 → 후보 목록(`GET /api/tasks/relations/candidates` — 회의 프로젝트 기본) · 검색 · 「연결하고 갱신」 = `POST …/lines` → 변경 있으면 `PATCH …/task`, 없으면 요청 하나
- * - 「+ 액션 아이템」 → `POST …/lines { newTask }`
+ * - 줄 버튼 세 상태(「업무 생성」/「업무 갱신」/「갱신 완료」) · **`payload` 가 있으면 dot + 툴팁**(같은 상태는 툴팁에서 뺀다) · AI 탭에는 없다
+ * - **드로어는 하나다**(MF-65) — AI 가 채운 줄과 사람이 「저장」한 줄이 **같은 드로어 · 같은 값 · 같은 화면**이고,
+ *   갈래는 `payload` 가 차 있나뿐이다. **모드가 푸터를 가른다**(MF-66) — 편집 모드 「저장」 · 보기 모드 「넣기」
+ * - 액션 payload(U-10): 안건 고정 + 일곱 필드 · 「시작 상태」·참고자료·연관·첨부 0건 · `workTypeId=null` 이면 **저장은 되고 넣기는 비활성**
+ * - 업무 payload(U-9): 헤더 셀렉터가 업무를 물고 변경분이 채워진다 · **상태에 「완료」·「취소」 없음** · 빈 셀렉터면 본문 비활성
+ * - 「저장」 = `PATCH …/lines/{id}`(**업무 API 요청 0**) · 「넣기」 = `POST …/lines/{id}/task` / `PATCH …/lines/{id}/task` 하나
+ * - **인라인 자동 저장 0** — 포커스를 벗어나도 요청이 없다 · 어느 모드에서도 **푸터 버튼은 둘**
  */
 
 import { HttpResponse, http } from "msw";
@@ -46,7 +45,8 @@ const findRow = (id: number) =>
     }
     return element;
   });
-/** 헤더를 통째로 그리는 드로어(`renderHeader`)는 프레임 타이틀이 없다 — 제목(heading)으로 확인한 뒤 dialog 를 잡는다. */
+/** 헤더를 통째로 그리는 드로어(`renderHeader`)는 프레임 타이틀이 없다 — 제목(heading)으로 확인한 뒤 dialog 를 잡는다.
+ *  U-9 는 제목 자리가 셀렉터라 **화면에 안 보이는 제목**이 그 자리를 대신한다. */
 async function findDrawer(title: string): Promise<HTMLElement> {
   await screen.findByRole("heading", { name: title });
   return screen.getByRole("dialog");
@@ -73,6 +73,14 @@ function seeded(overrides: Partial<MeetingDetail> = {}): MeetingDetail {
             line({ id: 306, agendaId: 72, track: "merged", kind: "task", content: "변경 없는 업무", orderIndex: 1, taskId: 102, task: { ...TASK_SUMMARY, id: 102, title: "변경 없는 업무", status: "todo" } }),
             line({ id: 307, agendaId: 72, track: "merged", kind: "task", content: "지워진 업무", orderIndex: 2, taskId: 103, task: { ...TASK_SUMMARY, id: 103, title: "지워진 업무", isDeleted: true }, payload: { note: "n" } }),
             line({ id: 308, agendaId: 72, track: "merged", kind: "task", content: "같은 상태 줄", orderIndex: 3, taskId: 104, task: { ...TASK_SUMMARY, id: 104, title: "같은 상태 줄", status: "in_progress" }, payload: { status: "in_progress", note: "메모" } }),
+            // **AI 가 채운 액션 줄** — 생성분 일곱이 그대로 저장돼 있다(사람이 「저장」한 줄과 같은 모양이다)
+            line({
+              id: 311, agendaId: 72, track: "merged", kind: "action", content: "요금제 비교표 만들기", orderIndex: 4,
+              payload: {
+                title: "요금제 비교표 만들기", workTypeId: 3, projectId: 5, startDate: "2026-09-01", dueDate: "2026-09-05",
+                description: "경쟁사 3곳", todos: ["자료 모으기", "표 만들기"],
+              },
+            }),
           ],
         }
       : agenda,
@@ -131,284 +139,218 @@ afterEach(async () => {
   await tokenStore.clear();
 });
 
-describe("줄 버튼(U-6)", () => {
-  it("업무 줄 「업무 갱신」(툴팁 · 같은 상태 제외) · 변경 없음 「갱신 완료」 비활성 · 삭제된 업무 「삭제된 업무」 비활성 · 액션 줄 「업무 생성」 · AI 탭에는 없다", async () => {
+describe("줄 버튼(U-6) — 세 상태 · dot · 툴팁", () => {
+  it("업무 줄 「업무 갱신」(툴팁 · 같은 상태 제외 · dot) · 넣기 뒤 「갱신 완료」 비활성 · 삭제된 업무는 캡션 + 「업무 갱신」 · 액션 줄 「업무 생성」 · AI 탭에는 없다", async () => {
     harness(seeded());
     const apply = await within(await findRow(305)).findByRole("button", { name: "업무 갱신" });
     expect(apply).toBeEnabled();
-    expect(apply).toHaveAttribute("title", "기한 → 09.02 · 상태 → 완료 · 메모 1건");
+    // `status` 가 업무의 현재 상태(진행중)와 같아 **툴팁에서 빠진다**(같은 상태로의 전이는 요청에도 안 실린다)
+    expect(apply).toHaveAttribute("title", "기한 → 09.02 · 메모 1건");
+    // **dot** — 「채워진 값이 있다」
+    expect(apply.querySelector("[data-payload-dot]")).not.toBeNull();
+
     expect(within(row(306)).getByRole("button", { name: "갱신 완료" })).toBeDisabled();
-    expect(within(row(307)).getByRole("button", { name: "삭제된 업무" })).toBeDisabled();
-    expect(within(row(307)).getByText("문서·보고")).toBeInTheDocument(); // 배지 · 제목 그대로
+    expect(within(row(306)).getByRole("button", { name: "갱신 완료" }).querySelector("[data-payload-dot]")).toBeNull();
+    // 삭제된 업무 — 캡션은 뜨지만 **버튼은 「업무 갱신」 그대로**다(헤더 셀렉터에서 다른 업무로 바꾼다 — U-6)
+    expect(within(row(307)).getByText("삭제된 업무")).toBeInTheDocument();
+    expect(within(row(307)).getByRole("button", { name: "업무 갱신" })).toBeEnabled();
     // 같은 상태(진행중 → 진행중)는 툴팁에서 빠진다 — 메모만 남는다
     expect(within(row(308)).getByRole("button", { name: "업무 갱신" })).toHaveAttribute("title", "메모 1건");
     expect(within(row(310)).getByRole("button", { name: "업무 생성" })).toBeEnabled();
+    expect(within(row(311)).getByRole("button", { name: "업무 생성" }).querySelector("[data-payload-dot]")).not.toBeNull();
     // 논의 · 결정 줄에는 버튼이 없다
     expect(within(row(300)).queryByRole("button", { name: /업무/ })).toBeNull();
 
     await userEvent.click(screen.getByRole("tab", { name: "AI 요약" }));
     expect(screen.queryByRole("button", { name: /업무 생성|업무 갱신|갱신 완료/ })).not.toBeInTheDocument();
   });
-
-  it("「업무 갱신」 = `PATCH …/lines/305/task` **요청 하나** · 게이트 거부(422) → 토스트 + 「결과 입력」 → 업무 상세 드로어 · 줄은 그대로", async () => {
-    const state = harness(seeded());
-    server.use(
-      http.patch(`${API_BASE}/api/meetings/21/lines/305/task`, () =>
-        HttpResponse.json({ detail: "완료하려면 결과자료 1건 또는 완료 결과가 필요합니다", code: "task_completion_blocked" }, { status: 422 }),
-      ),
-      http.get(`${API_BASE}/api/tasks/101`, () => HttpResponse.json({ detail: "x", code: "internal_error" }, { status: 500 })),
-    );
-    const apply = await within(await findRow(305)).findByRole("button", { name: "업무 갱신" });
-    await userEvent.click(apply);
-
-    expect(await screen.findByText("완료하려면 결과자료 1건 또는 완료 결과가 필요합니다")).toBeInTheDocument();
-    expect(within(row(305)).getByRole("button", { name: "업무 갱신" })).toBeEnabled();
-    expect(state.requests).toEqual(["PATCH /api/meetings/21/lines/305/task"]);
-
-    await userEvent.click(screen.getByRole("button", { name: "결과 입력" }));
-    expect(await screen.findByRole("dialog")).toBeInTheDocument();
-    expect(await screen.findByText("업무를 불러오지 못했습니다")).toBeInTheDocument();
-    // 「결과 입력」이 연 것은 **업무 상세 조회**뿐 — 상태 · 갱신 요청이 더 나가지 않았다
-    expect(state.requests.filter((request) => !request.startsWith("GET /api/tasks/101"))).toEqual(["PATCH /api/meetings/21/lines/305/task"]);
-  });
-
-  it("통과(200) → 「갱신 완료」 + 「완료 처리했습니다 · 실행취소」 → 실행취소는 `POST /api/tasks/101/status/undo`", async () => {
-    const state = harness(seeded());
-    const applied = withLine(state.detail, 305, (current) => ({ ...current, payload: null, task: { ...TASK_SUMMARY, status: "done", dueDate: "2026-09-02" } }));
-    server.use(
-      http.patch(`${API_BASE}/api/meetings/21/lines/305/task`, () => {
-        state.detail = applied;
-        return HttpResponse.json(applied);
-      }),
-      http.post(`${API_BASE}/api/tasks/101/status/undo`, () => HttpResponse.json({ id: 101, status: "in_progress" })),
-    );
-    await userEvent.click(await within(await findRow(305)).findByRole("button", { name: "업무 갱신" }));
-
-    expect(await within(row(305)).findByRole("button", { name: "갱신 완료" })).toBeDisabled();
-    expect(await screen.findByText("완료 처리했습니다")).toBeInTheDocument();
-    expect(state.requests).toEqual(["PATCH /api/meetings/21/lines/305/task"]);
-
-    await userEvent.click(screen.getByRole("button", { name: "실행취소" }));
-    await waitFor(() => expect(state.requests).toContain("POST /api/tasks/101/status/undo"));
-  });
-
-  it("같은 상태만 남은 줄도 요청은 하나이고 완료 토스트가 없다 · 전이 거부(409) 토스트 · 5xx 토스트 + 버튼 복귀", async () => {
-    const state = harness(seeded());
-    const applied = withLine(state.detail, 308, (current) => ({ ...current, payload: null }));
-    let attempt = 0;
-    server.use(
-      http.patch(`${API_BASE}/api/meetings/21/lines/308/task`, () => {
-        state.detail = applied;
-        return HttpResponse.json(applied);
-      }),
-      http.patch(`${API_BASE}/api/meetings/21/lines/305/task`, () => {
-        attempt += 1;
-        return attempt === 1
-          ? HttpResponse.json({ detail: "이 상태로는 바꿀 수 없습니다", code: "invalid_status_transition" }, { status: 409 })
-          : HttpResponse.json({ detail: "boom", code: "internal_error" }, { status: 500 });
-      }),
-    );
-    await userEvent.click(await within(await findRow(308)).findByRole("button", { name: "업무 갱신" }));
-    expect(await within(row(308)).findByRole("button", { name: "갱신 완료" })).toBeDisabled();
-    await sleep(30);
-    expect(screen.queryByText("완료 처리했습니다")).not.toBeInTheDocument();
-
-    await userEvent.click(within(row(305)).getByRole("button", { name: "업무 갱신" }));
-    expect(await screen.findByText("이 상태로는 바꿀 수 없습니다")).toBeInTheDocument();
-    await userEvent.click(within(row(305)).getByRole("button", { name: "업무 갱신" }));
-    expect(await screen.findByText("업무를 갱신하지 못했습니다")).toBeInTheDocument();
-    expect(within(row(305)).getByRole("button", { name: "업무 갱신" })).toBeEnabled();
-    expect(state.requests).toEqual(["PATCH /api/meetings/21/lines/308/task", "PATCH /api/meetings/21/lines/305/task", "PATCH /api/meetings/21/lines/305/task"]);
-  });
 });
 
-describe("업무 생성 드로어(U-10)", () => {
-  it("액션 줄 「업무 생성」 → 제목 프리필 · 안건 고정 · 「시작 상태」 없음 · 토글 없음 → 유형 고르면 `POST …/lines/310/task` **하나** → 줄이 업무 줄", async () => {
+describe("액션 payload 드로어(U-10)", () => {
+  it("**AI 액션 줄** 「업무 생성」(보기 모드) → 안건 고정 + 일곱이 「회의에서 반영」으로 채워짐 · 필드가 그 일곱뿐 · 푸터 「취소 · 넣기」 → `POST …/lines/311/task` 하나", async () => {
     const state = harness(seeded());
-    const bodies: unknown[] = [];
-    const created = withLine(state.detail, 310, (current) => ({ ...current, kind: "task", taskId: 200, payload: null, task: { ...TASK_SUMMARY, id: 200, title: "소개서 개정본 검수 일정 잡기", status: "todo", dueDate: null } }));
     server.use(
-      http.post(`${API_BASE}/api/meetings/21/lines/310/task`, async ({ request }) => {
-        bodies.push(await request.json());
-        state.detail = created;
-        return HttpResponse.json(created, { status: 201 });
+      http.post(`${API_BASE}/api/meetings/21/lines/311/task`, async ({ request }) => {
+        state.requests.push(`BODY ${JSON.stringify(await request.json())}`);
+        state.detail = withLine(state.detail, 311, (current) => ({ ...current, kind: "task", taskId: 200, payload: null, task: { ...TASK_SUMMARY, id: 200, title: "요금제 비교표 만들기" } }));
+        return HttpResponse.json(state.detail, { status: 201 });
       }),
     );
-    await userEvent.click(await within(await findRow(310)).findByRole("button", { name: "업무 생성" }));
+    await userEvent.click(await within(await findRow(311)).findByRole("button", { name: "업무 생성" }));
+    const drawer = await findDrawer("액션 아이템");
 
-    const drawer = await findDrawer("업무 생성");
-    expect(within(drawer).getByText("액션 아이템을 내 업무로 등록합니다")).toBeInTheDocument();
-    expect(within(drawer).getByRole("textbox", { name: "업무 제목" })).toHaveValue("소개서 개정본 검수 일정 잡기");
-    expect(within(drawer).getByRole("button", { name: "안건" })).toBeDisabled();
-    expect(within(drawer).getByRole("button", { name: "안건" })).toHaveTextContent("안건 2 · 디자인 반영 일정과 검수 방식");
-    expect(within(drawer).queryByText(/시작 상태/)).not.toBeInTheDocument();
-    expect(within(drawer).queryByText(/연관 업무로 바꾸기/)).not.toBeInTheDocument();
-    expect(within(drawer).queryByRole("switch")).not.toBeInTheDocument();
-    expect(within(drawer).getByText("업무의 설명에 들어갑니다")).toBeInTheDocument();
-    // 제출 조건 — 제목 1자 + 유형
-    const submit = within(drawer).getByRole("button", { name: "업무 생성" });
-    expect(submit).toBeDisabled();
-    await userEvent.click(within(drawer).getByRole("button", { name: "유형" }));
-    const options = await screen.findByRole("listbox", { name: "유형" });
-    expect(within(options).queryByRole("option", { name: /미팅·회의/ })).toBeNull(); // 종류=업무만
-    await userEvent.click(within(options).getByRole("option", { name: /문서·보고/ }));
-    await userEvent.type(within(drawer).getByRole("textbox", { name: "메모" }), "9/12 오전");
-    expect(submit).toBeEnabled();
-    await userEvent.click(submit);
+    // ① 안건 고정 · ②~⑦ 채워진 값
+    expect(drawer.querySelector("[data-agenda-fixed]")).toHaveTextContent("안건 2 · 디자인 반영 일정과 검수 방식");
+    expect(within(drawer).getByLabelText("제목")).toHaveValue("요금제 비교표 만들기");
+    expect(within(drawer).getByRole("button", { name: "유형" })).toHaveTextContent("문서·보고");
+    expect(within(drawer).getByRole("button", { name: "프로젝트" })).toHaveTextContent("소개서 개정");
+    expect(within(drawer).getByLabelText("계획 시작")).toHaveTextContent("09.01");
+    expect(within(drawer).getByLabelText("계획 종료")).toHaveTextContent("09.05");
+    expect(within(drawer).getByLabelText("설명")).toHaveValue("경쟁사 3곳");
+    expect(within(drawer).getByText("자료 모으기")).toBeInTheDocument();
+    expect(within(drawer).getByText("표 만들기")).toBeInTheDocument();
+    // 「회의에서 반영」 표시가 채워진 칸에 붙는다
+    expect(within(drawer).getAllByText("회의에서 반영").length).toBeGreaterThanOrEqual(6);
+    // **없는 것** — 「시작 상태」 · 참고자료 · 연관 업무 · 첨부 · 로그
+    expect(within(drawer).queryByText(/시작 상태|참고자료|결과자료|연관 업무|첨부|로그/)).toBeNull();
 
-    await waitFor(() => expect(screen.queryByRole("heading", { name: "업무 생성" })).not.toBeInTheDocument());
-    expect(bodies).toEqual([{ title: "소개서 개정본 검수 일정 잡기", workTypeId: 3, projectId: 5, dueDate: null, description: "9/12 오전" }]);
-    expect(state.requests).toEqual(["POST /api/meetings/21/lines/310/task"]);
-    expect(await within(row(310)).findByRole("button", { name: "갱신 완료" })).toBeDisabled();
-    expect(within(row(310)).getByText("문서·보고")).toBeInTheDocument();
-  });
+    // 푸터는 **둘**(취소 + 넣기)
+    const footer = within(drawer).getByRole("button", { name: "넣기" }).parentElement as HTMLElement;
+    expect(within(footer).getAllByRole("button")).toHaveLength(2);
+    expect(within(drawer).queryByRole("button", { name: "저장" })).toBeNull();
 
-  it("삭제된 유형(`invalid_work_type`) → 드로어 열린 채 유형 옆 인라인 · 줄 그대로", async () => {
-    const state = harness(seeded());
-    server.use(http.post(`${API_BASE}/api/meetings/21/lines/310/task`, () => HttpResponse.json({ detail: "사용할 수 없는 유형입니다", code: "invalid_work_type" }, { status: 422 })));
-    await userEvent.click(await within(await findRow(310)).findByRole("button", { name: "업무 생성" }));
-    const drawer = await findDrawer("업무 생성");
-    await userEvent.click(within(drawer).getByRole("button", { name: "유형" }));
-    await userEvent.click(within(await screen.findByRole("listbox", { name: "유형" })).getByRole("option", { name: /문서·보고/ }));
-    await userEvent.click(await within(drawer).findByRole("button", { name: /업무 생성/ }));
-
-    expect(await within(drawer).findByRole("alert")).toHaveTextContent("삭제됐거나 쓸 수 없는 유형입니다. 다시 골라 주세요");
-    expect(screen.getByRole("heading", { name: "업무 생성" })).toBeInTheDocument();
-    // 드로어(모달) 뒤의 줄은 aria-hidden 이다 — 줄 자체가 그대로(액션 줄 · 「업무 생성」)인지만 본다
-    expect(within(row(310)).getByRole("button", { name: "업무 생성", hidden: true })).toBeEnabled();
-    expect(row(310).getAttribute("data-line-kind")).toBe("action");
-    expect(state.requests).toEqual(["POST /api/meetings/21/lines/310/task"]);
-  });
-
-  it("편집 모드 「+ 액션 아이템」 → 안건 셀렉터 기본값 = 그 안건 · `POST …/lines { newTask }` → 안건 맨 아래 업무 줄", async () => {
-    const state = harness(seeded());
-    const bodies: unknown[] = [];
-    const added = line({ id: 330, agendaId: 73, track: "merged", kind: "task", content: "가격 표기 초안", orderIndex: 0, taskId: 201, task: { ...TASK_SUMMARY, id: 201, title: "가격 표기 초안", status: "todo", dueDate: null } });
-    server.use(
-      http.post(`${API_BASE}/api/meetings/21/lines`, async ({ request }) => {
-        bodies.push(await request.json());
-        state.detail = { ...state.detail, agendas: { ...state.detail.agendas, merged: state.detail.agendas.merged.map((agenda) => (agenda.id === 73 ? { ...agenda, lines: [added] } : agenda)) } };
-        return HttpResponse.json(added, { status: 201 });
-      }),
+    await userEvent.click(within(drawer).getByRole("button", { name: "넣기" }));
+    await waitFor(() => expect(within(row(311)).getByRole("button", { name: "갱신 완료" })).toBeInTheDocument());
+    expect(state.requests.filter((request) => !request.startsWith("BODY"))).toEqual(["POST /api/meetings/21/lines/311/task"]);
+    expect(state.requests.find((request) => request.startsWith("BODY"))).toBe(
+      `BODY ${JSON.stringify({ title: "요금제 비교표 만들기", workTypeId: 3, projectId: 5, startDate: "2026-09-01", dueDate: "2026-09-05", description: "경쟁사 3곳", todos: ["자료 모으기", "표 만들기"] })}`,
     );
-    await userEvent.click(await screen.findByRole("button", { name: "편집" }));
-    await userEvent.click(within(agendaEl(73)).getByRole("button", { name: "액션 아이템" }));
-    const drawer = await findDrawer("업무 생성");
-    expect(within(drawer).getByRole("button", { name: "안건" })).toBeEnabled();
-    expect(within(drawer).getByRole("button", { name: "안건" })).toHaveTextContent("안건 3 · 가격 표기 문구 처리 방향");
-    expect(within(drawer).getByRole("textbox", { name: "업무 제목" })).toHaveValue("");
-    await userEvent.type(within(drawer).getByRole("textbox", { name: "업무 제목" }), "가격 표기 초안");
-    await userEvent.click(within(drawer).getByRole("button", { name: "유형" }));
-    await userEvent.click(within(await screen.findByRole("listbox", { name: "유형" })).getByRole("option", { name: /문서·보고/ }));
-    await userEvent.click(within(drawer).getByRole("button", { name: "업무 생성" }));
-
-    await waitFor(() => expect(screen.queryByRole("heading", { name: "업무 생성" })).not.toBeInTheDocument());
-    expect(bodies).toEqual([{ agendaId: 73, kind: "task", newTask: { title: "가격 표기 초안", workTypeId: 3, projectId: 5, dueDate: null, description: null } }]);
-    expect(state.requests).toEqual(["POST /api/meetings/21/lines"]);
-    expect(await within(await findRow(330)).findByRole("button", { name: "갱신 완료" })).toBeDisabled();
   });
-});
 
-describe("연관 업무 드로어(U-9)", () => {
-  it("「+ 연관 업무」 → 후보(회의 프로젝트 기본 · 검색) · 메모만 적고 「연결하고 갱신」 = `POST …/lines` → **곧바로** `PATCH …/task` · 상태 항목에 「취소」 없음", async () => {
+  it("**사람이 적은 액션 줄**을 편집 모드에서 열면 같은 드로어에 제목 · 프로젝트만 채워진다 · 「저장」 = `PATCH …/lines/310` 하나(**업무 요청 0**) · 보기 모드에서 다시 열면 값 그대로 + 「넣기」", async () => {
     const state = harness(seeded());
-    const bodies: unknown[] = [];
-    const added = line({ id: 340, agendaId: 71, track: "merged", kind: "task", content: "요금제 비교표 정리", orderIndex: 3, taskId: 102, task: { ...TASK_SUMMARY, id: 102, title: "요금제 비교표 정리", status: "todo", dueDate: null }, payload: { note: "회의에서 정리 요청" } });
-    const applied = { ...added, payload: null };
     server.use(
-      http.get(`${API_BASE}/api/tasks/relations/candidates`, ({ request }) => {
-        const keyword = new URL(request.url).searchParams.get("keyword");
-        return HttpResponse.json(keyword ? { items: CANDIDATES.items.filter((item) => item.title.includes(keyword)), total: 1 } : CANDIDATES);
-      }),
-      http.post(`${API_BASE}/api/meetings/21/lines`, async ({ request }) => {
-        bodies.push(await request.json());
-        state.detail = { ...state.detail, agendas: { ...state.detail.agendas, merged: state.detail.agendas.merged.map((agenda) => (agenda.id === 71 ? { ...agenda, lines: [...agenda.lines, added] } : agenda)) } };
-        return HttpResponse.json(added, { status: 201 });
-      }),
-      http.patch(`${API_BASE}/api/meetings/21/lines/340/task`, () => {
-        state.detail = withLine(state.detail, 340, () => applied);
+      http.patch(`${API_BASE}/api/meetings/21/lines/310`, async ({ request }) => {
+        const body = (await request.json()) as { payload: Record<string, unknown> };
+        state.requests.push(`BODY ${JSON.stringify(body)}`);
+        state.detail = withLine(state.detail, 310, (current) => ({ ...current, payload: body.payload as never }));
         return HttpResponse.json(state.detail);
       }),
     );
-    await userEvent.click(await screen.findByRole("button", { name: "편집" }));
-    await userEvent.click(within(agendaEl(71)).getByRole("button", { name: "연관 업무" }));
-    const drawer = await findDrawer("연관 업무 연결");
-    expect(within(drawer).getByText("내 업무에서 고른 업무에 이 회의의 변경을 반영합니다")).toBeInTheDocument();
-    expect(within(drawer).getByText("내 업무에서 불러옵니다")).toBeInTheDocument();
-    // 프로젝트 기본값 = 회의의 프로젝트 · n건
-    await waitFor(() => expect(within(drawer).getByRole("button", { name: "프로젝트" })).toHaveTextContent("소개서 개정 · 2건"));
-    expect(state.requests[0]).toBe("GET /api/tasks/relations/candidates?projectId=5&scope=project");
-    const list = within(drawer).getByRole("radiogroup", { name: "업무 목록" });
-    expect(await within(list).findAllByRole("radio")).toHaveLength(2);
-    expect(within(list).getByText("미정")).toBeInTheDocument();
-    expect(within(list).getByText("진행중")).toBeInTheDocument();
-    expect(within(drawer).getByRole("button", { name: "연결하고 갱신" })).toBeDisabled();
+    await findRow(310);
+    await userEvent.click(screen.getByRole("button", { name: "편집" }));
+    await userEvent.click(within(row(310)).getByRole("button", { name: "업무 생성" }));
 
-    // 검색 → 좁혀진다
-    await userEvent.type(within(drawer).getByRole("textbox", { name: "업무 검색" }), "요금제");
-    expect(await within(list).findAllByRole("radio")).toHaveLength(1);
-    await userEvent.click(within(list).getByRole("radio", { name: /요금제 비교표 정리/ }));
-    expect(within(drawer).getByText("현재 기한 없음")).toBeInTheDocument();
-    expect(within(drawer).getByText("현재 시작전")).toBeInTheDocument();
-    expect(within(drawer).getByRole("button", { name: "상태" })).toHaveTextContent("시작전 유지");
-    // 상태 항목 — 그래프에서 갈 수 있는 것만 · 「취소」 없음
-    await userEvent.click(within(drawer).getByRole("button", { name: "상태" }));
-    const statuses = await screen.findByRole("listbox", { name: "상태" });
-    expect(within(statuses).getAllByRole("option").map((option) => option.textContent)).toEqual(["시작전 유지", "진행중", "완료"]);
-    await userEvent.click(within(statuses).getByRole("option", { name: "시작전 유지" }));
+    let drawer = await findDrawer("액션 아이템");
+    // 프리필이 없다 — 제목 = 줄 본문 · 프로젝트 = 회의의 프로젝트(MF-61). 「회의에서 반영」 표시가 하나도 없다
+    expect(within(drawer).getByLabelText("제목")).toHaveValue("소개서 개정본 검수 일정 잡기");
+    expect(within(drawer).getByRole("button", { name: "프로젝트" })).toHaveTextContent("소개서 개정");
+    expect(within(drawer).getByRole("button", { name: "유형" })).toHaveTextContent("유형");
+    expect(within(drawer).queryByText("회의에서 반영")).toBeNull();
+    // 편집 모드라 푸터는 「취소 · 저장」이고 **유형이 비어도 저장은 된다**
+    expect(within(drawer).queryByRole("button", { name: "넣기" })).toBeNull();
+    const save = within(drawer).getByRole("button", { name: "저장" });
+    expect(save).toBeEnabled();
 
-    await userEvent.type(within(drawer).getByRole("textbox", { name: "진행 메모로 남길 내용" }), "회의에서 정리 요청");
-    await userEvent.click(within(drawer).getByRole("button", { name: "연결하고 갱신" }));
+    await userEvent.click(save);
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    // **업무 API 로 나간 요청 0** — 줄에 `payload` 만 붙었다
+    expect(state.requests.filter((request) => !request.startsWith("BODY"))).toEqual(["PATCH /api/meetings/21/lines/310"]);
+    expect(state.requests.find((request) => request.startsWith("BODY"))).toContain('"title":"소개서 개정본 검수 일정 잡기"');
+    // dot 이 켜진다 — 이 시점에 AI 가 채운 줄과 완전히 같은 상태다
+    await waitFor(() => expect(within(row(310)).getByRole("button", { name: "업무 생성" }).querySelector("[data-payload-dot]")).not.toBeNull());
 
-    await waitFor(() => expect(screen.queryByRole("heading", { name: "연관 업무 연결" })).not.toBeInTheDocument());
-    // 같은 상태 유지는 요청에 실리지 않는다 — `payload` 는 메모뿐
-    expect(bodies).toEqual([{ agendaId: 71, kind: "task", taskId: 102, payload: { note: "회의에서 정리 요청" } }]);
-    await waitFor(() => expect(state.requests.filter((request) => !request.startsWith("GET /api/tasks/relations/candidates"))).toEqual(["POST /api/meetings/21/lines", "PATCH /api/meetings/21/lines/340/task"]));
-    expect(await within(await findRow(340)).findByRole("button", { name: "갱신 완료" })).toBeDisabled();
+    // 보기 모드로 돌아와 다시 열면 **값 그대로 + 「넣기」**
+    await userEvent.click(screen.getByRole("button", { name: "편집 완료" }));
+    await userEvent.click(within(row(310)).getByRole("button", { name: "업무 생성" }));
+    drawer = await findDrawer("액션 아이템");
+    expect(within(drawer).getByLabelText("제목")).toHaveValue("소개서 개정본 검수 일정 잡기");
+    expect(within(drawer).getAllByText("회의에서 반영").length).toBeGreaterThan(0);
+    // **유형이 비어 있으면 「넣기」는 비활성**(저장은 됐다)
+    expect(within(drawer).getByRole("button", { name: "넣기" })).toBeDisabled();
   });
 
-  it("변경 없이 연결하면 `POST …/lines` **하나**(`payload` 없음)이고 줄은 「갱신 완료」 · ②가 거부돼도 줄은 남는다(「업무 갱신」 활성 + 토스트)", async () => {
+  it("**인라인 자동 저장이 없다** — 값을 고치고 포커스를 벗어나도 요청 0 · 「취소」로 닫으면 아무것도 저장되지 않는다", async () => {
     const state = harness(seeded());
-    const bodies: unknown[] = [];
-    let nextId = 350;
-    server.use(
-      http.get(`${API_BASE}/api/tasks/relations/candidates`, () => HttpResponse.json(CANDIDATES)),
-      http.post(`${API_BASE}/api/meetings/21/lines`, async ({ request }) => {
-        const body = (await request.json()) as { taskId: number; payload?: unknown };
-        bodies.push(body);
-        const id = nextId++;
-        const added = line({ id, agendaId: 71, track: "merged", kind: "task", content: "제품 소개서 내용 업데이트", orderIndex: id, taskId: body.taskId, task: { ...TASK_SUMMARY, id: body.taskId, status: "in_progress" }, payload: (body.payload as MeetingLine["payload"]) ?? null });
-        state.detail = { ...state.detail, agendas: { ...state.detail.agendas, merged: state.detail.agendas.merged.map((agenda) => (agenda.id === 71 ? { ...agenda, lines: [...agenda.lines, added] } : agenda)) } };
-        return HttpResponse.json(added, { status: 201 });
-      }),
-      http.patch(`${API_BASE}/api/meetings/21/lines/351/task`, () => HttpResponse.json({ detail: "완료하려면 결과자료 1건 또는 완료 결과가 필요합니다", code: "task_completion_blocked" }, { status: 422 })),
-    );
-    await userEvent.click(await screen.findByRole("button", { name: "편집" }));
+    await userEvent.click(await within(await findRow(311)).findByRole("button", { name: "업무 생성" }));
+    const drawer = await findDrawer("액션 아이템");
 
-    // ① 변경 없음
-    await userEvent.click(within(agendaEl(71)).getByRole("button", { name: "연관 업무" }));
-    let drawer = await findDrawer("연관 업무 연결");
-    await userEvent.click(await within(drawer).findByRole("radio", { name: /제품 소개서 내용 업데이트/ }));
-    await userEvent.click(within(drawer).getByRole("button", { name: "연결하고 갱신" }));
-    await waitFor(() => expect(screen.queryByRole("heading", { name: "연관 업무 연결" })).not.toBeInTheDocument());
-    expect(bodies).toEqual([{ agendaId: 71, kind: "task", taskId: 101 }]);
-    expect(await within(await findRow(350)).findByRole("button", { name: "갱신 완료" })).toBeDisabled();
-    await sleep(30);
-    expect(state.requests.filter((request) => /\/lines\/\d+\/task/.test(request))).toEqual([]);
+    const title = within(drawer).getByLabelText("제목");
+    await userEvent.clear(title);
+    await userEvent.type(title, "고친 제목");
+    await userEvent.tab();
+    await sleep(60);
+    expect(state.requests).toEqual([]);
 
-    // ② 완료로 보내는데 결과가 없다 — 줄은 있고 「업무 갱신」 활성 + 거부 토스트
-    await userEvent.click(within(agendaEl(71)).getByRole("button", { name: "연관 업무" }));
-    drawer = await findDrawer("연관 업무 연결");
-    await userEvent.click(await within(drawer).findByRole("radio", { name: /제품 소개서 내용 업데이트/ }));
+    await userEvent.click(within(drawer).getByRole("button", { name: "취소" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(state.requests).toEqual([]);
+  });
+});
+
+describe("업무 payload 드로어(U-9)", () => {
+  it("**AI 업무 줄** 「업무 갱신」 → 헤더 셀렉터가 그 업무를 물고 변경분이 채워진다 · **상태에 「완료」가 없다** · 필드가 변경분 일곱뿐", async () => {
+    harness(seeded());
+    await userEvent.click(await within(await findRow(305)).findByRole("button", { name: "업무 갱신" }));
+    const drawer = await findDrawer("연관 업무");
+
+    // 헤더 제목 자리가 셀렉터다 — 줄의 `taskId` 가 가리키는 업무를 물고 있다
+    expect(screen.getByRole("button", { name: "업무 고르기" })).toHaveTextContent("제품 소개서 내용 업데이트");
+    expect(within(drawer).getByLabelText("기한")).toHaveTextContent("09.02");
+    expect(within(drawer).getByRole("button", { name: "상태" })).toHaveTextContent("진행중");
+    expect(within(drawer).getByLabelText("진행 메모")).toHaveValue("검수 일정 변경");
+    // 줄에서 열었으므로 내용은 읽기 전용
+    expect(within(drawer).queryByRole("textbox", { name: "내용" })).toBeNull();
+
+    // 상태 셀렉터 — **「완료」·「취소」가 없다**(MF-59)
     await userEvent.click(within(drawer).getByRole("button", { name: "상태" }));
-    await userEvent.click(within(await screen.findByRole("listbox", { name: "상태" })).getByRole("option", { name: "완료" }));
-    await userEvent.click(within(drawer).getByRole("button", { name: "연결하고 갱신" }));
-    await waitFor(() => expect(screen.queryByRole("heading", { name: "연관 업무 연결" })).not.toBeInTheDocument());
-    expect(bodies[1]).toEqual({ agendaId: 71, kind: "task", taskId: 101, payload: { status: "done" } });
+    const options = within(await screen.findByRole("listbox", { name: "상태" })).getAllByRole("option").map((option) => option.textContent);
+    expect(options).toEqual(["진행중 유지", "시작전", "진행중"]);
+    expect(options.join()).not.toMatch(/완료|취소/);
+    await userEvent.keyboard("{Escape}");
+
+    // **제목 · 유형 · 설명 · 시작일이 없다**(회의록에서 못 바꾼다 — MF-14)
+    expect(within(drawer).queryByLabelText("제목")).toBeNull();
+    expect(within(drawer).queryByRole("button", { name: "유형" })).toBeNull();
+    expect(within(drawer).queryByLabelText("설명")).toBeNull();
+    expect(within(drawer).queryByLabelText("계획 시작")).toBeNull();
+    expect(within(drawer).queryByText(/참고자료|결과자료|첨부|로그/)).toBeNull();
+  });
+
+  it("**사람이 적은 업무 줄**은 셀렉터가 빈 채로 열리고 본문이 비활성이다 — 「업무 연결」 같은 앞 단계가 없다", async () => {
+    const state = harness(seeded());
+    state.detail = withLine(state.detail, 306, (current) => ({ ...current, taskId: null, task: null }));
+    // 줄 목록을 다시 읽게 한다
+    harness(state.detail);
+    await userEvent.click(await within(await findRow(306)).findByRole("button", { name: "업무 갱신" }));
+    const drawer = await findDrawer("연관 업무");
+
+    expect(screen.getByRole("button", { name: "업무 고르기" })).toHaveTextContent("업무 고르기");
+    // 캡션이 블록 머리와 각 칸에 붙는다 — 업무를 고르기 전에는 「현재 값」이 없다
+    expect(within(drawer).getAllByText("업무를 고르면 현재 값이 보입니다").length).toBeGreaterThan(0);
+    expect(within(drawer).getByLabelText("진행 메모")).toBeDisabled();
+    expect(within(drawer).getByRole("button", { name: "상태" })).toBeDisabled();
+    expect(within(drawer).queryByRole("button", { name: /연결하고 갱신|업무 연결/ })).toBeNull();
+  });
+
+  it("「넣기」 → `PATCH …/lines/305/task { taskId, …채워진 키만 }` **하나** → 「갱신 완료」 · 게이트 거부(422)면 줄이 그대로이고 「결과 입력」이 뜬다", async () => {
+    const state = harness(seeded());
+    let attempt = 0;
+    server.use(
+      http.patch(`${API_BASE}/api/meetings/21/lines/305/task`, async ({ request }) => {
+        state.requests.push(`BODY ${JSON.stringify(await request.json())}`);
+        attempt += 1;
+        if (attempt === 1) {
+          return HttpResponse.json({ detail: "완료하려면 결과자료 1건 또는 완료 결과가 필요합니다", code: "task_completion_blocked" }, { status: 422 });
+        }
+        state.detail = withLine(state.detail, 305, (current) => ({ ...current, payload: null }));
+        return HttpResponse.json(state.detail);
+      }),
+      http.get(`${API_BASE}/api/tasks/101`, () => HttpResponse.json({ detail: "x", code: "internal_error" }, { status: 500 })),
+    );
+    await userEvent.click(await within(await findRow(305)).findByRole("button", { name: "업무 갱신" }));
+    let drawer = await findDrawer("연관 업무");
+    await userEvent.click(within(drawer).getByRole("button", { name: "넣기" }));
+
+    // 거부 — **드로어는 열린 채**이고 줄도 그대로다(전부 롤백)
     expect(await screen.findByText("완료하려면 결과자료 1건 또는 완료 결과가 필요합니다")).toBeInTheDocument();
-    const applyButton = await within(await findRow(351)).findByRole("button", { name: "업무 갱신" });
-    expect(applyButton).toBeEnabled();
-    expect(applyButton).toHaveAttribute("title", "상태 → 완료");
-    expect(state.requests.filter((request) => /\/lines\/\d+\/task/.test(request))).toEqual(["PATCH /api/meetings/21/lines/351/task"]);
+    expect(screen.getByRole("button", { name: "넣기" })).toBeInTheDocument();
+    await userEvent.click(within(drawer).getByRole("button", { name: "취소" }));
+    expect(within(row(305)).getByRole("button", { name: "업무 갱신" })).toBeEnabled();
+
+    // 다시 — 이번에는 통과. **요청은 하나**이고 본문은 `taskId` + 채워진 키만이다
+    await userEvent.click(within(row(305)).getByRole("button", { name: "업무 갱신" }));
+    drawer = await findDrawer("연관 업무");
+    await userEvent.click(within(drawer).getByRole("button", { name: "넣기" }));
+    await waitFor(() => expect(within(row(305)).getByRole("button", { name: "갱신 완료" })).toBeDisabled());
+
+    const bodies = state.requests.filter((request) => request.startsWith("BODY"));
+    expect(bodies).toHaveLength(2);
+    // `status` 는 업무의 현재 상태(진행중)와 같아 **실리지 않는다** · `null` 키도 없다
+    expect(JSON.parse(bodies[1].slice(5))).toEqual({ taskId: 101, dueDate: "2026-09-02", note: "검수 일정 변경" });
+    expect(state.requests.filter((request) => !request.startsWith("BODY") && !request.startsWith("GET /api/tasks/101"))).toEqual([
+      "PATCH /api/meetings/21/lines/305/task",
+      "PATCH /api/meetings/21/lines/305/task",
+    ]);
   });
 });

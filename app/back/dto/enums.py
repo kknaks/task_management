@@ -52,8 +52,24 @@ class TaskStatus(StrEnum):
 UNFINISHED_STATUSES = frozenset({TaskStatus.TODO.value, TaskStatus.IN_PROGRESS.value})
 # 종결 2종 — R-4 가 이것들만 **실적 시각**으로 거른다(`due_date` 로 거르지 않는다).
 FINISHED_STATUSES = frozenset({TaskStatus.DONE.value, TaskStatus.CANCELLED.value})
-# 회의록 `payload.status` 가 담을 수 있는 상태 — **`cancelled` 불가**(사유가 필수라 세 키로 표현할 수 없다 · SPEC-008 §4 Validation).
-PAYLOAD_STATUSES = frozenset(TaskStatus) - {TaskStatus.CANCELLED}
+
+
+class PayloadStatus(StrEnum):
+    """**회의록이 업무에 넣을 수 있는 상태** — `todo` · `in_progress` 둘뿐이다(MF-59 · SPEC-008 §4 Validation · BE §8-3).
+
+    빠진 둘의 이유가 다르다 — `cancelled` 는 **사유가 필수**라 변경분으로 표현할 수 없고,
+    `done` 은 **완료 게이트의 뒷문을 막기 위해서다**(완료는 업무 화면에서 사람이 누른다).
+
+    「업무 상태 중 둘」을 **타입으로** 둔 이유 — 줄의 `payload.status` 와 `PATCH …/lines/{id}/task` 본문의 `status`,
+    그리고 ② 최종 회의록 출력 검증이 **같은 값 집합**을 봐야 한다. 문자열 쌍을 세 곳에 적으면 한 곳만 고쳐지는 날이 온다.
+    값은 `TaskStatus` 에서 가져온다 — 업무 상태의 정본은 여전히 그쪽이다.
+    """
+
+    TODO = TaskStatus.TODO
+    IN_PROGRESS = TaskStatus.IN_PROGRESS
+
+
+PAYLOAD_STATUSES = frozenset(PayloadStatus)
 
 
 class AttachmentRole(StrEnum):

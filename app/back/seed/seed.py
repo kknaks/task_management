@@ -28,13 +28,16 @@ class _DefaultWorkType:
     name: str
     kind: WorkTypeKind
     color_token: ColorToken
+    description: str | None
 
 
 # SPEC-000 §4 Data Contract — 기본 유형 3종. 색 토큰은 SPEC-002 §4 가 정본이다.
+# 설명 문구는 A-12 가 정본이다 — **미팅·회의는 빈 값**이다(DEC-003 OQ-11 · 문구가 정해지지 않았다).
+# 리비전 `0009` 가 **이미 있는 계정의 행에** 같은 문구를 UPDATE 한다 — 여기는 새로 만들 때의 값이다.
 DEFAULT_WORK_TYPES: tuple[_DefaultWorkType, ...] = (
-    _DefaultWorkType("미팅·회의", WorkTypeKind.MEETING, ColorToken.INDIGO),
-    _DefaultWorkType("개인 업무", WorkTypeKind.TASK, ColorToken.VIOLET),
-    _DefaultWorkType("문서·보고", WorkTypeKind.TASK, ColorToken.STEEL),
+    _DefaultWorkType("미팅·회의", WorkTypeKind.MEETING, ColorToken.INDIGO, None),
+    _DefaultWorkType("개인 업무", WorkTypeKind.TASK, ColorToken.VIOLET, "혼자 처리하는 실무. 개발·수정·확인 등"),
+    _DefaultWorkType("문서·보고", WorkTypeKind.TASK, ColorToken.STEEL, "산출물이 문서인 것. 기획서·보고서·회의록 정리"),
 )
 
 
@@ -60,8 +63,8 @@ def _upsert_default_work_types(session: Session, account_id: int) -> int:
     """기본 3종을 이름 기준으로 맞춘다.
 
     이름·종류·기본 표시는 **잠긴 값**이라 시드가 강제한다(A-4).
-    `color_token` 은 **사용자가 편집할 수 있는 유일한 값**이라 새로 만들 때만 넣는다 —
-    재실행이 사용자의 색 변경을 덮어쓰지 않는다.
+    `color_token` · `description` 은 **사용자가 편집할 수 있는 값**이라 새로 만들 때만 넣는다 —
+    재실행이 사용자의 색·설명 변경을 덮어쓰지 않는다(A-12 — 기본 3종도 설명은 편집 가능).
     """
     created = 0
     for default in DEFAULT_WORK_TYPES:
@@ -78,6 +81,7 @@ def _upsert_default_work_types(session: Session, account_id: int) -> int:
                     kind=default.kind.value,
                     name=default.name,
                     color_token=default.color_token.value,
+                    description=default.description,
                     is_default=True,
                 )
             )

@@ -18,6 +18,7 @@ import type {
   MeetingListResponse,
   MeetingsListQuery,
   NewTaskInput,
+  TaskUpdateInput,
   TranscriptResponse,
   UpdateAgendaInput,
   UpdateLineInput,
@@ -116,7 +117,7 @@ export function deleteAgenda(meetingId: number, agendaId: number): Promise<void>
 // --- 회의 중(SPEC-007) — 줄 · 트랜스크립트 ------------------------------------
 
 /**
- * 사람 줄 하나 — 회의 중(SPEC-007)과 종료 후 편집(SPEC-008 확장 갈래 — `detail` · `taskId`+`payload` · `newTask`)이 한 표면.
+ * 사람 줄 하나 — 회의 중(SPEC-007)과 종료 후 편집(SPEC-008 확장 갈래 — `detail` · 액션·업무 줄의 `payload` · 업무 줄의 `taskId`)이 한 표면.
  * 응답은 **`LineItem`(201)** 이지 상세 전체가 아니다(SPEC-007 §4). 회의 중 사람 줄은 항상 `detail:null · evidence:[] · taskId:null` 이다(M-14).
  */
 export function addLine(meetingId: number, input: AddLineInput): Promise<MeetingLine> {
@@ -124,8 +125,9 @@ export function addLine(meetingId: number, input: AddLineInput): Promise<Meeting
 }
 
 /**
- * **인라인 수정 · 종류 전환**(SPEC-008 U-7) — `ended` 에서 편집 대상 트랙의 줄만. 응답은 **`MeetingDetail` 전체**
- * (`mergedSummary` 가 함께 갱신돼 온다 — 화면이 세지 않는다).
+ * **인라인 수정 · `payload` 저장**(SPEC-008 U-7 · U-9 · U-10) — `ended` 에서 편집 대상 트랙의 줄만.
+ * 응답은 **`MeetingDetail` 전체**(`mergedSummary` 가 함께 갱신돼 온다 — 화면이 세지 않는다).
+ * **`kind` 를 보내지 않는다**(MF-60 — 줄 종류를 바꾸는 표면이 없다).
  */
 export function updateLine(
   meetingId: number,
@@ -152,7 +154,7 @@ export function deleteLine(meetingId: number, lineId: number): Promise<void> {
 // 서버의 `task_service` 하나가 한다. 기한 · 상태 · 메모를 따로 보내면 둘째에서 거부됐을 때 첫째만 남는다(§7 정합 표 #1).
 
 /**
- * **액션 줄 → 업무 생성**(U-10 액션 줄 진입) — `201 MeetingDetail`. 업무는 `POST /api/tasks` 규칙 그대로 만들어지고
+ * **액션 줄 「넣기」 — 업무 생성**(U-10 보기 모드) — `201 MeetingDetail`. 업무는 `POST /api/tasks` 규칙 그대로 만들어지고
  * 같은 트랜잭션에서 그 줄이 업무 줄(`kind='task'` · `taskId`)이 된다. 업무만 생기고 줄이 안 바뀌는 상태가 없다.
  */
 export function createTaskFromLine(meetingId: number, lineId: number, input: NewTaskInput): Promise<MeetingDetail> {
@@ -160,12 +162,12 @@ export function createTaskFromLine(meetingId: number, lineId: number, input: New
 }
 
 /**
- * **「업무 갱신」**(U-6) — `PATCH …/lines/{id}/task`, **본문 없음**. 줄에 저장된 `payload` 가 요청이다.
- * 서버가 ① 상태(현재와 다를 때만) → ② 기한 → ③ 메모 → ④ `payload=null` 을 한 트랜잭션으로 · 거부되면 전부 롤백.
- * **한 번에 요청은 이것 하나다** — 업무 API 를 나눠 부르지 않는다(WORK-005 L294 검증 항목).
+ * **업무 줄 「넣기」 — 업무 갱신**(U-6 · U-9 보기 모드) — `PATCH …/lines/{id}/task`.
+ * 본문은 **드로어가 만든다**(`taskId` + 채워진 변경분만) — 줄에 저장된 `payload` 를 서버가 다시 읽지 않는다.
+ * 서버가 ①~⑧ 을 한 트랜잭션으로 돌리고 거부되면 전부 롤백이다. **한 번에 요청은 이것 하나**다.
  */
-export function applyLineTaskChange(meetingId: number, lineId: number): Promise<MeetingDetail> {
-  return apiFetch<MeetingDetail>(`/api/meetings/${meetingId}/lines/${lineId}/task`, { method: "PATCH" });
+export function applyLineTaskUpdate(meetingId: number, lineId: number, input: TaskUpdateInput): Promise<MeetingDetail> {
+  return apiFetch<MeetingDetail>(`/api/meetings/${meetingId}/lines/${lineId}/task`, { method: "PATCH", body: input });
 }
 
 /** 확정 발화 블록 전량 — 진입 시 1회. 이후는 WS `transcript.final` 로 append 한다(WP 캐시 키 행). */

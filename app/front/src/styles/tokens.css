@@ -228,6 +228,8 @@
      폭·스크림을 여기서 한 번만 정한다. 화면이 각자 정하지 않는다(§6). */
   --tm-drawer-width: 840px;
   --tm-modal-width: 600px;
+  /* 확인 모달 420 — 「제목 + 한 문장」 하나뿐인 결정(SPEC-008 U-7 · MF-63 · FE §6) */
+  --tm-modal-light-width: 420px;
   --tm-popover-min-width: 200px;
   --tm-popover-max-width: 400px;
   /* 첨부 360 · 연관업무 382 — 둘 다 팝오버 200–400 범위 안이다(SPEC-003 U-7·U-8) */

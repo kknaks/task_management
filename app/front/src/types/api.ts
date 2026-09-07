@@ -63,6 +63,11 @@ export interface WorkType {
   kind: WorkTypeKind;
   name: string;
   colorToken: ColorToken;
+  /**
+   * **AI 가 유형을 고르는 근거**(MF-21 · SPEC-002 U-3 · A-12) — 사람이 적고 MCP `list_work_types()` 가 그대로 읽는다.
+   * 선택이라 비어 있을 수 있다(화면은 「설명 없음」).
+   */
+  description: string | null;
   /** 기본 유형 3종. **이름·종류 고정, 삭제 불가, 색만 편집**(A-4) */
   isDefault: boolean;
 }

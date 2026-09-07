@@ -69,6 +69,7 @@ async def create_work_type(
         kind=command.kind,
         name=command.name,
         color_token=command.color_token,
+        description=command.description,
     )
 
 
@@ -81,8 +82,9 @@ async def update_work_type(
 ) -> WorkTypeDTO:
     """보낸 필드만 바꾼다(§4).
 
-    기본 유형은 **이름을 바꾸려 하면 거부**하고 **색 변경은 통과**시킨다(A-4).
+    기본 유형은 **이름을 바꾸려 하면 거부**하고 **색 · 설명 변경은 통과**시킨다(A-4 · A-12 — 잠긴 것은 이름과 종류뿐).
     `kind` 는 애초에 이 명령에 없다 — 종류는 생성 시에만 정해진다(§5).
+    `description` 은 **`None` 으로 지울 수 있다** — 비어 있어도 유형은 유효하다(선택 입력).
     """
     current = await _require_active(
         session, account_id=account_id, work_type_id=work_type_id
@@ -99,7 +101,7 @@ async def update_work_type(
             session, account_id=account_id, name=command.name, exclude_id=work_type_id
         )
 
-    if command.name is UNSET and command.color_token is UNSET:
+    if command.name is UNSET and command.color_token is UNSET and command.description is UNSET:
         # 바꿀 것이 없다. 빈 변경을 에러로 만들지 않는다 — Case Matrix 에 그런 실패가 없다.
         return current
 
@@ -107,8 +109,9 @@ async def update_work_type(
         session,
         account_id=account_id,
         work_type_id=work_type_id,
-        name=None if command.name is UNSET else command.name,
-        color_token=None if command.color_token is UNSET else command.color_token,
+        name=command.name,
+        color_token=command.color_token,
+        description=command.description,
     )
 
 

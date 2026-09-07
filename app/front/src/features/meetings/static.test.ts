@@ -144,7 +144,9 @@ describe("⑧ 공용 부품 — 상태·라우트 무의존 · 실패 state 0건
  * 배럴(`@/features/<b>`)로 가져와도 이 목록 밖의 이름이면 위반이다.
  */
 const CROSS_AREA_ALLOWED: Record<string, ReadonlySet<string>> = {
-  tasks: new Set(["openTaskDetailDrawer"]),
+  // `openTaskDetailDrawer` — 「결과 입력」 유도(WORK-008) · `RelationPopover` — SPEC-008 U-9 가 「업무 화면의 부품을 **그대로 재사용**」
+  // 하라고 못박은 자리(WORK-013). 둘 다 **두 벌을 만들지 않으려는** 예외이고 배럴로만 나간다.
+  tasks: new Set(["openTaskDetailDrawer", "RelationPopover"]),
 };
 
 /**
@@ -324,7 +326,6 @@ const WORK_008_FILES = [
   "components/MeetingStatusChip.tsx",
   "components/AddLineDrawer.tsx",
   "components/LineDeleteModal.tsx",
-  "components/LineKindSelector.tsx",
   "components/AgendaTitleInline.tsx",
   "components/InlineFieldInput.tsx",
   "openMeetingDrawers.tsx",
@@ -333,6 +334,7 @@ const WORK_008_FILES = [
   "components/LineTaskButton.tsx",
   "components/LinkTaskDrawer.tsx",
   "components/CreateTaskFromLineDrawer.tsx",
+  "components/PayloadDrawerParts.tsx",
   "components/TaskDateField.tsx",
 ];
 
@@ -459,10 +461,13 @@ describe("⑳ 업무 연동 — 업무 API 직접 호출 0건 · 판정 코드 0
     }
   });
 
-  it("`changeTaskStatus(` 를 부르는 곳이 `useTaskStatus.ts` 하나다(WORK-005 검사 재실행) · `applyLineTaskChange(` 를 부르는 곳이 `useMeetingTaskLink.tsx` 하나다", () => {
+  it("`changeTaskStatus(` 를 부르는 곳이 `useTaskStatus.ts` 하나다(WORK-005 검사 재실행) · 업무를 바꾸는 회의록 요청 둘의 호출자가 `useMeetingTaskLink.tsx` 하나다", () => {
     const status = ALL_SOURCES.filter((file) => !file.endsWith("features/tasks/api.ts") && /changeTaskStatus\(/.test(read(file))).map(rel);
     expect(status).toEqual(["features/tasks/hooks/useTaskStatus.ts"]);
-    const apply = ALL_SOURCES.filter((file) => !file.endsWith("features/meetings/api.ts") && /applyLineTaskChange\(/.test(read(file))).map(rel);
+    // 「넣기」 둘 — `POST …/lines/{id}/task` · `PATCH …/lines/{id}/task`. **`payload` 저장은 여기 없다**(줄을 고치는 것이라 `useMeetingEdit` 이 한다)
+    const apply = ALL_SOURCES.filter(
+      (file) => !file.endsWith("features/meetings/api.ts") && /applyLineTaskUpdate\(|createTaskFromLine\(/.test(read(file)),
+    ).map(rel);
     expect(apply).toEqual(["features/meetings/hooks/useMeetingTaskLink.tsx"]);
   });
 
@@ -542,6 +547,63 @@ describe("㉒ WORK-012 — 옛 통합 어휘 0건 · 경로 하나 · 수치", (
       .filter((file) => /녹음을 다시 받아쓰고 있습니다|회의록을 정리하고 있습니다|회의록 생성 실패/.test(read(file)))
       .map(rel);
     expect(owners).toEqual(["features/meetings/components/MeetingStatusBar.tsx"]);
+  });
+});
+
+describe("㉓ WORK-013 — payload 드로어 둘 · 종류 셀렉터 폐기 · 모달 하나", () => {
+  it("**AI 줄 / 사람 줄로 드로어를 가르는 코드가 0건**이다 — 갈래는 `payload` 가 차 있나뿐이다(MF-65)", () => {
+    const offenders = meetingSources
+      .filter((file) => /isAiLine|line\.track\s*===|track === ["']ai["']/.test(stripComments(read(file))))
+      .map(rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it("줄 종류를 바꾸는 표면이 0건이다 — `LineKindSelector` · `onChangeKind` · `kind:` PATCH 본문(MF-60)", () => {
+    expect(existsSync(path.join(MEETINGS, "components/LineKindSelector.tsx"))).toBe(false);
+    const offenders = meetingSources
+      .filter((file) => /LineKindSelector|onChangeKind|changeLineKind/.test(stripComments(read(file))))
+      .map(rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it("옛 이름이 0건이다 — `pendingChange` · `applyPendingChange` · `newTask` · `applyLineTaskChange`(주석 제외)", () => {
+    const offenders = meetingSources
+      .filter((file) => /pendingChange|applyPendingChange|newTask|applyLineTaskChange/.test(stripComments(read(file))))
+      .map(rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it("**업무 탭 드로어를 회의록이 열지 않는다**(MF-67) — `TaskCreateDrawer` · `TaskDetailDrawer` · `openTaskCreateDrawer` import 0건", () => {
+    // 「보지 않는다」가 아니라 **열지 않는다** — 주석의 규격 참조는 그대로 두고 import · 호출만 막는다
+    const offenders = meetingSources
+      .filter((file) => /from ["'][^"']*Task(Create|Detail)Drawer["']|openTaskCreateDrawer\(|<Task(Create|Detail)Drawer\b/.test(read(file)))
+      .map(rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it("`Dialog` 를 직접 import 하는 자리가 `ConfirmModal.tsx` **하나**다(FE §6-1 · 모달 크기 둘이 같은 프레임을 쓴다)", () => {
+    const sources = walk(SRC).filter((file) => /\.tsx?$/.test(file) && !/\.test\.tsx?$/.test(file) && !file.includes("/test/"));
+    const offenders = sources
+      .filter((file) => !file.endsWith("components/ui/dialog.tsx") && /from ["']@\/components\/ui\/dialog["']/.test(read(file)))
+      .map(rel);
+    expect(offenders).toEqual(["components/shared/ConfirmModal.tsx"]);
+  });
+
+  it("**푸터 버튼은 모드별 하나**다 — 두 드로어가 `SUBMIT_LABEL[submitMode]` 하나만 그린다(MF-66)", () => {
+    for (const name of ["components/CreateTaskFromLineDrawer.tsx", "components/LinkTaskDrawer.tsx"]) {
+      const code = read(path.join(MEETINGS, name));
+      // 제출 버튼의 문구가 **한 자리**에서만 온다 — 「저장」·「넣기」를 손으로 적은 버튼이 없다
+      expect(code.match(/SUBMIT_LABEL\[submitMode\]/g) ?? [], name).toHaveLength(1);
+      expect(stripComments(code), name).not.toMatch(/>\s*(저장|넣기)\s*</);
+    }
+  });
+
+  it("`payload` 를 저장하는 자리가 `useMeetingEdit` 하나다 — 「저장」은 업무 API 를 지나지 않는다", () => {
+    const owners = meetingSources.filter((file) => /savePayload\b/.test(stripComments(read(file)))).map(rel).sort();
+    expect(owners).toEqual([
+      "features/meetings/components/MeetingDetailBody.tsx",
+      "features/meetings/hooks/useMeetingEdit.tsx",
+    ]);
   });
 });
 

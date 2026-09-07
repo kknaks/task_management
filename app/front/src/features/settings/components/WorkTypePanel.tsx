@@ -39,7 +39,10 @@ import type { WorkType, WorkTypeKind } from "@/types/api";
 const KIND_LABEL: Record<WorkTypeKind, string> = { meeting: "미팅", task: "업무" };
 
 /** U-7 문구에 들어가는 필드 이름. 토스트와 행 아래 캡션이 **같은 이름**을 쓴다. */
-const FIELD_LABEL = { name: "유형 이름", color: "유형 색" } as const;
+const FIELD_LABEL = { name: "유형 이름", color: "유형 색", description: "유형 설명" } as const;
+
+/** 설명이 비었을 때 목록 행에 보이는 자리(MF-21 — 비어 있어도 편집 자리는 남는다). */
+export const NO_DESCRIPTION_PLACEHOLDER = "설명 없음";
 
 export function WorkTypePanel() {
   const { data: workTypes = [], isPending, isError, refetch } = useWorkTypesQuery();
@@ -52,6 +55,8 @@ export function WorkTypePanel() {
   const [draftKind, setDraftKind] = useState<WorkTypeKind | "">("");
   const [draftName, setDraftName] = useState("");
   const [draftColor, setDraftColor] = useState<ColorToken>(DEFAULT_COLOR_TOKEN);
+  /** 설명은 **선택**이다 — 비어도 「추가」가 활성이다(U-3). */
+  const [draftDescription, setDraftDescription] = useState("");
   const [addError, setAddError] = useState<string | null>(null);
   /** 행별 인라인 사유 — 잠금·중복처럼 **그 항목 옆에 붙는** 것(§3-5). */
   const [rowErrors, setRowErrors] = useState<Record<number, string | null>>({});
@@ -66,6 +71,7 @@ export function WorkTypePanel() {
     setDraftKind("");
     setDraftName("");
     setDraftColor(DEFAULT_COLOR_TOKEN);
+    setDraftDescription("");
     setAddError(null);
   };
 
@@ -79,12 +85,19 @@ export function WorkTypePanel() {
     }
     setAddError(null);
     void create
-      .mutateAsync({ kind: draftKind, name: draftName.trim(), colorToken: draftColor })
+      .mutateAsync({
+        kind: draftKind,
+        name: draftName.trim(),
+        colorToken: draftColor,
+        // 비었으면 **보내지 않는다** — 서버가 `null` 로 만든다(A-12)
+        ...(draftDescription.trim().length > 0 ? { description: draftDescription.trim() } : {}),
+      })
       .then(() => {
         // 추가되면 **행은 비워진 채로 열려 있다** — 연속 등록을 끊지 않는다(U-2 기대 결과).
         setDraftName("");
         setDraftKind("");
         setDraftColor(DEFAULT_COLOR_TOKEN);
+        setDraftDescription("");
       })
       .catch((error: unknown) => {
         const inline = inlineErrorMessage(error, "workType");
@@ -106,7 +119,7 @@ export function WorkTypePanel() {
   const save = async (
     workType: WorkType,
     field: keyof typeof FIELD_LABEL,
-    input: { name: string } | { colorToken: ColorToken },
+    input: { name: string } | { colorToken: ColorToken } | { description: string | null },
   ): Promise<void> => {
     setRowErrors((prev) => ({ ...prev, [workType.id]: null }));
     try {
@@ -130,7 +143,7 @@ export function WorkTypePanel() {
       markFailed(workType.id, field, {
         retry: () => save(workType, field, input),
         // **값 유지**(U-7) — 팝오버 컨트롤이 옛 값으로 되돌아 보이지 않게 넣으려던 값을 든다.
-        attempted: "colorToken" in input ? input.colorToken : input.name,
+        attempted: "colorToken" in input ? input.colorToken : "description" in input ? (input.description ?? "") : input.name,
       });
     }
   };
@@ -174,6 +187,10 @@ export function WorkTypePanel() {
           namePlaceholder="유형 이름 (예: 외부 미팅)"
           name={draftName}
           onNameChange={setDraftName}
+          description={draftDescription}
+          descriptionLabel="유형 설명"
+          descriptionPlaceholder="설명 (선택 · AI 가 유형을 고를 때 봅니다)"
+          onDescriptionChange={setDraftDescription}
           onSubmit={submitAdd}
           onCancel={closeAddRow}
           canSubmit={canSubmit}
@@ -229,6 +246,17 @@ export function WorkTypePanel() {
                       saveFailed={hasFailed(workType.id, "name")}
                       errorMessage={rowErrors[workType.id] ?? null}
                       onSave={(next) => save(workType, "name", { name: next })}
+                    />
+                  </div>
+
+                  {/* 설명 — **기본 유형 3종도 편집된다**(이름·종류만 읽기 전용 · A-4). 비면 「설명 없음」 */}
+                  <div className="min-w-0 flex-1">
+                    <InlineEditText
+                      ariaLabel={`${workType.name} 설명`}
+                      value={workType.description ?? ""}
+                      placeholder={NO_DESCRIPTION_PLACEHOLDER}
+                      saveFailed={hasFailed(workType.id, "description")}
+                      onSave={(next) => save(workType, "description", { description: next.trim().length > 0 ? next.trim() : null })}
                     />
                   </div>
 

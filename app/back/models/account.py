@@ -17,6 +17,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     String,
+    Text,
     UniqueConstraint,
     text,
 )
@@ -151,6 +152,9 @@ class WorkType(Base, TimestampMixin):
     kind: Mapped[str] = mapped_column(String(20), nullable=False)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     color_token: Mapped[str] = mapped_column(String(30), nullable=False)
+    # A-12 — 「어떤 업무인지」. 회의록 AI 의 `list_work_types()` 가 유형을 고르는 근거다(MF-21).
+    # 길이 상한(200)은 **스키마 층**이 본다 — 시드 문구가 늘어날 때 컬럼을 고치지 않으려고 `text` 로 둔다
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_default: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("false")
     )

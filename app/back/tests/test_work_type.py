@@ -29,6 +29,7 @@ async def _seed_defaults(session: AsyncSession, account_id: int) -> list[WorkTyp
             kind=default.kind.value,
             name=default.name,
             color_token=default.color_token.value,
+            description=default.description,
             is_default=True,
         )
         for default in DEFAULT_WORK_TYPES
@@ -368,6 +369,64 @@ async def test_default_type_cannot_be_deleted(
 
     listed = (await client.get(BASE, headers=owner.headers)).json()["items"]
     assert len(listed) == len(DEFAULT_WORK_TYPES)
+
+
+async def test_default_type_description_can_be_changed_and_cleared(
+    client: AsyncClient, db_session: AsyncSession, owner: Owner
+) -> None:
+    """**기본 3종도 설명은 바뀐다**(A-4 · A-12 — 잠긴 것은 이름과 종류뿐). `null` 로 지울 수도 있다."""
+    defaults = await _seed_defaults(db_session, owner.id)
+    meeting_type, personal = defaults[0], defaults[1]
+    # 시드 문구 — 미팅·회의는 빈 값이다(DEC-003 OQ-11)
+    listed = (await client.get(BASE, headers=owner.headers)).json()["items"]
+    assert [item["description"] for item in listed] == [
+        None, "혼자 처리하는 실무. 개발·수정·확인 등", "산출물이 문서인 것. 기획서·보고서·회의록 정리"
+    ]
+
+    written = await client.patch(
+        f"{BASE}/{meeting_type.id}", json={"description": "우리 팀 정기 미팅"}, headers=owner.headers
+    )
+    assert written.status_code == 200, written.text
+    assert (written.json()["description"], written.json()["name"]) == ("우리 팀 정기 미팅", DEFAULT_WORK_TYPES[0].name)
+
+    cleared = await client.patch(f"{BASE}/{personal.id}", json={"description": None}, headers=owner.headers)
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["description"] is None
+
+    # 이름·종류는 여전히 잠겨 있다
+    locked = await client.patch(f"{BASE}/{meeting_type.id}", json={"name": "다른 이름"}, headers=owner.headers)
+    assert (locked.status_code, locked.json()["code"]) == (409, "work_type_locked")
+
+
+async def test_description_is_optional_and_bounded_at_two_hundred_characters(
+    client: AsyncClient, owner: Owner
+) -> None:
+    """`description` — 선택 · 0~200자 · 줄바꿈 불가 · `null` 허용(SPEC-002 §4 · A-12).
+
+    회의록 AI 의 `list_work_types()` 가 이 값을 그대로 받는다(MF-21) — 그래서 목록 응답에 늘 실린다.
+    """
+    created = await _create(client, owner, kind="task", name="설명 없는 유형")
+    assert created["description"] is None  # 안 보내면 빈 값이다
+
+    with_description = await client.post(
+        BASE,
+        json={"kind": "task", "name": "설명 있는 유형", "colorToken": "sky", "description": "  외부에 나가는 산출물  "},
+        headers=owner.headers,
+    )
+    assert with_description.status_code == 201, with_description.text
+    assert with_description.json()["description"] == "외부에 나가는 산출물"  # 앞뒤 공백은 다듬는다
+
+    for bad in ("가" * 201, "두 줄\n짜리"):
+        response = await client.patch(
+            f"{BASE}/{created['id']}", json={"description": bad}, headers=owner.headers
+        )
+        assert (response.status_code, response.json()["code"], response.json()["field"]) == (422, "validation_error", "description"), bad
+
+    ok = await client.patch(f"{BASE}/{created['id']}", json={"description": "가" * 200}, headers=owner.headers)
+    assert (ok.status_code, len(ok.json()["description"])) == (200, 200)
+    # 빈 문자열도 값이다 — 화면이 「설명 없음」으로 그린다(지우는 것은 `null`)
+    empty = await client.patch(f"{BASE}/{created['id']}", json={"description": ""}, headers=owner.headers)
+    assert (empty.status_code, empty.json()["description"]) == (200, "")
 
 
 async def test_default_type_color_can_be_changed(

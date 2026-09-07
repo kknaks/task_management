@@ -32,7 +32,7 @@ export const HUMAN: MeetingAgenda[] = [
 export const AI: MeetingAgenda[] = [
   { id: 40, track: "ai", title: "개정 대상 섹션 확정", orderIndex: 0, state: null, sourceAgendaId: 301, lines: [
     line({ id: 210, agendaId: 40, track: "ai", kind: "decision", content: "AI: 도입 사례는 3건만", detail: "도입 사례 6건 중 3건이 서로 유사해 …", evidence: [{ fromMs: 574_000, toMs: 576_000 }], createdAt: "2026-08-27T00:41:02Z" }),
-    line({ id: 214, agendaId: 40, track: "ai", kind: "task", content: "제품 소개서 내용 업데이트", taskId: 101, task: TASK_SUMMARY, payload: { dueDate: "2026-09-02", status: "done", note: "검수 일정 변경" }, createdAt: "2026-08-27T00:41:03Z" }),
+    line({ id: 214, agendaId: 40, track: "ai", kind: "task", content: "제품 소개서 내용 업데이트", taskId: 101, task: TASK_SUMMARY, payload: { dueDate: "2026-09-02", status: "in_progress", note: "검수 일정 변경" }, createdAt: "2026-08-27T00:41:03Z" }),
   ] },
   { id: 41, track: "ai", title: "경쟁사 요금제 비교", orderIndex: 5, state: null, sourceAgendaId: null, lines: [
     line({ id: 220, agendaId: 41, track: "ai", kind: "discussion", content: "AI: 경쟁사 요금제를 비교했다", evidence: [{ fromMs: 900_000, toMs: 905_000 }], createdAt: "2026-08-27T00:50:00Z" }),
@@ -48,7 +48,7 @@ export const MERGED: MeetingAgenda[] = [
   { id: 71, track: "merged", title: "개정 대상 섹션 확정", orderIndex: 0, state: "done", sourceAgendaId: 301, lines: [
     line({ id: 300, agendaId: 71, track: "merged", kind: "discussion", content: "제품 개요 · 기능은 유지, 도입 사례 분량이 과다", orderIndex: 0 }),
     line({ id: 301, agendaId: 71, track: "merged", kind: "decision", content: "도입 사례는 3건만 유지하고 나머지는 별도 페이지로 분리한다.", orderIndex: 1, detail: "도입 사례 6건 중 3건이 서로 유사해 …", evidence: [{ fromMs: 574_000, toMs: 576_000 }], createdAt: "2026-08-27T00:36:00Z" }),
-    line({ id: 305, agendaId: 71, track: "merged", kind: "task", content: "제품 소개서 내용 업데이트", orderIndex: 2, taskId: 101, task: TASK_SUMMARY, payload: { dueDate: "2026-09-02", status: "done", note: "검수 일정 변경" }, createdAt: "2026-08-27T00:41:03Z" }),
+    line({ id: 305, agendaId: 71, track: "merged", kind: "task", content: "제품 소개서 내용 업데이트", orderIndex: 2, taskId: 101, task: TASK_SUMMARY, payload: { dueDate: "2026-09-02", status: "in_progress", note: "검수 일정 변경" }, createdAt: "2026-08-27T00:41:03Z" }),
   ] },
   { id: 72, track: "merged", title: "디자인 반영 일정과 검수 방식", orderIndex: 1, state: "done", sourceAgendaId: 302, lines: [
     line({ id: 310, agendaId: 72, track: "merged", kind: "action", content: "소개서 개정본 검수 일정 잡기", orderIndex: 0 }),
