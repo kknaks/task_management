@@ -165,13 +165,17 @@ async def close_for_end(meeting_id: int) -> bool:
 
 
 async def push_ai_batch(
-    meeting_id: int, *, seq: int, agendas: list[MeetingAgendaDTO], lines: list[MeetingLineDTO]
+    meeting_id: int, *, seq: int, agendas: list[MeetingAgendaDTO]
 ) -> bool:
-    """배치 커밋 직후 AI 증분 push(M-6-a · BE-11). 세션이 없으면(끊김) 건너뛴다 — 다음 `ready.latestBatchSeq` 로 따라잡는다."""
+    """배치 커밋 직후 **AI 트랙 전체** push(M-6-a · BE-11 · MF-53).
+
+    `agendas` 는 줄이 중첩된 트리다 — 증분이 아니라 전량이라 화면이 통째로 갈아끼운다.
+    세션이 없으면(끊김) 건너뛴다 — 다음 `ready.latestBatchSeq` 로 따라잡는다.
+    """
     stream = _sessions.get(meeting_id)
     if stream is None:
         return False
-    stream.enqueue(AiBatchFrame(seq=seq, agendas=agendas, lines=lines))
+    stream.enqueue(AiBatchFrame(seq=seq, agendas=agendas))
     return True
 
 

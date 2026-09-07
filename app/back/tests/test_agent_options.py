@@ -70,14 +70,14 @@ def test_resume_keeps_the_same_config() -> None:
     """`config` 는 resume 에서도 살아남는다(`CODEX_RESUME_UNSUPPORTED_OPTIONS` 에 없다)."""
     options, provider_options = build_codex_options(
         session_id="codex-session-warm",
-        output_schema=BACK_DIR / "ai_schemas" / "meeting_batch.json",
+        output_schema=BACK_DIR / "ai_schemas" / "meeting_notes.json",
         timeout_sec=120,
         meeting_token=TOKEN,
     )
 
     assert provider_options["config"] == expected_config()
     assert options["resume"] == {"mode": "session", "session_id": "codex-session-warm"}
-    assert provider_options["output_schema"].endswith("meeting_batch.json")
+    assert provider_options["output_schema"].endswith("meeting_notes.json")
 
 
 def test_resume_does_not_carry_sandbox() -> None:

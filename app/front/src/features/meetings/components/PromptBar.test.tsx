@@ -5,9 +5,11 @@
  * - 그냥 치고 `Enter` → 논의 · 종류를 고르면 그 종류 · `Shift+Enter` 무시 · 실패면 입력 유지
  * - 「새 안건」 → 제목 입력 → `onCreateAgenda` · 이동 행 → `onActivateAgenda`
  * - 활성 안건 없음 → 칩 「안건 선택」 + 전송 비활성 + 팝오버에 「새 안건」만
+ * - **슬래시 명령어 5**(WORK-011 · U-3) — `/결` 좁힘 · `/결정 ` 칩 · 백스페이스 복귀 · 그 밖의 `/…` 는 본문 ·
+ *   팝오버와 **DOM 상 같은 상태** · 「안건 이동」은 명령어에 없다 · 안건 없으면 `/새안건` 만 칩
  */
 
-import { render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -135,5 +137,118 @@ describe("활성 안건 없음", () => {
     await userEvent.type(input, "/");
     const list = await screen.findByRole("listbox");
     expect(within(list).getAllByRole("option").map((o) => o.textContent)).toEqual(["안새 안건다음 주제로"]);
+  });
+});
+
+describe("슬래시 명령어 5개 · 좁혀지는 팝오버", () => {
+  it("`/결` 까지 치면 팝오버가 「결정」만 남는다 · `/새` 는 「새 안건」만 · 이동 행은 좁히는 순간 빠진다", async () => {
+    setup();
+    const input = screen.getByRole("combobox", { name: "줄 입력" });
+    await userEvent.type(input, "/결");
+    const list = await screen.findByRole("listbox", { name: "종류 선택" });
+    expect(within(list).getAllByRole("option").map((option) => option.textContent)).toEqual(["결결정"]);
+
+    await userEvent.clear(input);
+    await userEvent.type(input, "/새");
+    expect(within(await screen.findByRole("listbox")).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "안새 안건다음 주제로",
+    ]);
+  });
+
+  it("`/결정 `(스페이스) → 명령어 문자열이 사라지고 **[결정] 칩** · `Enter` 로 `kind:'decision'` · 백스페이스로 `/결정` 텍스트 복귀", async () => {
+    const props = setup();
+    const input = screen.getByRole("combobox", { name: "줄 입력" });
+    await userEvent.type(input, "/결정 ");
+    expect(screen.getByText("결정")).toBeInTheDocument();
+    expect(input).toHaveValue("");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+
+    await userEvent.type(input, "3건만 유지한다{Enter}");
+    expect(props.onSendLine).toHaveBeenCalledWith("decision", "3건만 유지한다");
+    // 본문에 명령어 문자열이 실리지 않는다
+    expect(props.onSendLine).not.toHaveBeenCalledWith("decision", expect.stringContaining("/결정"));
+
+    // 칩이 붙은 빈 입력에서 백스페이스 → 명령어 텍스트로 되돌아간다
+    await userEvent.type(input, "/액션 ");
+    expect(screen.getByText("액션")).toBeInTheDocument();
+    await userEvent.type(input, "{Backspace}");
+    expect(input).toHaveValue("/액션");
+    expect(screen.queryByText("액션")).not.toBeInTheDocument();
+  });
+
+  it("그 밖의 `/…` 는 **그대로 본문**이다 — `/api 경로를 바꾸자` · `/ㅁㄴㅇㄹ 어쩌고` · `/논의 /api` → [논의] + 본문 `/api`", async () => {
+    const props = setup();
+    const input = screen.getByRole("combobox", { name: "줄 입력" });
+    await userEvent.type(input, "/api 경로를 바꾸자{Enter}");
+    expect(props.onSendLine).toHaveBeenLastCalledWith("discussion", "/api 경로를 바꾸자");
+
+    await userEvent.type(input, "/ㅁㄴㅇㄹ 어쩌고{Enter}");
+    expect(props.onSendLine).toHaveBeenLastCalledWith("discussion", "/ㅁㄴㅇㄹ 어쩌고");
+
+    await userEvent.type(input, "/논의 /api{Enter}");
+    expect(props.onSendLine).toHaveBeenLastCalledWith("discussion", "/api");
+    expect(props.onCreateAgenda).not.toHaveBeenCalled();
+  });
+
+  it("**「안건 이동」은 슬래시로 하지 않는다** — `/안건 ` · `/이동 ` 은 본문이고 `onActivateAgenda` 가 0건이다", async () => {
+    const props = setup();
+    const input = screen.getByRole("combobox", { name: "줄 입력" });
+    await userEvent.type(input, "/안건 2로{Enter}");
+    expect(props.onActivateAgenda).not.toHaveBeenCalled();
+    expect(props.onSendLine).toHaveBeenLastCalledWith("discussion", "/안건 2로");
+
+    await userEvent.type(input, "/이동 {Enter}");
+    expect(props.onActivateAgenda).not.toHaveBeenCalled();
+    expect(props.onSendLine).toHaveBeenLastCalledWith("discussion", "/이동");
+  });
+
+  it("`/새안건 <제목>` `Enter` → `onCreateAgenda` · 줄 전송은 0건", async () => {
+    const props = setup();
+    const input = screen.getByRole("combobox", { name: "줄 입력" });
+    await userEvent.type(input, "/새안건 ");
+    expect(screen.getByText("새 안건")).toBeInTheDocument();
+    const title = screen.getByRole("combobox", { name: "안건 제목" });
+    expect(title).toHaveAttribute("placeholder", "안건 제목");
+    await userEvent.type(title, "가격 표기 처리{Enter}");
+    expect(props.onCreateAgenda).toHaveBeenCalledWith("가격 표기 처리");
+    expect(props.onSendLine).not.toHaveBeenCalled();
+  });
+
+  it("팝오버로 고른 상태와 명령어로 고른 상태가 **DOM 상 같다** — 같은 칩 · 같은 요청 본문", async () => {
+    // React `useId` 와 프롬프트 바 현재 시각만 지우고 비교한다 — 나머지가 한 글자라도 다르면 실패한다
+    const normalize = (html: string) => html.replace(/_r_[0-9a-z]+_|:r[0-9a-z]+:/g, "id").replace(/\d\d:\d\d/g, "HH:MM");
+
+    const first = setup();
+    const input = screen.getByRole("combobox", { name: "줄 입력" });
+    await userEvent.type(input, "/");
+    await userEvent.click(await screen.findByRole("option", { name: "결정" }));
+    await userEvent.type(input, "3건만 유지한다");
+    const viaPopover = normalize(document.body.innerHTML);
+    await userEvent.type(input, "{Enter}");
+    expect(first.onSendLine).toHaveBeenCalledWith("decision", "3건만 유지한다");
+    cleanup();
+
+    const second = setup();
+    const commandInput = screen.getByRole("combobox", { name: "줄 입력" });
+    await userEvent.type(commandInput, "/결정 3건만 유지한다");
+    expect(normalize(document.body.innerHTML)).toBe(viaPopover);
+    await userEvent.type(commandInput, "{Enter}");
+    expect(second.onSendLine).toHaveBeenCalledWith("decision", "3건만 유지한다");
+  });
+
+  it("**안건이 없으면** `/새안건` 만 칩이 되고 나머지 넷은 그대로 텍스트다", async () => {
+    const props = setup({ agendas: [], activeAgendaId: null });
+    const input = screen.getByRole("combobox", { name: "줄 입력" });
+    await userEvent.type(input, "/논의 메모");
+    expect(input).toHaveValue("/논의 메모");
+    expect(screen.queryByText("논의")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "전송" })).toBeDisabled();
+
+    await userEvent.clear(input);
+    await userEvent.type(input, "/새안건 ");
+    expect(screen.getByText("새 안건")).toBeInTheDocument();
+    await userEvent.type(screen.getByRole("combobox", { name: "안건 제목" }), "첫 안건{Enter}");
+    expect(props.onCreateAgenda).toHaveBeenCalledWith("첫 안건");
+    expect(props.onSendLine).not.toHaveBeenCalled();
   });
 });

@@ -79,11 +79,14 @@ class TranscriptFinalFrame:
 
 @dataclass(frozen=True)
 class AiBatchFrame:
-    """그 회차에 **새로 생긴** AI 안건·줄만. 커밋 직후(BE-11)."""
+    """**AI 트랙 전체**. 커밋 직후(BE-11 · M-6-a).
+
+    증분이 아니라 전량이다(MF-53) — 매 배치가 트랙을 갈아끼우므로 화면은 통째로 교체한다.
+    `agendas` 는 **줄이 안건 안에 중첩된 트리**이고 상세 응답 `agendas.ai` 와 같은 모양이다.
+    """
 
     seq: int
     agendas: list[MeetingAgendaDTO]
-    lines: list[MeetingLineDTO]
 
 
 @dataclass(frozen=True)

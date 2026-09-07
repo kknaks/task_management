@@ -50,7 +50,11 @@ class FakeAgentGateway:
             )
         )
         if not self.responses:
-            return AgentRunResult(session_id=self.session_id, output=json.dumps({"items": []}))
+            # `meeting_notes.json` 의 빈 결과 — 회의 중은 headline·termCorrections 가 언제나 null 이다(WORK-011)
+            return AgentRunResult(
+                session_id=self.session_id,
+                output=json.dumps({"headline": None, "termCorrections": None, "agendas": []}),
+            )
         item = self.responses.pop(0)
         if isinstance(item, BaseException):
             raise item

@@ -344,10 +344,10 @@ async def test_push_ai_batch_reaches_the_live_client_and_skips_when_absent(
     client: AsyncClient, owner: MeetingOwner
 ) -> None:
     detail = await start_meeting(client, owner)
-    assert await meeting_stream_service.push_ai_batch(detail["id"], seq=1, agendas=[], lines=[]) is False
+    assert await meeting_stream_service.push_ai_batch(detail["id"], seq=1, agendas=[]) is False
 
     fake, task = await _open_ready(owner, detail["id"])
-    assert await meeting_stream_service.push_ai_batch(detail["id"], seq=1, agendas=[], lines=[]) is True
+    assert await meeting_stream_service.push_ai_batch(detail["id"], seq=1, agendas=[]) is True
     await fake.wait_for(lambda: bool(fake.frames(AiBatchFrame)))
     assert fake.frames(AiBatchFrame)[0].seq == 1
     await _finish(fake, task)
@@ -370,10 +370,10 @@ async def test_backpressure_drops_only_partials(
         await original_send(frame)
 
     monkeypatch.setattr(fake, "send", slow_send)
-    session.enqueue(AiBatchFrame(seq=1, agendas=[], lines=[]))
+    session.enqueue(AiBatchFrame(seq=1, agendas=[]))
     session.enqueue(TranscriptPartialFrame(segments=[]))
     session.enqueue(TranscriptPartialFrame(segments=[]))
-    session.enqueue(AiBatchFrame(seq=2, agendas=[], lines=[]))
+    session.enqueue(AiBatchFrame(seq=2, agendas=[]))
     blocked.set()
     await fake.wait_for(lambda: len(fake.frames(AiBatchFrame)) == 2)
     assert len(fake.frames(TranscriptPartialFrame)) <= 1

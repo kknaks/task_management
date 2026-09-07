@@ -56,8 +56,8 @@ class Settings(BaseSettings):
     ai_timeout_sec: int = 120
 
     # --- 회의 배치 수치 5종 (DEC-003 §STT L164 확정값 · SPEC-007 §5). 실측 후 env 로 조정한다 — 계약은 불변 ---
-    # ① 미처리 확정 발화가 이 글자 수에 이르면 배치
-    meeting_batch_chars: int = 600
+    # ① 미처리 확정 발화가 이 글자 수에 이르면 배치(MF-49 — 2026-09-07 600 → 1000)
+    meeting_batch_chars: int = 1000
     # ② 안건 전환 시 즉시 배치 — 단 미처리가 이 글자 수 미만이면 생략
     meeting_batch_switch_min_chars: int = 80
     # ③ 미처리 구간이 생긴 뒤 이 시간이 지나면 배치

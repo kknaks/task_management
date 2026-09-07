@@ -1,5 +1,7 @@
 /**
- * `ai.batch` 병합 — **증분 추가만**(M-7) · `latestBatchSeq = max` · 안건 없는 줄은 `orphaned`.
+ * `ai.batch` — **AI 트랙 통째 교체**(SPEC-007 U-4 · MF-53 · WP Phase 4 검증).
+ *
+ * 프레임이 그 회차의 AI 트랙 전량이라 병합·고아 판정이 없다 — 첫 배치의 안건·줄 id 는 남지 않는다.
  */
 
 import { describe, expect, it } from "vitest";
@@ -34,40 +36,46 @@ const agenda = (id: number, sourceAgendaId: number | null, lines: MeetingLine[] 
   lines,
 });
 
-describe("mergeAiBatch", () => {
-  it("새 안건·줄만 붙고 `latestBatchSeq` 가 올라간다 · 기존 줄은 그대로다", () => {
+const HUMAN: MeetingAgenda[] = [
+  { id: 301, track: "human", title: "개정 대상 섹션 확정", orderIndex: 0, state: "active", sourceAgendaId: null, lines: [] },
+];
+
+describe("mergeAiBatch — 통째 교체", () => {
+  it("AI 트랙이 프레임 트리로 갈리고 **첫 배치의 안건·줄 id 가 남지 않는다** · `latestBatchSeq` 가 올라간다", () => {
     const detail = meetingDetail({
       status: "recording",
       latestBatchSeq: 1,
-      agendas: { human: [], ai: [agenda(40, 301, [line(620, 40, "첫 배치")])], merged: [] },
-    });
-    const { detail: next, orphaned } = mergeAiBatch(detail, {
-      seq: 2,
-      agendas: [agenda(41, null)],
-      lines: [line(621, 40, "둘째 배치"), line(622, 41, "새 안건 줄")],
+      agendas: { human: HUMAN, ai: [agenda(40, 301, [line(620, 40, "첫 배치")])], merged: [] },
     });
 
-    expect(orphaned).toBe(0);
+    const next = mergeAiBatch(detail, {
+      seq: 2,
+      agendas: [agenda(50, 301, [line(700, 50, "둘째 배치가 다시 정리한 줄")]), agenda(51, null, [line(701, 51, "새 안건 줄")])],
+    });
+
     expect(next.latestBatchSeq).toBe(2);
-    expect(next.agendas.ai.map((a) => a.id)).toEqual([40, 41]);
-    expect(next.agendas.ai[0].lines.map((l) => l.content)).toEqual(["첫 배치", "둘째 배치"]);
-    expect(next.agendas.ai[1].lines.map((l) => l.content)).toEqual(["새 안건 줄"]);
-    // 원본은 건드리지 않는다.
+    expect(next.agendas.ai.map((a) => a.id)).toEqual([50, 51]);
+    const lineIds = next.agendas.ai.flatMap((a) => a.lines.map((l) => l.id));
+    expect(lineIds).toEqual([700, 701]);
+    expect(lineIds).not.toContain(620);
+    expect(next.agendas.ai[0].lines.map((l) => l.content)).toEqual(["둘째 배치가 다시 정리한 줄"]);
+    // 사람 트랙은 건드리지 않는다(M-6) · 원본도 그대로다
+    expect(next.agendas.human).toBe(detail.agendas.human);
     expect(detail.agendas.ai[0].lines).toHaveLength(1);
   });
 
-  it("같은 id 가 다시 오면 건너뛰고, 낮은 `seq` 는 회차를 내리지 않는다", () => {
-    const detail = meetingDetail({ latestBatchSeq: 3, agendas: { human: [], ai: [agenda(40, 301, [line(620, 40, "a")])], merged: [] } });
-    const { detail: next } = mergeAiBatch(detail, { seq: 2, agendas: [agenda(40, 301)], lines: [line(620, 40, "a (dup)")] });
+  it("빈 트리가 오면 AI 트랙이 비고, 낮은 `seq` 는 회차를 내리지 않는다", () => {
+    const detail = meetingDetail({ latestBatchSeq: 3, agendas: { human: HUMAN, ai: [agenda(40, 301, [line(620, 40, "a")])], merged: [] } });
+    const next = mergeAiBatch(detail, { seq: 2, agendas: [] });
     expect(next.latestBatchSeq).toBe(3);
-    expect(next.agendas.ai).toHaveLength(1);
-    expect(next.agendas.ai[0].lines).toEqual([line(620, 40, "a")]);
+    expect(next.agendas.ai).toEqual([]);
   });
 
-  it("안건이 캐시에도 프레임에도 없는 줄은 `orphaned` 로 센다 — 호출자가 상세를 다시 읽는다", () => {
-    const detail = meetingDetail({ agendas: { human: [], ai: [], merged: [] } });
-    const { orphaned, detail: next } = mergeAiBatch(detail, { seq: 1, agendas: [], lines: [line(1, 99, "x")] });
-    expect(orphaned).toBe(1);
-    expect(next.agendas.ai).toEqual([]);
+  it("프레임의 줄 배열을 복사한다 — 캐시가 프레임 객체를 붙들지 않는다", () => {
+    const detail = meetingDetail({ agendas: { human: HUMAN, ai: [], merged: [] } });
+    const frameAgenda = agenda(50, null, [line(700, 50, "x")]);
+    const next = mergeAiBatch(detail, { seq: 1, agendas: [frameAgenda] });
+    expect(next.agendas.ai[0].lines).not.toBe(frameAgenda.lines);
+    expect(next.agendas.ai[0].lines).toEqual(frameAgenda.lines);
   });
 });

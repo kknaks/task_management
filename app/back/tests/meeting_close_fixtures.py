@@ -113,27 +113,46 @@ async def prepare_recording(
 
 
 def final_output(detail: dict, *, task_id: int | None = None) -> dict:
-    """① 최종 배치 출력 — 첫째 안건 미러(사람 줄 A 와 같은 내용 + AI 전용 내용 + 선택 업무 줄) · 신설 안건 하나."""
+    """① 최종 배치 출력 — 첫째 안건 미러(사람 줄 A 와 같은 내용 + AI 전용 내용 + 선택 업무 줄) · 신설 안건 하나.
+
+    **스키마 한 벌**(WORK-011 · `ai_schemas/meeting_notes.json`) — 줄이 안건 안에 중첩되고
+    `headline` · `termCorrections` · `payload` 는 회의 중과 마찬가지로 `null` 이다(MF-52).
+    """
     first = detail["agendas"]["human"][0]["id"]
-    items = [
-        _batch_item({"humanAgendaId": first}, content="사람 줄 A — 개정 범위는 4개 섹션이다", detail="AI 가 붙인 상세", evidence=[{"fromMs": 1000, "toMs": 5000}]),
-        _batch_item({"humanAgendaId": first}, content="AI 전용 — 후속 미팅은 9/12", kind="action", evidence=[{"fromMs": 6000, "toMs": 9000}]),
-        _batch_item({"newTitle": "AI 신설 안건"}, content="AI 신설 안건의 논의", evidence=[{"fromMs": 10_000, "toMs": 12_000}]),
+    mirrored = [
+        _batch_line(content="사람 줄 A — 개정 범위는 4개 섹션이다", detail="AI 가 붙인 상세", evidence=[{"fromMs": 1000, "toMs": 5000}]),
+        _batch_line(content="AI 전용 — 후속 미팅은 9/12", kind="action", evidence=[{"fromMs": 6000, "toMs": 9000}]),
     ]
     if task_id is not None:
-        items.append(_batch_item({"humanAgendaId": first}, kind="task", content="업무 줄", task_id=task_id, evidence=[]))
-    return {"items": items}
+        mirrored.append(_batch_line(kind="task", content="업무 줄", task_id=task_id, evidence=[]))
+    return notes_output(
+        [
+            {"humanAgendaId": first, "title": "미러 안건", "lines": mirrored},
+            {
+                "humanAgendaId": None,
+                "title": "AI 신설 안건",
+                "lines": [
+                    _batch_line(content="AI 신설 안건의 논의", evidence=[{"fromMs": 10_000, "toMs": 12_000}])
+                ],
+            },
+        ]
+    )
 
 
-def _batch_item(agenda: dict, *, kind: str = "discussion", content: str, detail: str | None = None,
+def notes_output(agendas: list[dict]) -> dict:
+    """`meeting_notes.json` 최상위 — 회의 중은 `headline` · `termCorrections` 가 언제나 `null` 이다."""
+    return {"headline": None, "termCorrections": None, "agendas": agendas}
+
+
+def _batch_line(*, kind: str = "discussion", content: str, detail: str | None = None,
                 evidence: list | None = None, task_id: int | None = None) -> dict:
     return {
-        "agenda": {"humanAgendaId": None, "aiAgendaId": None, "newTitle": None, **agenda},
         "kind": kind,
         "content": content,
         "detail": detail,
         "evidence": [] if evidence is None else evidence,
         "taskId": task_id,
+        "payload": None,
     }
 
 

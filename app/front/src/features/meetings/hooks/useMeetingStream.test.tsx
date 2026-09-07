@@ -9,7 +9,7 @@
  * - `startCapture` 가 던지면(설계 밖 실패) **마이크 실패로 접히지 않는다** — `pause{mic}` 0건 · 예외 전파(검수 F-2)
  * - `4404` 는 상태 바를 갈지 않는다 — 재조회(404) 결과로만 갈린다(검수 W-3)
  * - 사용자 `pause()` → `pause{user}` · 잠정 비움 · `resume()` 은 **같은 소켓에 `resume` 프레임**(새 연결 없음)
- * - 잠정 교체 · 확정 append(트랜스크립트 캐시) · `ai.batch` 즉시 병합(`latestBatchSeq` · `aiVersion`)
+ * - 잠정 교체 · 확정 append(트랜스크립트 캐시) · `ai.batch` 는 AI 트랙 **통째 교체**(`latestBatchSeq` · `aiVersion` · 재조회 0)
  * - 마이크 거부 → `paused/mic` + 토스트, 연결 없음
  * - 이 파일과 `ws.ts` 에 `setInterval`·`setTimeout` 이 없다(정적 검사)
  */
@@ -360,7 +360,7 @@ describe("프레임 분배", () => {
     expect(cached?.speakerCount).toBe(2);
   });
 
-  it("`ai.batch` 는 **즉시** 상세 캐시에 병합된다 — `latestBatchSeq` 증가 · `aiVersion` +1 · 재조회 없음", async () => {
+  it("`ai.batch` 는 **즉시** AI 트랙을 통째 교체한다 — `latestBatchSeq` 증가 · `aiVersion` +1 · 재조회 없음", async () => {
     let reads = 0;
     server.use(
       http.get(`${API_BASE}/api/meetings/${MEETING}`, () => {
@@ -370,12 +370,12 @@ describe("프레임 분배", () => {
     );
     const { result } = mount();
     const ws = await goLive(result);
-    const aiAgenda = { id: 40, track: "ai", title: "개정 대상 섹션 확정", orderIndex: 0, state: null, sourceAgendaId: 301, lines: [] };
     const aiLine = {
       id: 620, track: "ai", agendaId: 40, kind: "decision", content: "3건만 유지", detail: "상세", evidence: [{ fromMs: 1000, toMs: 4000 }],
       orderIndex: 0, taskId: null, pendingChange: null, sourceHumanLineId: null, sourceAiLineId: null, task: null, createdAt: "2026-08-27T00:41:02Z",
     };
-    act(() => ws.serverSend({ type: "ai.batch", seq: 1, agendas: [aiAgenda], lines: [aiLine] }));
+    const aiAgenda = { id: 40, track: "ai", title: "개정 대상 섹션 확정", orderIndex: 0, state: null, sourceAgendaId: 301, lines: [aiLine] };
+    act(() => ws.serverSend({ type: "ai.batch", seq: 1, agendas: [aiAgenda] }));
 
     const detail = client.getQueryData<MeetingDetail>(queryKeys.meetingDetail(MEETING));
     expect(detail?.latestBatchSeq).toBe(1);
@@ -383,8 +383,13 @@ describe("프레임 분배", () => {
     expect(result.current.aiVersion).toBe(1);
     expect(result.current.lastBatchAt).not.toBeNull();
 
-    act(() => ws.serverSend({ type: "ai.batch", seq: 2, agendas: [], lines: [{ ...aiLine, id: 621, content: "둘째" }] }));
-    expect(client.getQueryData<MeetingDetail>(queryKeys.meetingDetail(MEETING))?.latestBatchSeq).toBe(2);
+    // 둘째 배치 = AI 트랙 전량. 첫 배치의 안건·줄 id 가 캐시에 남지 않는다(MF-53).
+    const second = { ...aiAgenda, id: 41, lines: [{ ...aiLine, id: 621, agendaId: 41, content: "둘째" }] };
+    act(() => ws.serverSend({ type: "ai.batch", seq: 2, agendas: [second] }));
+    const replaced = client.getQueryData<MeetingDetail>(queryKeys.meetingDetail(MEETING));
+    expect(replaced?.latestBatchSeq).toBe(2);
+    expect(replaced?.agendas.ai.map((agenda) => agenda.id)).toEqual([41]);
+    expect(replaced?.agendas.ai.flatMap((agenda) => agenda.lines.map((line) => line.id))).toEqual([621]);
     expect(result.current.aiVersion).toBe(2);
     await flush();
     expect(reads).toBe(0);

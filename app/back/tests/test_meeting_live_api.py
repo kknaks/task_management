@@ -12,10 +12,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import MissingEnvError, get_settings
+from core.db import run_after_commit_hooks
 from dto.enums import AgendaState, MeetingTrack
 from models.account import WorkType
 from models.meeting import Meeting, MeetingAgenda, MeetingLine
-from tests.fakes.agent import WARM_SESSION_ID, FakeAgentGateway
+from service import meeting_batch_service, meeting_service
+from tests.fakes.agent import WARM_SESSION_ID
 from tests.meeting_fixtures import (  # noqa: F401
     BASE,
     MeetingOwner,
@@ -29,6 +31,7 @@ from tests.meeting_live_fixtures import (  # noqa: F401
     add_ai_agenda,
     add_block,
     add_task,
+    live_scope,
     schedule_calls,
     start_meeting,
 )
@@ -61,7 +64,7 @@ def test_missing_soniox_key_fails_startup(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def test_batch_numbers_match_dec_003(monkeypatch: pytest.MonkeyPatch) -> None:
-    """수치 5종이 env 로 빠져 있고 기본값이 DEC-003 §STT L164 와 같다. env 로 조정할 수 있다."""
+    """수치 5종이 env 로 빠져 있고 기본값이 DEC-003 §STT L164(배치 글자 수는 MF-49 로 개정) 과 같다."""
     settings = get_settings()
     assert (
         settings.meeting_batch_chars,
@@ -69,7 +72,7 @@ def test_batch_numbers_match_dec_003(monkeypatch: pytest.MonkeyPatch) -> None:
         settings.meeting_batch_max_wait_sec,
         settings.meeting_batch_timeout_sec,
         settings.meeting_batch_sessions_per_meeting,
-    ) == (600, 80, 180, 120, 1)
+    ) == (1000, 80, 180, 120, 1)  # MF-49 — 2026-09-07 600 → 1000
 
     monkeypatch.setenv("MEETING_BATCH_CHARS", "700")
     get_settings.cache_clear()
@@ -83,19 +86,26 @@ def test_batch_numbers_match_dec_003(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 async def test_start_is_a_transition_only_and_does_not_wait_for_the_warm_start(
-    client: AsyncClient, owner: MeetingOwner, db_session: AsyncSession
+    client: AsyncClient, owner: MeetingOwner, db_session: AsyncSession, live_scope: None
 ) -> None:
-    """WORK-010(MF-1) — `/start` 응답 시점에 `recording` 이고 **`ai_session_id` 는 아직 비어 있다**.
+    """WORK-010(MF-1) — 전이는 **응답 시점에** 끝나 있고 웜스타트는 **커밋 뒤**에 돈다.
 
-    웜스타트는 커밋 뒤 태스크가 나중에 채운다 — 제출·저장은 `test_meeting_start_warm.py` 가 본다.
+    `meeting_service.start()` 를 직접 불러 훅이 아직 안 돈 상태를 본다 — 그 시점에 `ai_session_id` 가
+    비어 있고, 훅을 돌린 뒤에야 찬다. `live_scope` 로 태스크가 테스트 세션을 보게 묶었으므로
+    이 단언은 **하네스 가시성이 아니라 순서**를 증명한다(WORK-010 검수 W-2).
     """
-    detail = await start_meeting(client, owner, projectId=owner.project_id)
-    assert detail["status"] == "recording" and detail["recordingStartedAt"] is not None
+    created = await create_meeting(client, owner, projectId=owner.project_id)
+    await meeting_service.start(db_session, account_id=owner.id, meeting_id=created["id"])
 
-    row = (await db_session.scalars(select(Meeting).where(Meeting.id == detail["id"]))).one()
-    # 이 파일은 `session_scope` 를 테스트 세션으로 묶지 않는다 — 태스크가 토큰을 못 찾고 제출 없이 끝난다.
-    # 그래도 **회의는 `recording`** 이고 응답은 이미 나갔다는 것이 이 테스트의 뜻이다(MF-70).
+    row = (await db_session.scalars(select(Meeting).where(Meeting.id == created["id"]))).one()
+    assert row.status == "recording" and row.recording_started_at is not None
     assert row.ai_session_id is None
+
+    await run_after_commit_hooks(db_session)
+    await meeting_batch_service.wait_for_tasks()
+
+    await db_session.refresh(row)
+    assert row.ai_session_id == WARM_SESSION_ID
 
 
 # --- Phase 2 — `POST …/lines` ---------------------------------------------------------

@@ -9,6 +9,10 @@
  *
  * 키보드(`↑↓` · `Enter` · `Esc`)는 **입력에 포커스를 둔 채** `PromptBar` 가 처리한다 — 여기는 `highlighted` 로 그리기만 한다.
  * 목록 계산(`buildPopoverItems`)을 내보내 두 곳이 같은 순서를 본다. WORK-008 편집 모드가 같은 팝오버를 쓴다.
+ *
+ * **`/` 뒤에 글자를 치면 좁혀진다**(WORK-011 · U-3) — `buildPopoverItems(…, query)` 가 **명령어 라벨 앞글자 일치**로 거른다.
+ * `/결` → 「결정」만. **이동 행은 명령어가 없어 좁히는 순간 빠진다** — 「안건 이동」은 슬래시로 하지 않는다(팝오버 전용).
+ * 슬래시 명령어(`PromptBar`)도 같은 `commandLabel` 을 본다 — 목록이 둘로 갈리지 않는다.
  */
 
 import { LINE_KIND_LABEL, LINE_KINDS } from "@/features/meetings/lineKinds";
@@ -32,10 +36,27 @@ const KIND_CHIP: Record<LineKind, { glyph: string; className: string }> = {
   action: { glyph: "액", className: "bg-secondary text-secondary-foreground" },
 };
 
+/** 「새 안건」 행의 표시 이름 — 명령어(`/새안건`)는 띄어쓰기가 없다. */
+const NEW_AGENDA_ROW_LABEL = "새 안건";
+export const NEW_AGENDA_COMMAND = "새안건";
+
+/**
+ * 항목의 **명령어 라벨** — 좁힘(앞글자 일치)과 슬래시 명령어(`/결정`)가 **같은 문자열**을 본다.
+ * 이동 행은 `null` 이다(U-3 「안건 이동은 슬래시로 하지 않는다」).
+ */
+export function commandLabel(item: PopoverItem): string | null {
+  if (item.kind === "line-kind") {
+    return LINE_KIND_LABEL[item.lineKind];
+  }
+  return item.kind === "new-agenda" ? NEW_AGENDA_COMMAND : null;
+}
+
 export function buildPopoverItems(
   section: PopoverSection,
   activeAgenda: MeetingAgenda | null,
   otherAgendas: readonly MeetingAgenda[],
+  /** `/` 뒤에 친 글자(U-3) — 비면 전체, 있으면 **명령어 라벨 앞글자 일치**로 좁힌다. */
+  query = "",
 ): PopoverItem[] {
   const items: PopoverItem[] = [];
   if (section === "full") {
@@ -49,7 +70,10 @@ export function buildPopoverItems(
   for (const agenda of otherAgendas) {
     items.push({ id: `move-${agenda.id}`, kind: "move", agenda });
   }
-  return items;
+  if (query === "") {
+    return items;
+  }
+  return items.filter((item) => commandLabel(item)?.startsWith(query) ?? false);
 }
 
 export function optionId(listboxId: string, item: PopoverItem): string {
@@ -124,7 +148,9 @@ export function LineKindPopover({
                 <span aria-hidden className={cn(CHIP, "bg-ai-bar text-ai-bar-badge")}>
                   안
                 </span>
-                <span className={cn("flex-1 text-meta text-foreground", selected && "font-semibold")}>새 안건</span>
+                <span className={cn("flex-1 text-meta text-foreground", selected && "font-semibold")}>
+                  {NEW_AGENDA_ROW_LABEL}
+                </span>
                 <span className="text-row-label font-normal text-fg-caption">다음 주제로</span>
               </button>
             </div>

@@ -99,7 +99,7 @@ async def test_start_stores_the_session_id_in_a_later_transaction(
     assert (await _meeting_row(db_session, detail["id"])).ai_session_id == WARM_SESSION_ID
 
     fake_agent.calls.clear()
-    await add_block(db_session, detail["id"], content="가" * 600)
+    await add_block(db_session, detail["id"], content="가" * 1000)  # MF-49 — 트리거 1000자
     assert await meeting_batch_service.evaluate(detail["id"], TRANSCRIPT) is True
     assert fake_agent.calls[0].session_id == WARM_SESSION_ID
 
@@ -228,12 +228,27 @@ def test_the_prompt_takes_no_argument() -> None:
     assert _prompt() == meeting_batch_service.build_warm_start_prompt()
 
 
+def _prompt_without_tool_names() -> str:
+    """도구 이름을 걷어낸 프롬프트.
+
+    `list_tasks` 안의 `task` 처럼 **정당한** 부분 문자열 때문에 bare needle 검사를 못 하는 것을 푼다
+    (WORK-010 검수 W-5) — 이름 일곱은 계약이라 따로 검사하고, 나머지 본문에서 컨텍스트 키를 찾는다.
+    """
+    prompt = _prompt()
+    for name in TOOL_NAMES:
+        prompt = prompt.replace(name, "")
+    return prompt
+
+
 @pytest.mark.parametrize(
-    "needle", ["humanAgendas", "taskWhitelist", '"tasks"', '"project"', "컨텍스트:"]
+    "needle", ["humanAgendas", "taskWhitelist", "project", "task", "agendaId", "컨텍스트:"]
 )
 def test_the_prompt_carries_no_context(needle: str) -> None:
-    """프로젝트 · 업무 목록 · 안건 · 화이트리스트가 **없다**(MF-50 — AI 가 도구로 조회한다)."""
-    assert needle not in _prompt()
+    """프로젝트 · 업무 목록 · 안건 · 화이트리스트가 **없다**(MF-50 — AI 가 도구로 조회한다).
+
+    따옴표 없는 bare needle 로 본다 — `project: …` 처럼 JSON 이 아닌 모양으로 새 컨텍스트가 들어와도 잡는다.
+    """
+    assert needle not in _prompt_without_tool_names()
 
 
 def test_the_prompt_has_no_json_block() -> None:

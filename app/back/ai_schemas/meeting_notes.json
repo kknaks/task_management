@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MeetingNotesOutput",
+  "description": "SPEC-007 §4 「배치 출력」 = SPEC-008 의 최종 회의록 출력. **스키마는 한 벌이다**(MF-52) — 회의 중 배치와 최종이 같은 파일을 codex --output-schema 로 걸고, 백엔드가 같은 파일로 다시 검증한다(SYS §외부 연동). 출력은 **AI 트랙 전체**다 — 앞 배치 결과를 포함해 다시 낸다(MF-53). `headline` · `termCorrections` · `payload` 는 **회의 중 항상 null** 이고 최종에서만 값이 온다 — 그 스위치와 evidence 구간 범위 · humanAgendaId 소속은 코드가 한다(strict 스키마에 조건을 두지 않는다).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["headline", "termCorrections", "agendas"],
+  "properties": {
+    "headline": { "type": ["string", "null"], "minLength": 1, "maxLength": 200 },
+    "termCorrections": {
+      "type": ["array", "null"],
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["from", "to"],
+        "properties": {
+          "from": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "to": { "type": "string", "minLength": 1, "maxLength": 200 }
+        }
+      }
+    },
+    "agendas": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["humanAgendaId", "title", "lines"],
+        "properties": {
+          "humanAgendaId": { "type": ["integer", "null"] },
+          "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "lines": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "content", "detail", "evidence", "taskId", "payload"],
+              "properties": {
+                "kind": { "type": "string", "enum": ["discussion", "decision", "task", "action"] },
+                "content": { "type": "string", "minLength": 1, "maxLength": 2000 },
+                "detail": { "type": ["string", "null"], "maxLength": 4000 },
+                "evidence": {
+                  "type": "array",
+                  "maxItems": 3,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["fromMs", "toMs"],
+                    "properties": {
+                      "fromMs": { "type": "integer", "minimum": 0 },
+                      "toMs": { "type": "integer", "minimum": 0 }
+                    }
+                  }
+                },
+                "taskId": { "type": ["integer", "null"] },
+                "payload": { "type": ["object", "null"] }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

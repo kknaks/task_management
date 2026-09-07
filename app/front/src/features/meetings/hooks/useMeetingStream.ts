@@ -21,7 +21,7 @@
  * | `ready` | `recordingStartedAt` · 잠정 비움 · 캡처 시작/재개 → `live`. `latestBatchSeq` 가 캐시보다 크면 상세 재조회(끊긴 동안 놓친 배치) |
  * | `transcript.partial` | **교체** — 화면 표시용. 저장하지 않는다(M-9) |
  * | `transcript.final` | 트랜스크립트 캐시 `['meetings','transcript',id]` 에 **append** + 화자 수 갱신 |
- * | `ai.batch` | 상세 캐시 `['meetings','detail',id]` 에 **즉시 병합**(`mergeAiBatch`) — 버퍼링 없음(BE-11). `aiVersion` +1 |
+ * | `ai.batch` | 상세 캐시 `['meetings','detail',id]` 의 **AI 트랙을 통째 교체**(`mergeAiBatch`) — 버퍼링·재조회 없음(BE-11 · MF-53). `aiVersion` +1 |
  * | `error` | 사유를 기억한다 — 뒤따르는 close 가 `paused/stream` 문구를 정한다 |
  *
  * ## 마이크
@@ -214,13 +214,11 @@ export function useMeetingStream({ meetingId }: { meetingId: number }): UseMeeti
         case "ai.batch": {
           const cached = client.getQueryData<MeetingDetail>(detailKey);
           if (!cached) {
+            // 진입 조회가 아직이다 — 조회가 전체 트리를 실어 온다.
             void client.invalidateQueries({ queryKey: detailKey });
           } else {
-            const merged = mergeAiBatch(cached, frame);
-            client.setQueryData<MeetingDetail>(detailKey, merged.detail);
-            if (merged.orphaned > 0) {
-              void client.invalidateQueries({ queryKey: detailKey });
-            }
+            // 프레임이 AI 트랙 **전체**라 재조회할 갈래가 없다(MF-53).
+            client.setQueryData<MeetingDetail>(detailKey, mergeAiBatch(cached, frame));
           }
           setLastBatchAt(Date.now());
           setAiVersion((version) => version + 1);

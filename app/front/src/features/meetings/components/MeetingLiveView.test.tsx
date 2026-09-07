@@ -8,6 +8,8 @@
  * - 부제에 장소 없음 · 「회의 종료」는 `connecting` 빼고 활성 · 「일시정지」/「재개」 토글
  * - 회의록 탭: 배지 3종 · **AI 안건·줄 없음** · 삭제·제목 수정 어포던스 없음 · 사람 줄 클릭해도 편집 안 됨
  * - 줄 전송 → `POST lines` → 활성 안건 아래 + 「자동 저장 · HH:MM」 · `/` → 업무 · 새 안건 = `POST agendas` → `PATCH state:active`
+ * - **슬래시 명령어**(WORK-011) — `/결정 ` 은 `kind` 로만 나가고 본문에 명령어 문자열이 없다 · `/api …` 는 본문 · `/새안건 ` 은 두 요청
+ * - **AI 탭은 배치마다 통째로 교체**된다(MF-53) · **줄에 시각이 없다**(MF-9)
  * - 안건 체크 → `PATCH state:done` → 다음 「대기」가 「논의 중」 · 칩이 바뀐다
  * - AI 탭: 「배치 2회 반영」 · **트리(카드 아님)** · 「AI 안건」 · 펼침 → 칩 → 스크립트 탭 전환 + 강조 → `Esc`
  * - 첨부 탭: PNG·PDF·「회의 중 작성」 없음 · 문서 행 → 드로어(이동 없음) · 트랜스크립트 실패 → 「불러오지 못했습니다」 + 「다시 시도」
@@ -225,6 +227,47 @@ describe("회의록 탭 — 줄 · 안건", () => {
     expect(within(agenda2).getAllByText(/수령|현행/).map((el) => el.textContent)).toEqual(["8/29 오전 수령", "가격은 현행 유지"]);
   });
 
+  it("**슬래시 명령어**(U-3) — `/결정 ` → `kind:'decision'` · 본문에 `/결정` 0건 · `/api …` 는 본문 · `/새안건 ` → `POST agendas` → `PATCH state:active` 순서", async () => {
+    const calls: string[] = [];
+    const bodies: { kind: string; content: string }[] = [];
+    const { state } = await renderLive();
+    server.use(
+      http.post(`${API_BASE}/api/meetings/21/lines`, async ({ request }) => {
+        const body = (await request.json()) as { agendaId: number; kind: string; content: string };
+        bodies.push({ kind: body.kind, content: body.content });
+        calls.push(`line:${body.kind}`);
+        return HttpResponse.json(line({ id: 510 + bodies.length, agendaId: body.agendaId, track: "human", kind: body.kind, content: body.content }), { status: 201 });
+      }),
+      http.post(`${API_BASE}/api/meetings/21/agendas`, async ({ request }) => {
+        const body = (await request.json()) as { title: string };
+        calls.push("agendas");
+        state.detail = {
+          ...state.detail,
+          agendas: { ...state.detail.agendas, human: [...HUMAN, { id: 304, track: "human", title: body.title, orderIndex: 3, state: "next", sourceAgendaId: null, lines: [] }] },
+        };
+        return HttpResponse.json(state.detail, { status: 201 });
+      }),
+      http.patch(`${API_BASE}/api/meetings/21/agendas/304`, async ({ request }) => {
+        calls.push(`patch:${JSON.stringify(await request.json())}`);
+        return HttpResponse.json(state.detail);
+      }),
+    );
+
+    const input = screen.getByRole("combobox", { name: "줄 입력" });
+    await userEvent.type(input, "/결정 3건만 유지한다{Enter}");
+    await waitFor(() => expect(bodies).toEqual([{ kind: "decision", content: "3건만 유지한다" }]));
+    expect(JSON.stringify(bodies)).not.toContain("/결정");
+
+    // 5개 밖의 `/…` 는 그대로 본문이다
+    await userEvent.type(input, "/api 경로를 바꾸자{Enter}");
+    await waitFor(() => expect(bodies).toHaveLength(2));
+    expect(bodies[1]).toEqual({ kind: "discussion", content: "/api 경로를 바꾸자" });
+
+    await userEvent.type(input, "/새안건 ");
+    await userEvent.type(screen.getByRole("combobox", { name: "안건 제목" }), "가격 표기 처리{Enter}");
+    await waitFor(() => expect(calls).toEqual(["line:decision", "line:discussion", "agendas", 'patch:{"state":"active"}']));
+  });
+
   it("전송 5xx → 토스트 「저장하지 못했습니다 · 다시 보내 주세요」 + 입력 유지 · 재요청 0건 · `422` 는 인라인", async () => {
     let calls = 0;
     await renderLive();
@@ -350,7 +393,7 @@ describe("AI 요약 탭 · 근거 칩 · 미확인 점", () => {
     expect(document.querySelectorAll("[data-highlighted]")).toHaveLength(0);
   });
 
-  it("`ai.batch` 가 오면 회의록 탭을 보고 있어도 AI 탭 옆 **파란 점** · 열면 「배치 3회 반영 · HH:MM」 + 새 줄, 기존 줄 그대로 · 점 꺼짐", async () => {
+  it("`ai.batch` 가 오면 회의록 탭을 보고 있어도 AI 탭 옆 **파란 점** · 열면 「배치 3회 반영 · HH:MM」 + 트리가 **통째로 교체**(옛 줄 사라짐 · 펼침 접힘) · 점 꺼짐", async () => {
     await renderLive(recording(), { startIntent: true });
     await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
     const ws = FakeWebSocket.last;
@@ -359,18 +402,59 @@ describe("AI 요약 탭 · 근거 칩 · 미확인 점", () => {
       ws.serverSend({ type: "ready", recordingStartedAt: STARTED, latestBatchSeq: 2, speakerCount: 2 });
     });
     expect(screen.queryByTestId("ai-unseen")).not.toBeInTheDocument();
+
+    // 먼저 AI 탭에서 첫 배치 줄을 펼쳐 둔다 — 새 배치가 오면 id 가 새로 생겨 접힌다(MF-53)
+    await userEvent.click(screen.getByRole("tab", { name: "AI 요약" }));
+    await userEvent.click(screen.getByRole("button", { name: "펼치기" }));
+    expect(screen.getByText("유사 사례 지적.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("tab", { name: "회의록" }));
+
+    // 둘째 배치 = AI 트랙 전량(안건 안에 줄이 중첩). 앞 배치가 가른 안건이 하나로 합쳐져 온다
     act(() =>
       ws.serverSend({
-        type: "ai.batch", seq: 3, agendas: [],
-        lines: [line({ id: 621, agendaId: 40, track: "ai", kind: "action", content: "AI: 분리 초안 만들기", createdAt: "2026-08-27T00:44:00Z" })],
+        type: "ai.batch",
+        seq: 3,
+        agendas: [
+          {
+            id: 60, track: "ai", title: "개정 대상 섹션 확정", orderIndex: 0, state: null, sourceAgendaId: 301,
+            lines: [
+              line({ id: 700, agendaId: 60, track: "ai", kind: "decision", content: "AI: 도입 사례는 3건만 유지", detail: "다시 정리한 상세.", evidence: [{ fromMs: 241_000, toMs: 247_300 }], createdAt: "2026-08-27T00:44:00Z" }),
+              line({ id: 701, agendaId: 60, track: "ai", kind: "action", content: "AI: 분리 초안 만들기", createdAt: "2026-08-27T00:44:00Z" }),
+            ],
+          },
+        ],
       }),
     );
     expect(screen.getByTestId("ai-unseen")).toBeInTheDocument();
+
     await userEvent.click(screen.getByRole("tab", { name: "AI 요약" }));
     expect(screen.getByTestId("batch-caption")).toHaveTextContent(/배치 3회 반영 · \d\d:\d\d/);
-    expect(screen.getByText("AI: 도입 사례는 3건만")).toBeInTheDocument();
+    // 첫 배치의 안건·줄은 캐시에 남지 않는다 — 트리가 새 전체다
+    expect(screen.queryByText("AI: 도입 사례는 3건만")).not.toBeInTheDocument();
+    expect(screen.queryByText("AI 안건")).not.toBeInTheDocument();
+    expect(document.querySelector('[data-agenda-id="40"]')).toBeNull();
+    expect(document.querySelector('[data-line-id="620"]')).toBeNull();
+    expect(screen.getByText("AI: 도입 사례는 3건만 유지")).toBeInTheDocument();
     expect(screen.getByText("AI: 분리 초안 만들기")).toBeInTheDocument();
+    // 펼쳐 둔 줄이 접혔다
+    expect(screen.queryByText("유사 사례 지적.")).not.toBeInTheDocument();
+    expect(screen.queryByText("다시 정리한 상세.")).not.toBeInTheDocument();
     expect(screen.queryByTestId("ai-unseen")).not.toBeInTheDocument();
+  });
+
+  it("**줄에 시각이 없다**(MF-9) — 회의록 탭·AI 탭 줄 행에 `HH:MM` 0건 · 안건 헤더 시각과 안내 바 시각은 남는다", async () => {
+    await renderLive();
+    const clocked = () => [...document.querySelectorAll("[data-line-id]")].filter((row) => /\d\d:\d\d/.test(row.textContent ?? ""));
+    expect(document.querySelectorAll("[data-line-id]").length).toBeGreaterThan(0);
+    expect(clocked()).toHaveLength(0);
+    // 안건 헤더의 시각은 남는다(첫 줄 09:34)
+    const agenda1 = document.querySelector('[data-agenda-id="301"]') as HTMLElement;
+    expect(within(agenda1).getByText("09:34")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("tab", { name: "AI 요약" }));
+    expect(document.querySelectorAll("[data-line-id]").length).toBeGreaterThan(0);
+    expect(clocked()).toHaveLength(0);
+    expect(screen.getByTestId("batch-caption")).toHaveTextContent(/배치 2회 반영/);
   });
 
   it("첫 배치 전 — 「첫 배치를 기다리는 중」 + 「기록이 쌓이면 요약이 생성됩니다」", async () => {

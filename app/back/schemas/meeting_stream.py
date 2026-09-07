@@ -91,10 +91,14 @@ class TranscriptFinalMessage(CamelModel):
 
 
 class AiBatchMessage(CamelModel):
+    """SPEC-007 §4 `ai.batch` — **AI 트랙 전체**(MF-53). 줄은 `AgendaItem.lines[]` 안에 중첩된다.
+
+    최상위 `lines` 키가 없다 — 상세 응답 `agendas.ai` 와 **같은 모양**이어야 화면이 통째로 교체할 수 있다.
+    """
+
     type: Literal["ai.batch"] = "ai.batch"
     seq: int
     agendas: list[AgendaItem]
-    lines: list[LineItem]
 
 
 class StreamErrorMessage(CamelModel):
@@ -129,7 +133,6 @@ def to_message(frame: OutboundFrame) -> ServerMessage:
         return AiBatchMessage(
             seq=frame.seq,
             agendas=[AgendaItem.from_dto(agenda) for agenda in frame.agendas],
-            lines=[LineItem.from_dto(line) for line in frame.lines],
         )
     if isinstance(frame, StreamErrorFrame):
         return StreamErrorMessage(reason=frame.reason)  # type: ignore[arg-type]

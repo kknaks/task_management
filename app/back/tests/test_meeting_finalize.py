@@ -30,6 +30,7 @@ from tests.meeting_close_fixtures import (  # noqa: F401
     duplicate_human_line,
     end_meeting,
     final_output,
+    notes_output,
     finalize_successfully,
     finalize_with_failure,
     load_job,
@@ -173,8 +174,18 @@ async def test_final_batch_replaces_the_ai_track_wholesale_only_after_validation
     """회의 중 증분 AI 줄이 있어도 ① 성공분이 **전량 교체**한다(M-7)."""
     detail = await prepare_recording(client, owner, db_session)
     # 회의 중 증분 배치 한 회차
-    fake_agent.will_return({"items": [{"agenda": {"humanAgendaId": detail["agendas"]["human"][0]["id"], "aiAgendaId": None, "newTitle": None},
-                                       "kind": "discussion", "content": "증분 AI 줄", "detail": None, "evidence": [], "taskId": None}]})
+    fake_agent.will_return(
+        notes_output(
+            [
+                {
+                    "humanAgendaId": detail["agendas"]["human"][0]["id"],
+                    "title": "미러 안건",
+                    "lines": [{"kind": "discussion", "content": "증분 AI 줄", "detail": None,
+                               "evidence": [], "taskId": None, "payload": None}],
+                }
+            ]
+        )
+    )
     assert await meeting_batch_service.evaluate(detail["id"], "timer") is True
     _, before = await rows_by_track(db_session, detail["id"], "ai")
     assert [l.content for l in before] == ["증분 AI 줄"]
@@ -273,8 +284,18 @@ async def test_final_batch_failure_keeps_ai_lines_and_still_integrates(
 ) -> None:
     """① 이 실패해도 AI 줄은 회의 중 상태 그대로이고 ② 로 넘어가 `succeeded` 가 된다. `finalBatchState='failed'`."""
     detail = await prepare_recording(client, owner, db_session)
-    fake_agent.will_return({"items": [{"agenda": {"humanAgendaId": detail["agendas"]["human"][0]["id"], "aiAgendaId": None, "newTitle": None},
-                                       "kind": "discussion", "content": "증분 AI 줄", "detail": None, "evidence": [{"fromMs": 0, "toMs": 500}], "taskId": None}]})
+    fake_agent.will_return(
+        notes_output(
+            [
+                {
+                    "humanAgendaId": detail["agendas"]["human"][0]["id"],
+                    "title": "미러 안건",
+                    "lines": [{"kind": "discussion", "content": "증분 AI 줄", "detail": None,
+                               "evidence": [{"fromMs": 0, "toMs": 500}], "taskId": None, "payload": None}],
+                }
+            ]
+        )
+    )
     assert await meeting_batch_service.evaluate(detail["id"], "timer") is True
     _, before = await rows_by_track(db_session, detail["id"], "ai")
 

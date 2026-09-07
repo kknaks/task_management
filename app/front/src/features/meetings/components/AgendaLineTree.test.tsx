@@ -3,6 +3,7 @@
  *
  * - 같은 `AgendaLineTree` 에 사람 트랙·AI 트랙 데이터를 넣어 **분기 없이** 두 탭 모양이 나온다(컴포넌트 안 `track ===` 0 — 정적 검사)
  * - 배지는 호출자가 정한다 — 회의 중 「논의 중」/「완료」/「**대기**」 · AI 신설 안건 「AI 안건」 캡션
+ * - **줄에 시각이 없다**(WORK-011 · MF-9) — 안건 헤더의 첫 줄 시각만 남는다
  * - `expandable` 일 때만 화살표 · 펼치면 상세 + 「HH:MM – HH:MM」 칩(`recordingStartedAt` 기준 벽시계)
  * - 사람 「업무」 줄은 라벨만(`#5F6470`) — 배지·버튼 없음 · 사람 줄에 편집·삭제 어포던스 없음
  * - AI 「업무」 줄은 라벨 옆에 `task.workType` 유형 배지(U-4 · 검수 F-1)
@@ -95,9 +96,15 @@ describe("회의록 탭 — 사람 트랙", () => {
     expect(within(taskRow as HTMLElement).queryByRole("button")).not.toBeInTheDocument();
     expect((taskRow as HTMLElement).querySelector("[data-color-token]")).toBeNull();
 
-    // 안건 우측 시각 = 첫 줄 09:34 · 줄 시각 09:36
-    expect(screen.getAllByText("09:34").length).toBeGreaterThanOrEqual(2);
-    expect(screen.getByText("09:36")).toBeInTheDocument();
+    // **줄에 시각이 없다**(MF-9) — `HH:MM` 은 안건 헤더(안건 1·2 의 첫 줄 09:34)에만 있고 줄의 09:36 · 09:37 은 그리지 않는다
+    expect(screen.getAllByText("09:34")).toHaveLength(2);
+    expect(screen.queryByText("09:36")).not.toBeInTheDocument();
+    expect(screen.queryByText("09:37")).not.toBeInTheDocument();
+    const rows = [...document.querySelectorAll("[data-line-id]")];
+    expect(rows).toHaveLength(4);
+    for (const row of rows) {
+      expect(row.textContent).not.toMatch(/\d\d:\d\d/);
+    }
 
     // 안건 헤더 체크는 버튼(사람 트랙) · **삭제·제목 수정 어포던스 없음**
     expect(screen.getByRole("button", { name: "안건 1 완료 해제" })).toHaveAttribute("aria-pressed", "true");

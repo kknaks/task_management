@@ -284,7 +284,8 @@ export type StreamServerFrame =
   | { type: "ready"; recordingStartedAt: string; latestBatchSeq: number; speakerCount: number }
   | { type: "transcript.partial"; segments: PartialSegment[] }
   | { type: "transcript.final"; item: TranscriptItem }
-  | { type: "ai.batch"; seq: number; agendas: MeetingAgenda[]; lines: MeetingLine[] }
+  /** **AI 트랙 전체**(SPEC-007 §4 · MF-53) — 줄은 `agendas[].lines[]` 안에 중첩된다. 최상위 `lines` 키가 없다. */
+  | { type: "ai.batch"; seq: number; agendas: MeetingAgenda[] }
   | { type: "error"; code: "meeting_stream_disconnected"; reason: "upstream" | "write_failed" };
 
 /** 클라이언트 → 서버 텍스트 프레임 3종. 오디오는 바이너리다. */

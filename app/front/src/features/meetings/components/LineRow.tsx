@@ -4,7 +4,10 @@
  * **줄 행 한 벌**(SPEC-007 U-2 · U-4 · SPEC-008 U-3 · U-5 · U-7 · [09] L660~700 · 시안 L858~871 · L1898~1909).
  *
  * 라벨 폭 34 · 11/700, 색은 종류별 — 논의 `#9EA2AE` · 결정 `#1663B5`(본문 600 · 배경 `#F8FAFF`) ·
- * **업무 `#5F6470`**(본문 600) · 액션 `#4B52A8`(본문 600). 우측 시각 = `createdAt` `HH:MM`.
+ * **업무 `#5F6470`**(본문 600) · 액션 `#4B52A8`(본문 600).
+ *
+ * **줄에 시각을 붙이지 않는다**(WORK-011 · MF-9 · FE §8) — 시각은 **안건 헤더**(첫 줄 시각 — `AgendaLineTree`)와
+ * 근거 칩 구간에만 있다. 안내 바의 「배치 n회 반영 · HH:MM」·「자동 저장 · HH:MM」·프롬프트 바 현재 시각은 이 규칙 밖이다.
  *
  * **트랙을 모른다.** 회의록 탭(사람 줄) · AI 탭(AI 줄) · WORK-008 통합본이 같은 행이다 — 차이는 prop 뿐이다.
  * - `expandable` — 우측 끝 펼침 화살표(22×22, **hover 에서만** — [09] L700). 펼치면 상세 + 근거 칩.
@@ -28,7 +31,6 @@ import { InlineFieldInput } from "@/features/meetings/components/InlineFieldInpu
 import { LineKindSelector } from "@/features/meetings/components/LineKindSelector";
 import { isLineKind, LINE_KIND_LABEL, LINE_LABEL_CLASS } from "@/features/meetings/lineKinds";
 import type { LineKind, MeetingLine } from "@/features/meetings/types";
-import { formatClock } from "@/lib/datetime";
 import { cn } from "@/lib/utils";
 
 /** 표시 매핑(G-4)의 정본은 `lineKinds.ts` — 기존 호출자(`PromptBar` · `LineKindPopover`)를 위해 다시 내보낸다. */
@@ -113,11 +115,6 @@ export function LineRow({
           </span>
         )}
         {actions}
-        {editing ? null : (
-          <span className="shrink-0 pt-[3px] text-caption tabular-nums text-fg-faint">
-            {formatClock(line.createdAt)}
-          </span>
-        )}
         {expandable ? (
           <button
             type="button"

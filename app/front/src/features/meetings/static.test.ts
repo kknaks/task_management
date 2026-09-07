@@ -479,3 +479,35 @@ describe("⑳ 업무 연동 — 업무 API 직접 호출 0건 · 판정 코드 0
     }
   });
 });
+
+describe("㉑ WORK-011 — 줄 시각 0건 · 고아 판정 0건 · 명령어 목록 하나 · 직접 fetch 0건", () => {
+  it("줄 행이 `createdAt` 을 포맷하는 코드가 0건이다 — `LineRow.tsx` 에 `formatClock` 이 없다(MF-9)", () => {
+    const lineRow = stripComments(read(path.join(MEETINGS, "components/LineRow.tsx")));
+    expect(lineRow).not.toMatch(/formatClock/);
+    const offenders = meetingSources.filter((file) => /formatClock\(\s*line/.test(stripComments(read(file)))).map(rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it("안건 헤더의 시각은 남는다 — `AgendaLineTree` 가 첫 줄 시각을 `formatClock` 으로 그린다(MF-9 의 경계)", () => {
+    const tree = stripComments(read(path.join(MEETINGS, "components/AgendaLineTree.tsx")));
+    expect(tree).toMatch(/formatClock\(/);
+  });
+
+  it("`aiBatch.ts` 에 고아 판정(`orphaned`)이 0건이다 — 프레임이 AI 트랙 전체라 재조회 갈래가 없다(MF-53)", () => {
+    expect(stripComments(read(path.join(MEETINGS, "aiBatch.ts")))).not.toMatch(/orphaned/);
+    expect(stripComments(read(path.join(MEETINGS, "hooks/useMeetingStream.ts")))).not.toMatch(/orphaned/);
+  });
+
+  it("슬래시 명령어 라벨의 원천이 `LineKindPopover.tsx` 하나다 — 마우스 길과 키보드 길이 같은 목록을 본다(U-3)", () => {
+    const owners = meetingSources.filter((file) => /export function commandLabel|NEW_AGENDA_COMMAND =/.test(read(file))).map(rel);
+    expect(owners).toEqual(["features/meetings/components/LineKindPopover.tsx"]);
+    // 명령어 문자열 리터럴(`/결정` …)을 손으로 적은 곳이 없다 — 라벨에서 파생한다
+    const offenders = meetingSources.filter((file) => /["'`]\/(논의|결정|업무|액션|새안건)/.test(stripComments(read(file)))).map(rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it("`features/meetings` 에 `fetch(` 직접 호출이 0건이다 — 요청은 `lib/api` 하나를 지난다(FE 금지 목록)", () => {
+    const offenders = meetingSources.filter((file) => /(^|[^.\w])fetch\s*\(/.test(stripComments(read(file)))).map(rel);
+    expect(offenders).toEqual([]);
+  });
+});
