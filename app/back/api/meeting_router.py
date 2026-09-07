@@ -19,9 +19,11 @@ from fastapi import APIRouter, Depends, Query, Response, status
 from pydantic import AwareDatetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_db, require_account
+from api.deps import get_db, require_account, require_context
+from core.exceptions import NotFoundError
+from dto.auth import AccountContextDTO
 from dto.enums import MeetingSort
-from dto.meeting import MeetingListFilterDTO
+from dto.meeting import MeetingListFilterDTO, MeetingTaskFilterDTO
 from schemas.job import JobAccepted
 from schemas.meeting import (
     AgendaCreate,
@@ -34,6 +36,7 @@ from schemas.meeting import (
     MeetingCreate,
     MeetingDetail,
     MeetingListResponse,
+    MeetingTaskListResponse,
     MeetingUpdate,
     TranscriptResponse,
 )
@@ -103,6 +106,69 @@ async def create_meeting(
     return MeetingDetail.from_dto(
         await meeting_service.create_meeting(
             session, account_id=account_id, command=body.to_dto()
+        )
+    )
+
+
+# **선언 순서가 계약이다** — 아래 `GET /{meeting_id}` 의 `meeting_id` 는 `int` 라, 이 라우트를 뒤에 두면
+# `current` 를 id 로 파싱하려다 422 가 난다(`task_router` 의 `/relations/candidates` 와 같은 선례).
+
+
+@router.get("/current", response_model=MeetingDetail, response_model_by_alias=True)
+async def get_current_meeting(
+    context: AccountContextDTO = Depends(require_context),
+    session: AsyncSession = Depends(get_db),
+) -> MeetingDetail:
+    """**회의 토큰 전용 표면**(WORK-009 · WP §Internal Interface). MCP `get_meeting` 이 부른다.
+
+    도구는 회의 id 를 인자로 받지 않는다 — **토큰이 회의를 안다.** 그래서 back 이 `ctx.meeting_id` 로 채운다.
+    사용자 세션 JWT 로 부르면 **404** 다(그쪽은 `GET /{meeting_id}` 를 쓴다). 응답은 `GET /{meeting_id}` 와 같은 `MeetingDetail`.
+    """
+    if context.meeting_id is None:
+        raise NotFoundError("없는 회의록입니다")
+    return MeetingDetail.from_dto(
+        await meeting_service.get_detail(
+            session, account_id=context.account_id, meeting_id=context.meeting_id
+        )
+    )
+
+
+@router.get(
+    "/current/tasks",
+    response_model=MeetingTaskListResponse,
+    response_model_by_alias=True,
+)
+async def list_current_meeting_tasks(
+    project_id: str | None = Query(
+        default=None, alias="projectId", pattern=_PROJECT_ID_PATTERN
+    ),
+    context: AccountContextDTO = Depends(require_context),
+    session: AsyncSession = Depends(get_db),
+) -> MeetingTaskListResponse:
+    """**회의 토큰 전용 표면.** MCP `list_tasks(projectId?)` 가 부른다(코디 지시 · WORK-009).
+
+    화면의 `GET /api/tasks` 를 쓰지 않는다 — 그쪽은 기본이 「오늘 하루」이고 `projectId` 가 숫자뿐이라
+    **화면 계약**이다. 여기는 기간이 없고 `none`(무소속)을 물을 수 있으며, 응답은 SPEC-007 §4 도구 표의 필드다.
+    목록을 만드는 곳은 **사후 검사(M-15)의 화이트리스트와 같은 repository 함수** 하나다.
+
+    사용자 세션 JWT 로 부르면 404 다(`/current` 와 같은 결).
+    """
+    if context.meeting_id is None:
+        raise NotFoundError("없는 회의록입니다")
+    return MeetingTaskListResponse.from_dtos(
+        await meeting_service.list_meeting_tasks(
+            session,
+            account_id=context.account_id,
+            meeting_id=context.meeting_id,
+            # `none` 을 푸는 자리는 여기다 — 위 `list_meetings` 와 같은 규약(§3 규칙 7)
+            command=MeetingTaskFilterDTO(
+                project_id=(
+                    None
+                    if project_id is None or project_id == _UNASSIGNED
+                    else int(project_id)
+                ),
+                unassigned_only=project_id == _UNASSIGNED,
+            ),
         )
     )
 

@@ -31,6 +31,8 @@ _JWT_ALGORITHM = "HS256"
 _ACCESS_TOKEN_TYPE = "access"
 # refresh 원문 길이(바이트). 48바이트 = 384비트.
 _REFRESH_TOKEN_BYTES = 48
+# 회의 토큰 원문 길이(바이트). 32바이트 = 256비트(WP §Code Surface).
+_MEETING_TOKEN_BYTES = 32
 
 # 아이디가 없을 때도 같은 비용의 검증을 태워 **계정 존재가 응답 시간으로 새지 않게** 한다.
 _DUMMY_PASSWORD_HASH = bcrypt.hashpw(b"dummy-password-for-timing", bcrypt.gensalt()).decode(
@@ -125,3 +127,13 @@ def generate_refresh_token() -> str:
 def hash_refresh_token(token: str) -> str:
     """대조용 해시. 저장·조회 모두 이 값만 쓴다(A-7)."""
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def generate_meeting_token() -> str:
+    """회의별 단명 토큰 원문(A-13 · MF-69). refresh 와 **같은 생성기**다.
+
+    **해시 함수를 짝으로 두지 않는다** — 이 값은 `auth_session.meeting_token` 에 **원문으로** 산다.
+    매 배치·최종 제출이 같은 원문을 다시 읽어 MCP 헤더에 실어야 하고(제출마다 재발급은 오버헤드),
+    단명 · 회의 범위 · 폐기 = 행 삭제라 refresh 처럼 해시만 둘 이유가 없다(2026-09-07 사용자 확정).
+    """
+    return secrets.token_urlsafe(_MEETING_TOKEN_BYTES)

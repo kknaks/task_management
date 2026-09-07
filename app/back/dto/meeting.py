@@ -26,6 +26,7 @@ __all__ = [
     "MergedAgendaPlanDTO",
     "MergedLinePlanDTO",
     "MeetingAiContextDTO",
+    "MeetingTaskFilterDTO",
     "TaskContextDTO",
     "TranscriptDTO",
     "TranscriptItemDTO",
@@ -398,14 +399,35 @@ class MeetingAiContextDTO:
 
 
 @dataclass(frozen=True)
+class MeetingTaskFilterDTO:
+    """`GET /api/meetings/current/tasks` 의 `projectId` — **세 갈래를 타입으로 나눈다.**
+
+    - `(None, False)` — 쿼리 생략. **그 회의의 프로젝트**(무소속 회의면 무소속 업무 · DEC-003 §4 L98)
+    - `(None, True)` — `projectId=none`. 무소속 업무
+    - `(id, False)` — 그 프로젝트
+
+    `"none"` 이라는 **HTTP 인코딩은 router 가 푼다** — service 는 문자열을 모른다
+    (`backend/README.md` §2 계층 · §3 · 회의 목록의 `MeetingListFilterDTO` 와 같은 자리).
+    """
+
+    project_id: int | None
+    unassigned_only: bool
+
+
+@dataclass(frozen=True)
 class TaskContextDTO:
-    """웜스타트 업무 목록 한 줄(SPEC-007 §4 「웜스타트」 — id·제목·상태·기한·유형명). 화이트리스트도 이 목록이다(M-15)."""
+    """회의가 보는 업무 한 줄. **AI 가 보는 목록 = 서버가 검사하는 목록**이다 —
+    웜스타트 업무 목록(SPEC-007 §4)이자 화이트리스트(M-15)이자 도구 `list_tasks` 의 응답이다.
+
+    `project_name` 은 SPEC-007 §4 도구 표의 「프로젝트」 — 무소속이면 `None`.
+    """
 
     id: int
     title: str
     status: str
     due_date: date | None
     work_type_name: str
+    project_name: str | None
 
 
 @dataclass(frozen=True)

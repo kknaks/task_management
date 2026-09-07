@@ -64,7 +64,7 @@ from repository import (
     meeting_transcript_repository,
     task_repository,
 )
-from service import meeting_stream_service
+from service import auth_service, meeting_stream_service
 
 logger = logging.getLogger(__name__)
 
@@ -243,14 +243,23 @@ async def run(meeting_id: int) -> None:
 async def _run_once(meeting_id: int) -> None:
     settings = get_settings()
 
-    # ① 읽기 — 한 세션. 커밋(닫힘) 뒤 외부 호출로 간다
+    # ① 읽기 — 한 세션. 커밋(닫힘) 뒤 외부 호출로 간다.
+    #    회의 토큰 원문도 여기서 읽는다(A-13) — codex 가 MCP 도구를 부를 때 헤더로 쓴다
     async with session_scope() as session:
         batch_input = await _load_input(session, meeting_id)
+        meeting_token = (
+            None
+            if batch_input is None
+            else await auth_service.get_meeting_token(session, meeting_id=meeting_id)
+        )
     if batch_input is None:
         return
     if batch_input.meeting.ai_session_id is None:
         # 웜스타트가 세션을 남기지 않았다 — 설계한 실패가 아니다(M-12). 전파한다
         raise RuntimeError(f"회의 {meeting_id} 에 AI 세션이 없습니다")
+    if meeting_token is None:
+        # 토큰이 없거나 만료됐다 — 제출해도 도구가 전부 401 이다. 세션 없음과 **같은 취급**(WORK-009 Phase 3)
+        raise RuntimeError(f"회의 {meeting_id} 에 회의 토큰이 없습니다")
 
     first_id, last_id = batch_input.blocks[0].id, batch_input.blocks[-1].id
 
@@ -261,6 +270,7 @@ async def _run_once(meeting_id: int) -> None:
             session_id=batch_input.meeting.ai_session_id,
             output_schema=OUTPUT_SCHEMA,
             timeout_sec=settings.meeting_batch_timeout_sec,
+            meeting_token=meeting_token,
         )
     except (AgentRunFailed, AgentRunTimeout) as exc:
         await _record(
@@ -387,8 +397,11 @@ async def run_final(meeting_id: int, *, timeout_sec: int) -> bool:
 async def _run_final_once(meeting_id: int, *, timeout_sec: int) -> bool:
     async with session_scope() as session:
         batch_input = await _load_final_input(session, meeting_id)
+        meeting_token = await auth_service.get_meeting_token(session, meeting_id=meeting_id)
     if batch_input.meeting.ai_session_id is None:
         raise RuntimeError(f"회의 {meeting_id} 에 AI 세션이 없습니다")
+    if meeting_token is None:
+        raise RuntimeError(f"회의 {meeting_id} 에 회의 토큰이 없습니다")
 
     first_id = batch_input.blocks[0].id if batch_input.blocks else None
     last_id = batch_input.blocks[-1].id if batch_input.blocks else None
@@ -400,6 +413,7 @@ async def _run_final_once(meeting_id: int, *, timeout_sec: int) -> bool:
             session_id=batch_input.meeting.ai_session_id,
             output_schema=OUTPUT_SCHEMA,
             timeout_sec=timeout_sec,
+            meeting_token=meeting_token,
         )
     except (AgentRunFailed, AgentRunTimeout) as exc:
         await _record(meeting_id, seq=batch_input.seq, status=BatchRunStatus.FAILED.value,
@@ -636,14 +650,19 @@ async def load_warm_start_context(session: AsyncSession, *, meeting_id: int) -> 
     )
 
 
-async def warm_start(context: WarmStartContext) -> str:
-    """새 세션을 만들고 그 `session_id` 를 돌려준다. **결과 본문은 버린다.** 트랜잭션 밖에서 부른다(BE §7)."""
+async def warm_start(context: WarmStartContext, *, meeting_token: str) -> str:
+    """새 세션을 만들고 그 `session_id` 를 돌려준다. **결과 본문은 버린다.** 트랜잭션 밖에서 부른다(BE §7).
+
+    `meeting_token` 은 `/start` 가 전이와 같은 트랜잭션에서 발급한 원문이다(A-13) — 여기서 다시 읽지 않는다.
+    새 세션이라 `sandbox="read-only"` 가 이때 걸리고, 이어지는 resume 들이 그 값을 물려받는다.
+    """
     _assert_single_session()
     result = await agent_integration.get_gateway().run(
         prompt=build_warm_start_prompt(context),
         session_id=None,
         output_schema=None,
         timeout_sec=get_settings().ai_timeout_sec,
+        meeting_token=meeting_token,
     )
     if not result.session_id:
         # 세션 없이는 배치가 이어질 수 없다(M-12) — 설계한 실패가 아니다. 전파한다

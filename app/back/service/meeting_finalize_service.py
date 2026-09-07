@@ -51,7 +51,7 @@ from repository import (
     meeting_line_repository,
     meeting_repository,
 )
-from service import job_service, meeting_batch_service, meeting_merge_service, meeting_service, meeting_stream_service
+from service import auth_service, job_service, meeting_batch_service, meeting_merge_service, meeting_service, meeting_stream_service
 from service.meeting_merge_service import IntegrationAttemptFailed
 
 logger = logging.getLogger(__name__)
@@ -207,14 +207,19 @@ async def _attempt_integration(meeting_id: int, *, timeout_sec: int) -> MergePla
     """읽기(세션) → 커밋 → codex(트랜잭션 없음) → 구조 검증. 적재는 하지 않는다 — 성공 트랜잭션은 `_commit_success` 다."""
     async with session_scope() as session:
         inputs = await _load_integration_input(session, meeting_id)
+        meeting_token = await auth_service.get_meeting_token(session, meeting_id=meeting_id)
     if inputs.ai_session_id is None:
         raise RuntimeError(f"회의 {meeting_id} 에 AI 세션이 없습니다")
+    if meeting_token is None:
+        # 폐기(WORK-012)는 ② 가 **끝난 뒤**다 — 여기서 없다는 것은 발급이 깨졌거나 만료다. 전파한다
+        raise RuntimeError(f"회의 {meeting_id} 에 회의 토큰이 없습니다")
 
     result = await agent_integration.get_gateway().run(
         prompt=build_integration_prompt(inputs.human_agendas, inputs.ai_agendas),
         session_id=inputs.ai_session_id,
         output_schema=meeting_merge_service.OUTPUT_SCHEMA,
         timeout_sec=timeout_sec,
+        meeting_token=meeting_token,
     )
     return meeting_merge_service.validate_and_build(
         human_agendas=inputs.human_agendas, ai_agendas=inputs.ai_agendas, output=result.output

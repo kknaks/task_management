@@ -51,7 +51,9 @@ from dto.meeting import (
     MeetingListFilterDTO,
     MeetingListResultDTO,
     MeetingUpdateDTO,
+    MeetingTaskFilterDTO,
     MergedSummaryDTO,
+    TaskContextDTO,
     TranscriptDTO,
 )
 from dto.unset import UNSET
@@ -63,9 +65,10 @@ from repository import (
     meeting_repository,
     meeting_transcript_repository,
     project_repository,
+    task_repository,
     work_type_repository,
 )
-from service import meeting_batch_service, schedule_service
+from service import auth_service, meeting_batch_service, schedule_service
 
 # SPEC-006 §4 Case Matrix — 문구까지 계약이다.
 _NOT_FOUND = "회의록을 찾을 수 없습니다"
@@ -534,15 +537,56 @@ async def start(
         meeting_id=meeting_id,
         started_at=datetime.now(UTC),
     )
+    # 회의별 단명 토큰 — **전이와 같은 트랜잭션**에서 행 하나(A-13 · MF-69 · WORK-009 Phase 1).
+    # 회의당 하나다. 돌려받은 원문은 **웜스타트 제출에만** 넘기고, 이후 제출부는 `get_meeting_token()` 으로 다시 읽는다.
+    # 아래 commit 이 이 INSERT 를 전이와 함께 남긴다(둘이 갈리지 않는다).
+    meeting_token = await auth_service.issue_meeting_token(
+        session, account_id=account_id, meeting_id=meeting_id
+    )
     context = await meeting_batch_service.load_warm_start_context(session, meeting_id=meeting_id)
     await session.commit()
 
-    ai_session_id = await meeting_batch_service.warm_start(context)
+    ai_session_id = await meeting_batch_service.warm_start(
+        context, meeting_token=meeting_token
+    )
 
     await meeting_repository.set_ai_session_id(
         session, meeting_id=meeting_id, ai_session_id=ai_session_id
     )
     return await build_detail(session, account_id=account_id, meeting_id=meeting_id)
+
+
+async def list_meeting_tasks(
+    session: AsyncSession,
+    *,
+    account_id: int,
+    meeting_id: int,
+    command: MeetingTaskFilterDTO,
+) -> list[TaskContextDTO]:
+    """**회의 토큰 전용 업무 목록**(MCP `list_tasks` — 코디 지시로 WORK-009 이 연다).
+
+    화면의 `GET /api/tasks` 를 쓰지 않는 이유 — 그쪽은 기본이 「오늘 하루」이고 `projectId` 가 숫자뿐이라
+    **화면 계약**이다(DEC-002 2026-09-06 · SPEC-004). 도구는 기간이 없고 무소속을 물을 수 있어야 한다.
+
+    돌려주는 목록은 **사후 검사(M-15)의 화이트리스트와 같은 repository 함수**가 만든다 —
+    AI 가 보는 목록과 서버가 검사하는 목록이 갈리면 강등이 엉뚱하게 난다.
+
+    세 갈래는 `MeetingTaskFilterDTO` 가 이미 나눠 온다 — 무소속 표식 같은 HTTP 인코딩을 여기서 보지 않는다
+    (푸는 자리는 라우터 하나이고 리터럴도 거기 하나다).
+    """
+    meeting = await _require_meeting(session, account_id=account_id, meeting_id=meeting_id)
+
+    if command.unassigned_only:
+        target = None
+    elif command.project_id is not None:
+        target = command.project_id
+    else:
+        # 생략 — 회의가 프로젝트를 정한다(무소속 회의면 무소속 업무)
+        target = None if meeting.project is None else meeting.project.id
+
+    return await task_repository.list_meeting_context(
+        session, account_id=account_id, project_id=target
+    )
 
 
 async def soft_delete(session: AsyncSession, *, account_id: int, meeting_id: int) -> None:

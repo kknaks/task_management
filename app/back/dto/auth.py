@@ -40,12 +40,30 @@ class AccountSummaryDTO:
 
 @dataclass(frozen=True)
 class AuthSessionDTO:
-    """`auth_session` 한 행. **refresh 원문은 담지 않는다** — 해시만 있다(A-7)."""
+    """`auth_session` 한 행. **refresh 원문은 담지 않는다** — 해시만 있다(A-7).
+
+    `kind='meeting'` 행의 원문(`meeting_token`)도 **여기 담지 않는다** — 원문을 읽는 경로는
+    `auth_session_repository.get_meeting_token()` 하나이고, 그 값은 옵션 빌더로만 간다(A-13 · 정적 검사).
+    """
 
     id: int
     account_id: int
+    kind: str
+    meeting_id: int | None
     expires_at: datetime
     revoked_at: datetime | None
+
+
+@dataclass(frozen=True)
+class AccountContextDTO:
+    """Bearer 하나를 풀어낸 결과 — **누구의 요청이고, 회의 범위가 걸려 있는가**(WP §Internal Interface).
+
+    `meeting_id` 가 `None` 이면 사용자 세션 JWT 다(계정 범위). 값이 있으면 회의별 단명 토큰이고
+    **그 회의 밖의 회의 리소스는 404** · **쓰기 표면은 전부 404** 다(도구는 조회뿐).
+    """
+
+    account_id: int
+    meeting_id: int | None
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,23 @@
+[project]
+name = "task-management-mcp"
+version = "0.1.0"
+description = "task-management MCP 서버 — codex 가 회의 데이터를 읽는 유일한 길(도구 7개 · 전부 조회)"
+requires-python = ">=3.12"
+# **back 을 의존하지 않는다**(MF-68). DB 드라이버도 없다 — 우리 REST 만 부른다
+dependencies = [
+    # 2.x 는 v1 의 `FastMCP` 를 `MCPServer` 로 바꿨다 — 상한을 열어 두면 다음 메이저에서 조용히 깨진다
+    "mcp>=2.0.0,<3",
+    "httpx>=0.28.0",
+    "uvicorn[standard]>=0.32.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["."]
+testpaths = ["tests"]

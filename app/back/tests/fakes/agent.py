@@ -21,6 +21,8 @@ class AgentCall:
     session_id: str | None
     output_schema: Path | None
     timeout_sec: int
+    # WORK-009 — 제출마다 회의별 단명 토큰이 함께 나가야 한다(MF-4). 「어느 회의의 토큰인가」를 테스트가 본다
+    meeting_token: str
 
 
 @dataclass
@@ -36,6 +38,7 @@ class FakeAgentGateway:
         session_id: str | None,
         output_schema: Path | None,
         timeout_sec: int,
+        meeting_token: str,
     ) -> AgentRunResult:
         self.calls.append(
             AgentCall(
@@ -43,6 +46,7 @@ class FakeAgentGateway:
                 session_id=session_id,
                 output_schema=output_schema,
                 timeout_sec=timeout_sec,
+                meeting_token=meeting_token,
             )
         )
         if not self.responses:

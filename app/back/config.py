@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     # Soniox long-lived 키(SPEC-007 · BE §11). **서버에만 둔다** — 읽는 코드는 `integrations/soniox.py` 하나다.
     # 기본값 없음 — 비어 있으면 기동 실패(WORK-007 Phase 1).
     soniox_api_key: str = Field(min_length=1)
+    # codex 가 부를 MCP 서버 주소(compose 안 `http://mcp:8010/mcp`). 옵션 빌더(`integrations/agent.py`)가 `-c` 로 싣는다 — 여기는 값만 준다.
+    # **기본값을 두지 않는다** — 비밀값은 아니지만 compose 안 주소라 환경마다 다르고, 틀린 기본값이 조용히 나가면
+    # codex 가 툴 0개로 돌아 배치가 컨텍스트 없이 답을 짓는다(WP §Pre-deploy Check).
+    mcp_server_url: str = Field(min_length=1)
 
     # --- 선택 (기본값은 SPEC-000 §5 표의 값) ---
     access_token_ttl_min: int = 60
@@ -62,6 +66,10 @@ class Settings(BaseSettings):
     meeting_batch_timeout_sec: int = 120
     # 회의당 AI 세션 수 — **항상 1**(동시 실행 금지 · M-12). 다른 값은 지원하지 않는다
     meeting_batch_sessions_per_meeting: int = 1
+
+    # --- 회의별 단명 토큰 (A-13 · MF-69) ---
+    # 회의 상한 300분 + 여유. 실측 후 조정한다 — 계약(회의당 하나 · 원문 컬럼 · 폐기 = 행 삭제)은 불변
+    meeting_token_ttl_min: int = 330
 
     # --- 회의 종료 파이프라인 수치 4종 (SPEC-008 §4 「수치」 — **단일 출처**. 실측 후 env 로 조정한다 · 계약은 불변) ---
     # ① 마지막 배치(AI 트랙 전체 재정리) 상한 — 넘으면 「마지막 배치 실패」로 두고 ②로 간다

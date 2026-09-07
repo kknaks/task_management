@@ -35,6 +35,7 @@ from dto.meeting import (
     MergedSummaryDTO,
     PendingChangeDTO,
     ProjectCountDTO,
+    TaskContextDTO,
     TranscriptDTO,
     TranscriptItemDTO,
 )
@@ -535,6 +536,40 @@ class MeetingDetail(CamelModel):
 
 
 # --- 트랜스크립트 (SPEC-007 §4) -------------------------------------------
+
+
+class MeetingTaskItem(CamelModel):
+    """`GET /api/meetings/current/tasks` 한 줄 — SPEC-007 §4 도구 표 `list_tasks` 의 필드 그대로
+    (`id` · 제목 · 상태 · 기한 · 유형명 · 프로젝트). 화면 계약(`TaskListItem`)과 **다른 표면**이다.
+    """
+
+    id: int
+    title: str
+    status: str
+    due_date: date | None
+    work_type_name: str
+    project_name: str | None
+
+    @classmethod
+    def from_dto(cls, dto: TaskContextDTO) -> "MeetingTaskItem":
+        return cls(
+            id=dto.id,
+            title=dto.title,
+            status=dto.status,
+            due_date=dto.due_date,
+            work_type_name=dto.work_type_name,
+            project_name=dto.project_name,
+        )
+
+
+class MeetingTaskListResponse(CamelModel):
+    """목록 응답은 `{ items: [...] }` 로 감싼다(BE §10 공통)."""
+
+    items: list[MeetingTaskItem]
+
+    @classmethod
+    def from_dtos(cls, dtos: list[TaskContextDTO]) -> "MeetingTaskListResponse":
+        return cls(items=[MeetingTaskItem.from_dto(dto) for dto in dtos])
 
 
 class TranscriptItem(CamelModel):

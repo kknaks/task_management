@@ -726,13 +726,24 @@ async def find_list_item(
 async def list_meeting_context(
     session: AsyncSession, *, account_id: int, project_id: int | None
 ) -> list[TaskContextDTO]:
-    """회의에 줄 업무 목록 = 화이트리스트. **프로젝트가 있으면 그 프로젝트, 없으면 무소속 업무**(DEC-003 §4 L98).
+    """회의에 줄 업무 목록 = 화이트리스트 = 도구 `list_tasks` 의 응답. **한 함수다** —
+    AI 가 보는 목록과 서버가 사후 검사(M-15)에 쓰는 목록이 갈리면 강등이 엉뚱하게 난다.
 
+    **프로젝트가 있으면 그 프로젝트, 없으면 무소속 업무**(DEC-003 §4 L98).
     삭제된 업무는 뺀다. 상태로 거르지 않는다 — 완료된 업무도 「갱신」 대상이 될 수 있다.
+    **기간으로 거르지 않는다** — 화면의 `GET /api/tasks`(기본 「오늘 하루」)와 다른 목적이다.
     """
     query = (
-        select(Task.id, Task.title, Task.status, Task.due_date, _WorkTypeRef.name.label("work_type_name"))
+        select(
+            Task.id,
+            Task.title,
+            Task.status,
+            Task.due_date,
+            _WorkTypeRef.name.label("work_type_name"),
+            _ProjectRef.name.label("project_name"),
+        )
         .join(_WorkTypeRef, _WorkTypeRef.id == Task.work_type_id)
+        .outerjoin(_ProjectRef, _ProjectRef.id == Task.project_id)
         .where(Task.account_id == account_id, Task.deleted_at.is_(None))
         .order_by(Task.id)
     )
@@ -748,6 +759,7 @@ async def list_meeting_context(
             status=row.status,
             due_date=row.due_date,
             work_type_name=row.work_type_name,
+            project_name=row.project_name,
         )
         for row in rows
     ]
