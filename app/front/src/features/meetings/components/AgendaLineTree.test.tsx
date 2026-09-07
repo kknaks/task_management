@@ -174,3 +174,43 @@ describe("AI 탭 — 같은 컴포넌트 · `track='ai'` 데이터", () => {
     expect(screen.getByText("기록이 쌓이면 요약이 생성됩니다")).toBeInTheDocument();
   });
 });
+
+describe("density — 미리보기는 compact(WORK-014 · FE §2 규칙 7)", () => {
+  it("**같은 컴포넌트**가 글자 · 여백 · 라벨 폭만 줄인다 — 구조 · 배지 · 펼침 규칙은 하나다", async () => {
+    const { unmount } = render(
+      <AgendaLineTree agendas={AI} expandable badgeFor={() => ({ tone: "caption", label: "AI 안건" })} recordingStartedAt={STARTED} empty={null} />,
+    );
+    const defaultRows = [...document.querySelectorAll("[data-line-id]")].map((row) => row.className);
+    const defaultLabel = (document.querySelector("[data-line-id] span") as HTMLElement).className;
+    const defaultStructure = document.querySelectorAll("[data-agenda-id], [data-line-id]").length;
+    const defaultBadges = screen.getAllByText("AI 안건").length;
+    const defaultArrows = screen.getAllByRole("button", { name: "펼치기" }).length;
+    unmount();
+
+    render(
+      <AgendaLineTree agendas={AI} expandable density="compact" badgeFor={() => ({ tone: "caption", label: "AI 안건" })} recordingStartedAt={STARTED} empty={null} />,
+    );
+    const tree = document.querySelector("[data-density]") as HTMLElement;
+    expect(tree).toHaveAttribute("data-density", "compact");
+
+    // **구조가 같다** — 안건 · 줄 수, 배지, 펼침 화살표가 그대로다
+    expect(document.querySelectorAll("[data-agenda-id], [data-line-id]").length).toBe(defaultStructure);
+    expect(screen.getAllByText("AI 안건")).toHaveLength(defaultBadges);
+    expect(screen.getAllByRole("button", { name: "펼치기" })).toHaveLength(defaultArrows);
+
+    // **달라진 것은 글자 · 여백 · 라벨 폭뿐**이다
+    const compactRows = [...document.querySelectorAll("[data-line-id]")].map((row) => row.className);
+    expect(compactRows[0]).not.toBe(defaultRows[0]);
+    expect(compactRows[0]).toContain("py-1");
+    const compactLabel = (document.querySelector("[data-line-id] span") as HTMLElement).className;
+    expect(defaultLabel).toContain("w-[34px]");
+    expect(compactLabel).toContain("w-[26px]");
+    expect(compactLabel).toContain("text-badge");
+  });
+
+  it("`density` 를 안 주면 상세 밀도(`default`)다 — 기존 화면이 그대로다", () => {
+    render(<AgendaLineTree agendas={AI} expandable badgeFor={() => null} recordingStartedAt={STARTED} empty={null} />);
+    expect(document.querySelector("[data-density]")).toHaveAttribute("data-density", "default");
+  });
+});
+

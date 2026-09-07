@@ -110,7 +110,7 @@ describe("AI 한 줄 요약 바(U-8)", () => {
 });
 
 describe("상태별 본문", () => {
-  it("`scheduled` — 헤더 일시 범위 · 안건 목록(편집 없음) · 첨부 행 · 「상세보기」 링크", async () => {
+  it("`scheduled` — 헤더 일시 범위 · 안건 목록(편집 없음) · 첨부 행 · 「회의 입장」 링크", async () => {
     serve(meetingDetail());
     renderWithProviders(<MeetingPreviewPanel meetingId={21} />);
 
@@ -122,7 +122,40 @@ describe("상태별 본문", () => {
     expect(screen.queryByRole("button", { name: /제거/ })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "경쟁사 요금제 비교" })).toHaveAttribute("href", "https://example.com/pricing");
     // Next `Link` 가 뒤 슬래시를 정규화한다 — 라우트·쿼리만 본다.
-    expect(screen.getByRole("link", { name: "상세보기" }).getAttribute("href")).toMatch(/^\/meetings\/detail\/?\?id=21$/);
+    expect(screen.getByRole("link", { name: "회의 입장" }).getAttribute("href")).toMatch(/^\/meetings\/detail\/?\?id=21$/);
+  });
+
+  it.each([
+    ["scheduled", "회의 입장"],
+    ["recording", "회의 입장"],
+    ["generating", "상세보기"],
+    ["ended", "상세보기"],
+  ] as const)("CTA 문구 — `%s` 는 「%s」이고 **가는 곳은 넷 다 같다**(MF-6)", async (status, label) => {
+    serve(meetingDetail({ status, integrationState: status === "ended" ? "succeeded" : "not_started" }));
+    renderWithProviders(<MeetingPreviewPanel meetingId={21} />);
+    const cta = await screen.findByRole("link", { name: label });
+    expect(cta.getAttribute("href")).toMatch(/^\/meetings\/detail\/?\?id=21$/);
+    // 다른 쪽 문구는 없다 — 한 자리에 하나다
+    expect(screen.queryByRole("link", { name: label === "회의 입장" ? "상세보기" : "회의 입장" })).not.toBeInTheDocument();
+  });
+
+  it("**패널 바깥 크기가 내용에 따라 변하지 않는다** — 빈 상태와 같은 상자이고 본문만 스크롤한다(U-8 · MF-5)", async () => {
+    const { unmount } = renderWithProviders(<MeetingPreviewPanel meetingId={null} />);
+    const emptyClass = screen.getByRole("region", { name: "회의록 미리보기" }).className;
+    unmount();
+
+    serve(meetingDetail({ status: "ended", integrationState: "succeeded" }));
+    renderWithProviders(<MeetingPreviewPanel meetingId={21} />);
+    // 본문이 그려질 때까지 기다린다 — 로딩 중에는 스켈레톤만 있다
+    await screen.findByRole("tab", { name: "회의록" });
+    const panel = screen.getByRole("region", { name: "회의록 미리보기" });
+    // 바깥 상자의 클래스가 같다 — 내용이 늘어도 패널이 커지지 않는다
+    expect(panel.className).toBe(emptyClass);
+    expect(panel.className).toContain("min-h-0");
+    expect(panel.className).toContain("overflow-hidden");
+    // 넘치는 것은 **본문 안에서** 스크롤한다 · `position:absolute` 로 배치하지 않는다
+    expect(panel.querySelector(".overflow-y-auto")).not.toBeNull();
+    expect(panel.className).not.toContain("absolute");
   });
 
   it("`recording` 은 「기록 중입니다」, `generating` 은 「회의록 생성중」 — 스트림을 열지 않는다", async () => {

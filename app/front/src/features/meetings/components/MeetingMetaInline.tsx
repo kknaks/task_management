@@ -14,7 +14,7 @@
  * 유형명은 **설정의 동적 유형 이름**이다 — 시안 L1437 「미팅 · 회의」 고정명을 쓰지 않는다(§A-7). 프로젝트가 없으면 「프로젝트 없음」 회색.
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useState, type ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 import { toast } from "sonner";
 
@@ -294,20 +294,65 @@ export function MeetingProjectInline({
 }
 
 /**
- * 페이지 헤더의 메타 한 줄(시안 L1437) — 「<일시> · <n분> · <유형명> · <프로젝트명>」. 일시 · 유형 · 프로젝트가 각각 인라인 컨트롤이다.
- * 길이는 `durationMinutes`(서버 파생 — G-7)다.
+ * **배지 줄**(MF-8 · FE §6-3 — 헤더 ②) — 좌측 [유형 배지 ˅] [● 프로젝트 ˅] · 우측 그 화면의 액션 + 상태 칩.
+ *
+ * **제목 위에 온다.** 업무 상세 헤더가 정본이고 회의록 세 화면이 그것을 따라간다 —
+ * 세 화면이 각자 배치하면 순서가 갈리므로 좌우 배치를 여기 한 자리에 둔다.
+ * 우측 슬롯은 **배지와 같은 높이**여야 한다(`items-center`).
  */
-export function MeetingMetaLine({ meeting, meta, locked }: { meeting: MeetingDetail; meta: MetaSave; locked: boolean }) {
+export function MeetingBadgeRow({
+  meeting,
+  meta,
+  locked,
+  actions,
+}: {
+  meeting: MeetingDetail;
+  meta: MetaSave;
+  /** 회의 중 · 생성중처럼 메타를 못 고치는 상태면 배지가 표시만 된다. */
+  locked: boolean;
+  /** 우측 — 시작 전 `⋯`+「회의 시작」 · 회의 중 「일시정지」+「회의 종료」 · 종료 후 「삭제」+상태 칩. */
+  actions?: ReactNode;
+}) {
+  return (
+    <div data-header-badges className="flex items-center justify-between gap-4">
+      <div className="flex min-w-0 items-center gap-2">
+        <MeetingWorkTypeInline meeting={meeting} meta={meta} locked={locked} variant="badge" />
+        <MeetingProjectInline meeting={meeting} meta={meta} locked={locked} variant="chip" />
+      </div>
+      {actions ? <div className="flex shrink-0 items-center gap-2.5">{actions}</div> : null}
+    </div>
+  );
+}
+
+/**
+ * 페이지 헤더의 **메타 한 줄**(헤더 ④) — 「<일시> · <n분>」. 일시는 인라인 컨트롤이다.
+ *
+ * **유형 · 프로젝트가 여기 없다** — 배지 줄(②)로 올라갔다(MF-8). 길이는 `durationMinutes`(서버 파생 — G-7)다.
+ * `suffix` 는 화면이 더하는 꼬리표(시작 전 「예정」 — SPEC-006 U-4).
+ */
+export function MeetingMetaLine({
+  meeting,
+  meta,
+  locked,
+  suffix,
+}: {
+  meeting: MeetingDetail;
+  meta: MetaSave;
+  locked: boolean;
+  suffix?: string;
+}) {
   const dot = <span aria-hidden className="text-fg-caption">·</span>;
   return (
-    <div className="flex flex-wrap items-center gap-2 text-meta text-fg-meta">
+    <div data-header-meta className="flex flex-wrap items-center gap-2 text-meta text-fg-meta">
       <MeetingDateTimeInline meeting={meeting} meta={meta} locked={locked} />
       {dot}
       <span>{meeting.durationMinutes}분</span>
-      {dot}
-      <MeetingWorkTypeInline meeting={meeting} meta={meta} locked={locked} variant="text" />
-      {dot}
-      <MeetingProjectInline meeting={meeting} meta={meta} locked={locked} variant="text" />
+      {suffix ? (
+        <>
+          {dot}
+          <span>{suffix}</span>
+        </>
+      ) : null}
     </div>
   );
 }

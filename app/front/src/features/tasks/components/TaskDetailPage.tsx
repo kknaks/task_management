@@ -21,6 +21,7 @@
 
 import Link from "next/link";
 
+import { DetailHeaderBar, HOME_CRUMB, TASKS_CRUMB, TASKS_ROUTE } from "@/components/shared/AppShell";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { Button } from "@/components/ui/button";
 import { TaskPageBlocks } from "@/features/tasks/components/TaskDetailBody";
@@ -57,15 +58,8 @@ function PageBody({ task }: { task: import("@/features/tasks/types").TaskDetail 
 
   return (
     <div className="flex flex-col">
-      <nav aria-label="breadcrumb" className="flex items-center gap-[7px] text-meta text-fg-caption">
-        <span>홈</span>
-        <span aria-hidden>›</span>
-        <Link href="/tasks/" className="hover:underline">
-          내 업무
-        </Link>
-        <span aria-hidden>›</span>
-        <span className="truncate text-fg-meta">{task.title}</span>
-      </nav>
+      {/* 「←」 + breadcrumb — 공용 부품 하나다(FE §6-3 · MF-7). 「←」는 `/tasks/`(부모 라우트 · `router.back()` 아님) */}
+      <DetailHeaderBar trail={[HOME_CRUMB, TASKS_CRUMB, { label: task.title }]} backTo={TASKS_ROUTE} />
 
       {/* 헤더 — 시안 1536~1571. `top 66` 이라 breadcrumb 아래 20 이 남는다 */}
       <div className="mt-5">

@@ -28,11 +28,12 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Loader2, Pause, Play, Square } from "lucide-react";
 import { toast } from "sonner";
 
-import { Breadcrumb } from "@/components/shared/AppShell";
+import { DetailHeaderBar, HOME_CRUMB, MEETINGS_CRUMB, MEETINGS_ROUTE } from "@/components/shared/AppShell";
 import { PanelTabs } from "@/components/shared/PanelTabs";
 import { LIVE_AGENDA_BADGE } from "@/features/meetings/agendaBadges";
 import { AgendaLineTree, type AgendaBadge } from "@/features/meetings/components/AgendaLineTree";
 import { AttachmentAddTrigger, MeetingAttachmentsTab } from "@/features/meetings/components/MeetingAttachmentsTab";
+import { MeetingBadgeRow, useMeetingMetaSave } from "@/features/meetings/components/MeetingMetaInline";
 import { MeetingStatusBar, type MeetingStatusBarProps } from "@/features/meetings/components/MeetingStatusBar";
 import { PromptBar } from "@/features/meetings/components/PromptBar";
 import { TranscriptPanel, type TranscriptPanelHandle } from "@/features/meetings/components/TranscriptPanel";
@@ -74,6 +75,8 @@ export function MeetingLiveView({ meeting, onEnd }: { meeting: MeetingDetail; on
   const client = useQueryClient();
   const overlay = useOverlay();
   const mutations = useMeetingMutations(meeting.id);
+  // 배지 줄은 **표시만**이다(회의 중 메타 잠금) — 저장 훅은 실패 표시 자리를 위해 받는다
+  const meta = useMeetingMetaSave(meeting);
   const stream = useMeetingStream({ meetingId: meeting.id });
   const transcript = useTranscriptQuery(meeting.id);
   const transcriptRef = useRef<TranscriptPanelHandle>(null);
@@ -238,17 +241,17 @@ export function MeetingLiveView({ meeting, onEnd }: { meeting: MeetingDetail; on
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <Breadcrumb trail={["홈", "회의록", "회의 중"]} />
+      {/* ① breadcrumb + 「←」 — 회의 중에도 목록으로 올라갈 수 있다(스트림은 그대로 산다) */}
+      <DetailHeaderBar trail={[HOME_CRUMB, MEETINGS_CRUMB, { label: meeting.title }]} backTo={MEETINGS_ROUTE} />
 
-      <header className="mt-2 flex items-end justify-between gap-4">
-        <div className="flex min-w-0 flex-col gap-1">
-          <h1 className="truncate text-page-title text-foreground">{meeting.title}</h1>
-          {/* 부제 — 날짜 · 유형명. **「회의실 A」 같은 장소는 없다**(DEC-003 §1 표) */}
-          <p className="text-meta text-fg-meta">
-            {formatMeetingDateTime(meeting.startAt)} 시작 · {meeting.workType.name}
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-2.5">
+      {/* ② 배지 줄 → ③ 제목 → ④ 메타(MF-8 · SPEC-007 Placement). 회의 중이라 **배지는 표시만**이다 */}
+      <header className="mt-2 flex min-w-0 flex-col gap-1.5">
+        <MeetingBadgeRow
+          meeting={meeting}
+          meta={meta}
+          locked
+          actions={
+            <>
           {paused ? (
             <button
               type="button"
@@ -275,7 +278,12 @@ export function MeetingLiveView({ meeting, onEnd }: { meeting: MeetingDetail; on
             <Square className="h-[11px] w-[11px] fill-current" aria-hidden />
             회의 종료
           </button>
-        </div>
+            </>
+          }
+        />
+        <h1 className="truncate text-page-title text-foreground">{meeting.title}</h1>
+        {/* ④ 메타 — 「08월 27일 (목) 09:30 시작」. **「회의실 A」 같은 장소는 없다**(DEC-003 §1 표) */}
+        <p data-header-meta className="text-meta text-fg-meta">{formatMeetingDateTime(meeting.startAt)} 시작</p>
       </header>
 
       {/* 상단 바 슬롯 — top 150 · 본문 폭 · 56. 회의 생애 전체에서 한 자리([09] L733) */}

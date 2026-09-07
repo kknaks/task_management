@@ -36,6 +36,14 @@ export type { AgendaBadge } from "@/features/meetings/components/AgendaHeader";
 /** 편집 모드에서 저장하는 줄 필드 — **본문 하나뿐**이다(종류를 바꾸는 표면이 없다 — MF-60). */
 export type LineEditField = "content";
 
+/**
+ * **밀도**(FE §2 규칙 7 · MF-5) — `default`(상세) · `compact`(미리보기 패널).
+ *
+ * 가르는 것은 **글자 크기 · 여백 · 라벨 폭**뿐이다. 구조 · 배지 · 펼침 규칙은 **하나**다 —
+ * 미리보기 전용 트리를 만들면 두 벌이 되고 규격이 갈린다(정적 검사가 트리 컴포넌트를 하나로 묶어 둔다).
+ */
+export type TreeDensity = "default" | "compact";
+
 export interface AgendaLineTreeProps {
   agendas: readonly MeetingAgenda[];
   /** 활성 안건 — 줄 기준선이 `#C9D1FB` 다. 없으면 전부 `#EBEBEB`. */
@@ -45,6 +53,8 @@ export interface AgendaLineTreeProps {
    * 통합본은 **줄마다 판정**(`detail`·`evidence` 있는 줄만 — SPEC-008 U-5).
    */
   expandable: boolean | ((line: MeetingLine) => boolean);
+  /** 미리보기는 `compact` — 글자 · 여백 · 라벨 폭만 줄인다(구조는 같다). */
+  density?: TreeDensity;
   /** 안건 헤더 체크 — 있으면 클릭 가능. done ↔ next 판정은 호출자가 한다. */
   onToggleDone?: (agenda: MeetingAgenda) => void;
   /** 근거 칩 클릭. 대상 블록이 있었는지 돌려준다(U-6). 없으면 칩은 표시만이다. */
@@ -98,6 +108,7 @@ export function AgendaLineTree({
   agendas,
   activeAgendaId = null,
   expandable,
+  density = "default",
   onToggleDone,
   onChipClick,
   chipCaption,
@@ -121,15 +132,21 @@ export function AgendaLineTree({
   }
 
   const canExpand = (line: MeetingLine) => (typeof expandable === "function" ? expandable(line) : expandable);
+  const compact = density === "compact";
 
   return (
-    <ol className={cn("flex flex-col gap-5", className)} data-editing={editable || undefined}>
+    <ol
+      className={cn("flex flex-col", compact ? "gap-3.5" : "gap-5", className)}
+      data-density={density}
+      data-editing={editable || undefined}
+    >
       {[...agendas].sort(byOrder).map((agenda) => {
         const lines = [...agenda.lines].sort(byOrder);
         const active = agenda.id === activeAgendaId;
         return (
-          <li key={agenda.id} data-agenda-id={agenda.id} className="flex flex-col gap-1.5">
+          <li key={agenda.id} data-agenda-id={agenda.id} className={cn("flex flex-col", compact ? "gap-1" : "gap-1.5")}>
             <AgendaHeader
+              density={density}
               number={agenda.orderIndex + 1}
               title={agenda.title}
               badge={badgeFor(agenda)}
@@ -147,19 +164,21 @@ export function AgendaLineTree({
               }
             />
             {lines.length === 0 ? (
-              <div className="ml-[37px] border-l-2 border-row-divider pl-[22px] pt-1">
-                <span className="text-meta text-fg-faint">아직 기록 없음</span>
+              <div className={cn("border-l-2 border-row-divider pt-1", compact ? "ml-[26px] pl-4" : "ml-[37px] pl-[22px]")}>
+                <span className={cn("text-fg-faint", compact ? "text-caption" : "text-meta")}>아직 기록 없음</span>
               </div>
             ) : (
               <div
                 className={cn(
-                  "ml-[37px] flex flex-col gap-0.5 border-l-2 pl-3.5",
+                  "flex flex-col gap-0.5 border-l-2",
+                  compact ? "ml-[26px] pl-2.5" : "ml-[37px] pl-3.5",
                   active ? "border-ai-bar-border" : "border-divider",
                 )}
               >
                 {lines.map((line) => (
                   <LineRow
                     key={line.id}
+                    density={density}
                     line={line}
                     recordingStartedAt={recordingStartedAt}
                     expandable={canExpand(line)}

@@ -71,7 +71,8 @@ describe("헤더 · 상태 바 · 없는 것", () => {
     await renderScheduled();
     expect(screen.getByRole("status", { name: "기록 대기" })).toHaveTextContent("00:00:00");
     expect(screen.getByRole("button", { name: "회의 시작" })).toBeInTheDocument();
-    expect(screen.getByText("08월 27일 (목) 09:30 예정 · 미팅·회의 · 소개서 개정")).toBeInTheDocument();
+    // 메타 한 줄은 **일시 · 소요 · 예정**뿐이다 — 유형 · 프로젝트는 배지 줄로 올라갔다(MF-8)
+    expect(screen.getByText("08월 27일 (목) 09:30 – 10:30 · 60분 · 예정")).toBeInTheDocument();
 
     expect(screen.queryByText("회의 정보 수정")).not.toBeInTheDocument();
     expect(screen.queryByText(/내 목소리 등록됨/)).not.toBeInTheDocument();
@@ -88,7 +89,8 @@ describe("헤더 · 상태 바 · 없는 것", () => {
 
   it("무소속이면 프로젝트 자리를 비운다 · AI 요약 탭은 빈 상태 문구", async () => {
     await renderScheduled(meetingDetail({ project: null }));
-    expect(screen.getByText("08월 27일 (목) 09:30 예정 · 미팅·회의")).toBeInTheDocument();
+    expect(screen.getByText("08월 27일 (목) 09:30 – 10:30 · 60분 · 예정")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "프로젝트 바꾸기" })).toHaveTextContent("프로젝트 없음");
     await userEvent.click(screen.getByRole("tab", { name: "AI 요약" }));
     expect(screen.getByText("회의를 시작하면 AI 요약이 여기에 쌓입니다")).toBeInTheDocument();
   });
@@ -341,3 +343,27 @@ describe("삭제 · 시작 · 스위치", () => {
     expect(screen.queryByText("이 화면은 WORK-008 에서 만든다")).not.toBeInTheDocument();
   });
 });
+describe("헤더 순서 · 「←」(WORK-014 · MF-8 · FE §6-3)", () => {
+  it("① breadcrumb(+「←」) → ② 배지 줄 → ③ 제목 → ④ 메타 순서다 · 메타에 유형 · 프로젝트가 없다", async () => {
+    await renderScheduled();
+    const back = screen.getByRole("link", { name: "뒤로" });
+    expect(back.getAttribute("href")).toMatch(/^\/meetings\/?$/);
+    // breadcrumb 「홈」·「회의록」이 링크다(마지막 제목만 아니다)
+    const nav = screen.getByRole("navigation", { name: "현재 위치" });
+    expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual(["홈", "회의록"]);
+
+    const badges = document.querySelector("[data-header-badges]") as HTMLElement;
+    const title = screen.getByRole("heading", { level: 1 });
+    const meta = document.querySelector("[data-header-meta]") as HTMLElement;
+    // **제목이 배지 줄 위에 오면 반려**다 — DOM 순서로 고정한다
+    expect(badges.compareDocumentPosition(title)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(title.compareDocumentPosition(meta)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    // ④ 메타에는 유형 · 프로젝트가 없다 — ② 로 올라갔다
+    expect(meta.textContent).not.toMatch(/미팅·회의|소개서 개정/);
+    // ② 배지 줄에 유형 · 프로젝트 · 그 화면의 액션이 **같은 줄**에 있다
+    expect(badges.textContent).toContain("미팅·회의");
+    expect(within(badges).getByRole("button", { name: "회의 시작" })).toBeInTheDocument();
+    expect(within(badges).getByRole("button", { name: "더 보기" })).toBeInTheDocument();
+  });
+});
+

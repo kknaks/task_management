@@ -332,8 +332,8 @@ const WORK_008_FILES = [
   // Phase 5 — 업무 연동
   "hooks/useMeetingTaskLink.tsx",
   "components/LineTaskButton.tsx",
-  "components/LinkTaskDrawer.tsx",
-  "components/CreateTaskFromLineDrawer.tsx",
+  "components/TaskPayloadDrawer.tsx",
+  "components/ActionPayloadDrawer.tsx",
   "components/PayloadDrawerParts.tsx",
   "components/TaskDateField.tsx",
 ];
@@ -479,7 +479,7 @@ describe("⑳ 업무 연동 — 업무 API 직접 호출 0건 · 판정 코드 0
   });
 
   it("「시작 상태」 · 「연관 업무로 바꾸기」 가 Phase 5 화면 파일(주석 제외)에 0건이다(⑱ 재실행)", () => {
-    for (const name of ["components/LinkTaskDrawer.tsx", "components/CreateTaskFromLineDrawer.tsx", "components/LineTaskButton.tsx"]) {
+    for (const name of ["components/TaskPayloadDrawer.tsx", "components/ActionPayloadDrawer.tsx", "components/LineTaskButton.tsx"]) {
       const code = stripComments(read(path.join(MEETINGS, name)));
       expect(code, name).not.toMatch(/시작 상태|연관 업무로 바꾸기|["'>]대기["'<]/);
     }
@@ -590,7 +590,7 @@ describe("㉓ WORK-013 — payload 드로어 둘 · 종류 셀렉터 폐기 · �
   });
 
   it("**푸터 버튼은 모드별 하나**다 — 두 드로어가 `SUBMIT_LABEL[submitMode]` 하나만 그린다(MF-66)", () => {
-    for (const name of ["components/CreateTaskFromLineDrawer.tsx", "components/LinkTaskDrawer.tsx"]) {
+    for (const name of ["components/ActionPayloadDrawer.tsx", "components/TaskPayloadDrawer.tsx"]) {
       const code = read(path.join(MEETINGS, name));
       // 제출 버튼의 문구가 **한 자리**에서만 온다 — 「저장」·「넣기」를 손으로 적은 버튼이 없다
       expect(code.match(/SUBMIT_LABEL\[submitMode\]/g) ?? [], name).toHaveLength(1);
@@ -604,6 +604,58 @@ describe("㉓ WORK-013 — payload 드로어 둘 · 종류 셀렉터 폐기 · �
       "features/meetings/components/MeetingDetailBody.tsx",
       "features/meetings/hooks/useMeetingEdit.tsx",
     ]);
+  });
+});
+
+describe("㉔ WORK-014 — 「←」는 링크 · 패널은 흐름 배치 · 트리는 하나", () => {
+  it("**`router.back(` 이 0건**이다 — 「←」는 부모 라우트 `<a>` 다(FE §6-3)", () => {
+    const sources = walk(SRC).filter((file) => /\.tsx?$/.test(file) && !/\.test\.tsx?$/.test(file));
+    const offenders = sources.filter((file) => /router\.back\(/.test(stripComments(read(file)))).map(rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it("breadcrumb · 「←」의 소유자가 `AppShell.tsx` 하나다 — 화면마다 다시 그리지 않는다(FE §6-3)", () => {
+    const sources = walk(SRC).filter((file) => /\.tsx?$/.test(file) && !/\.test\.tsx?$/.test(file));
+    // 손으로 그린 breadcrumb `<nav>` 가 없다
+    const offenders = sources
+      .filter((file) => !file.endsWith("components/shared/AppShell.tsx") && /aria-label="(breadcrumb|현재 위치)"/.test(read(file)))
+      .map(rel);
+    expect(offenders).toEqual([]);
+    expect(read(path.join(SRC, "components/shared/AppShell.tsx"))).toMatch(/export function DetailHeaderBar/);
+  });
+
+  it("**패널을 `position:absolute` 로 배치하지 않는다**(FE 금지 목록 5) — 목록 · 미리보기 · 상세 셋 다", () => {
+    for (const name of ["components/MeetingsScreen.tsx", "components/MeetingListPanel.tsx", "components/MeetingPreviewPanel.tsx"]) {
+      const code = stripComments(read(path.join(MEETINGS, name)));
+      expect(code, name).not.toMatch(/\babsolute\b|position:\s*absolute/);
+    }
+  });
+
+  it("미리보기 트리가 **같은 컴포넌트**다 — `density` 로 가르고 두 번째 트리를 만들지 않는다(⑮ 재실행 · FE §2 규칙 7)", () => {
+    const trees = meetingSources.filter((file) => /Tree/i.test(path.basename(file))).map(rel);
+    expect(trees).toEqual(["features/meetings/components/AgendaLineTree.tsx"]);
+    const preview = read(path.join(MEETINGS, "components/MeetingPreviewPanel.tsx"));
+    expect(preview).toMatch(/density="compact"/);
+  });
+
+  it("패널 폭 규칙이 **한 자리**에 있다 — 좌 400 고정(1280~1439) · 500(≥1440) · 우는 `min-w-0` 으로 남는 폭(U-6)", () => {
+    const list = read(path.join(MEETINGS, "components/MeetingListPanel.tsx"));
+    // 좌 목록이 폭을 갖는 유일한 자리다 — 두 구간이 한 줄에 있다
+    expect(list).toMatch(/w-\[400px\][^"]*wide:w-\[500px\]/);
+    const screen = read(path.join(MEETINGS, "components/MeetingsScreen.tsx"));
+    // 높이는 화면이 고정하고(뷰포트 기준) 패널이 그 안에서 스크롤한다 — 폭 리터럴을 여기 다시 적지 않는다
+    expect(screen).toMatch(/h-\[calc\(100vh-\d+px\)\]/);
+    expect(stripComments(screen)).not.toMatch(/w-\[\d+px\]/);
+    expect(read(path.join(MEETINGS, "components/MeetingPreviewPanel.tsx"))).toMatch(/min-h-0 min-w-0 flex-1/);
+  });
+
+  it("미리보기 CTA 문구가 **상태 넷 한 표**에서 나온다 — 화면이 문구를 손으로 적지 않는다(MF-6)", () => {
+    const code = read(path.join(MEETINGS, "components/MeetingPreviewPanel.tsx"));
+    expect(code).toMatch(/PREVIEW_CTA_LABEL: Record<MeetingDetail\["status"\], string>/);
+    expect(code).toMatch(/PREVIEW_CTA_LABEL\[meeting\.status\]/);
+    // 표 밖에서 문구를 다시 적은 곳이 없다
+    expect(code.match(/"회의 입장"/g) ?? []).toHaveLength(2);
+    expect(code.match(/"상세보기"/g) ?? []).toHaveLength(2);
   });
 });
 

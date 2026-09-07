@@ -50,6 +50,17 @@ export function meetingDetailHref(id: number): string {
   return `/meetings/detail/?id=${id}`;
 }
 
+/**
+ * **CTA 문구는 상태가 정한다**(SPEC-006 U-8 · MF-6) — 아직 안 끝난 회의는 「들어가는」 것이고 끝난 회의는 「보는」 것이다.
+ * **가는 곳은 넷 다 같다**(`/meetings/detail?id=`) — 화면이 상태로 갈린다(FE §1-2 「상태로 갈린다」).
+ */
+export const PREVIEW_CTA_LABEL: Record<MeetingDetail["status"], string> = {
+  scheduled: "회의 입장",
+  recording: "회의 입장",
+  generating: "상세보기",
+  ended: "상세보기",
+};
+
 /** U-8 첨부 행 메타 — 문서 「<크기> · <폴더 경로>」 / 링크 「<도메인>」(시안 L222~226 시각). */
 function previewAttachmentMeta(attachment: MeetingAttachment): string {
   if (attachment.kind === "link") {
@@ -67,7 +78,12 @@ export function MeetingPreviewPanel({ meetingId }: { meetingId: number | null })
   return (
     <section
       aria-label="회의록 미리보기"
-      className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-panel border border-border bg-card"
+      /**
+       * **바깥 크기가 내용에 따라 변하지 않는다**(U-8 · MF-5) — 높이는 부모(`MeetingsScreen`)가 정하고
+       * 넘치는 것은 **본문 안에서** 스크롤한다. `min-h-0` 이 없으면 flex 자식이 내용만큼 늘어 패널이 뷰포트를 넘는다.
+       * `position:absolute` 로 배치하지 않는다(FE 금지 목록 5).
+       */
+      className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-panel border border-border bg-card"
     >
       {meetingId === null ? (
         <EmptyState className="my-auto" message="회의록을 고르면 여기에 보입니다" />
@@ -94,7 +110,7 @@ export function MeetingPreviewPanel({ meetingId }: { meetingId: number | null })
               href={meetingDetailHref(meeting.id)}
               className="flex h-[30px] shrink-0 items-center rounded-control border border-border px-3 text-meta text-fg-meta hover:bg-muted hover:text-foreground"
             >
-              상세보기
+              {PREVIEW_CTA_LABEL[meeting.status]}
             </Link>
           </header>
 
@@ -159,6 +175,7 @@ function NotesBody({ meeting }: { meeting: MeetingDetail }) {
           <AgendaLineTree
             agendas={notesAgendasOf(meeting)}
             expandable={notesExpandable}
+            density="compact"
             chipCaption={PREVIEW_CHIP_CAPTION}
             badgeFor={endedNotesBadge}
             recordingStartedAt={meeting.recordingStartedAt}

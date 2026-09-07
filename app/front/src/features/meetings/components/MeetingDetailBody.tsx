@@ -48,8 +48,8 @@ import { speakerCountOf, useTranscriptQuery } from "@/features/meetings/hooks/us
 import { useMeetingMutations } from "@/features/meetings/hooks/useMeetingMutations";
 import { openAddLineDrawer } from "@/features/meetings/components/AddLineDrawer";
 import { openAttachmentFileDrawer } from "@/features/meetings/components/AttachmentFileDrawer";
-import { openActionPayloadDrawer } from "@/features/meetings/components/CreateTaskFromLineDrawer";
-import { openTaskPayloadDrawer, pickedFromLineTask } from "@/features/meetings/components/LinkTaskDrawer";
+import { openActionPayloadDrawer } from "@/features/meetings/components/ActionPayloadDrawer";
+import { openTaskPayloadDrawer, pickedFromLineTask } from "@/features/meetings/components/TaskPayloadDrawer";
 import type { SubmitMode } from "@/features/meetings/components/PayloadDrawerParts";
 import { actionPayloadOf, taskPayloadOf } from "@/features/meetings/linePayload";
 import { LineTaskButton } from "@/features/meetings/components/LineTaskButton";

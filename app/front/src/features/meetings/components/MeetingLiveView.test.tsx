@@ -120,7 +120,8 @@ describe("진입 · 헤더 · 상태 바", () => {
     expect(screen.getByRole("status", { name: "일시정지 · 서버 연결이 끊겼습니다" })).toBeInTheDocument();
     expect(FakeWebSocket.instances).toHaveLength(0);
     expect(media.getUserMedia).not.toHaveBeenCalled();
-    expect(screen.getByText("08월 27일 (목) 09:30 시작 · 미팅·회의")).toBeInTheDocument();
+    // 메타 한 줄은 **일시만** — 유형 · 프로젝트는 배지 줄로 올라갔다(MF-8)
+    expect(screen.getByText("08월 27일 (목) 09:30 시작")).toBeInTheDocument();
     expect(screen.queryByText(/회의실/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "재개" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "회의 종료" })).toBeEnabled();
@@ -512,3 +513,27 @@ describe("우 패널 — 첨부 · 트랜스크립트 실패", () => {
 });
 
 void flush;
+describe("헤더 순서 · 「←」(WORK-014 · MF-8 · FE §6-3)", () => {
+  it("① breadcrumb(+「←」) → ② 배지 줄 → ③ 제목 → ④ 메타 순서다 · 메타에 유형 · 프로젝트가 없다", async () => {
+    await renderLive();
+    const back = screen.getByRole("link", { name: "뒤로" });
+    expect(back.getAttribute("href")).toMatch(/^\/meetings\/?$/);
+    // breadcrumb 「홈」·「회의록」이 링크다(마지막 제목만 아니다)
+    const nav = screen.getByRole("navigation", { name: "현재 위치" });
+    expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual(["홈", "회의록"]);
+
+    const badges = document.querySelector("[data-header-badges]") as HTMLElement;
+    const title = screen.getByRole("heading", { level: 1 });
+    const meta = document.querySelector("[data-header-meta]") as HTMLElement;
+    // **제목이 배지 줄 위에 오면 반려**다 — DOM 순서로 고정한다
+    expect(badges.compareDocumentPosition(title)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(title.compareDocumentPosition(meta)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    // ④ 메타에는 유형 · 프로젝트가 없다 — ② 로 올라갔다
+    expect(meta.textContent).not.toMatch(/미팅·회의|소개서 개정/);
+    // ② 배지 줄에 유형 · 프로젝트 · 그 화면의 액션이 **같은 줄**에 있다
+    expect(badges.textContent).toContain("미팅·회의");
+    expect(within(badges).getByRole("button", { name: "회의 종료" })).toBeInTheDocument();
+    expect(within(badges).getByRole("button", { name: /재개|일시정지/ })).toBeInTheDocument();
+  });
+});
+

@@ -23,7 +23,7 @@ import { useRouter } from "next/navigation";
 import { Loader2, MoreHorizontal, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
-import { Breadcrumb } from "@/components/shared/AppShell";
+import { DetailHeaderBar, HOME_CRUMB, MEETINGS_CRUMB, MEETINGS_ROUTE } from "@/components/shared/AppShell";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { PanelTabs } from "@/components/shared/PanelTabs";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -31,13 +31,14 @@ import { AgendaInputBar } from "@/features/meetings/components/AgendaInputBar";
 import { AgendaEmptyState, MeetingAgendaList } from "@/features/meetings/components/MeetingAgendaList";
 import { AttachmentAddTrigger, MeetingAttachmentsTab } from "@/features/meetings/components/MeetingAttachmentsTab";
 import { openMeetingDeleteModal } from "@/features/meetings/components/MeetingDeleteModal";
+import { MeetingBadgeRow, useMeetingMetaSave } from "@/features/meetings/components/MeetingMetaInline";
 import { MeetingStatusBar } from "@/features/meetings/components/MeetingStatusBar";
 import { INVALID_STATUS_MESSAGE, isInvalidMeetingStatus, meetingInlineError } from "@/features/meetings/errors";
 import { useAgendaAutoSave } from "@/features/meetings/hooks/useAgendaAutoSave";
 import { useMeetingMutations } from "@/features/meetings/hooks/useMeetingMutations";
 import { openAttachmentFileDrawer } from "@/features/meetings/openMeetingDrawers";
 import type { MeetingDetail } from "@/features/meetings/types";
-import { formatMeetingDateTime } from "@/lib/datetime";
+import { formatMeetingTimeRange } from "@/lib/datetime";
 import { useOverlay } from "@/lib/overlay/OverlayProvider";
 
 type LeftTab = "notes" | "ai";
@@ -47,6 +48,8 @@ export function MeetingScheduledPage({ meeting }: { meeting: MeetingDetail }) {
   const router = useRouter();
   const overlay = useOverlay();
   const mutations = useMeetingMutations(meeting.id);
+  // 배지 줄의 유형 · 프로젝트 인라인 셀렉터가 쓰는 저장 훅(U-4 — 「누르면 팝오버 · `PATCH /api/meetings/{id}`」)
+  const meta = useMeetingMetaSave(meeting);
   const agenda = useAgendaAutoSave(meeting.id);
   const [leftTab, setLeftTab] = useState<LeftTab>("notes");
   const [rightTab, setRightTab] = useState<RightTab>("transcript");
@@ -98,35 +101,42 @@ export function MeetingScheduledPage({ meeting }: { meeting: MeetingDetail }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <Breadcrumb trail={["홈", "회의록", "시작 전"]} />
+      {/* ① breadcrumb + 「←」 — 「홈」·「회의록」은 링크, 「←」는 `/meetings/`(MF-7 · FE §6-3) */}
+      <DetailHeaderBar trail={[HOME_CRUMB, MEETINGS_CRUMB, { label: meeting.title }]} backTo={MEETINGS_ROUTE} />
 
-      {/* 헤더 — 좌(제목 + 서브) / 우(`⋯` + 「회의 시작」). 「회의 정보 수정」은 **없다**(§7) */}
-      <header className="mt-2 flex items-end justify-between gap-4">
-        <div className="flex min-w-0 flex-col gap-1">
-          <h1 className="truncate text-page-title text-foreground">{meeting.title}</h1>
-          <p className="text-meta text-fg-meta">
-            {formatMeetingDateTime(meeting.startAt)} 예정 · {meeting.workType.name}
-            {meeting.project ? ` · ${meeting.project.name}` : ""}
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-2.5">
-          <HeaderMoreMenu onDelete={confirmDelete} />
-          <button
-            type="button"
-            onClick={() => void start()}
-            disabled={mutations.start.isPending}
-            className="flex h-[34px] items-center gap-2 rounded-control bg-primary px-[18px] text-meta font-semibold text-primary-foreground hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {mutations.start.isPending ? (
-              <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
-            ) : (
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden>
-                <path d="M3 1.6 10 6l-7 4.4V1.6Z" />
-              </svg>
-            )}
-            회의 시작
-          </button>
-        </div>
+      {/* 헤더 — ② 배지 줄 → ③ 제목 → ④ 메타(MF-8 · 업무 상세 헤더가 정본). 「회의 정보 수정」은 **없다**(§7) */}
+      <header className="mt-2 flex min-w-0 flex-col gap-1.5">
+        <MeetingBadgeRow
+          meeting={meeting}
+          meta={meta}
+          locked={false}
+          actions={
+            <>
+              <HeaderMoreMenu onDelete={confirmDelete} />
+              <button
+                type="button"
+                onClick={() => void start()}
+                disabled={mutations.start.isPending}
+                className="flex h-[34px] items-center gap-2 rounded-control bg-primary px-[18px] text-meta font-semibold text-primary-foreground hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {mutations.start.isPending ? (
+                  <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                ) : (
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden>
+                    <path d="M3 1.6 10 6l-7 4.4V1.6Z" />
+                  </svg>
+                )}
+                회의 시작
+              </button>
+            </>
+          }
+        />
+        <h1 className="truncate text-page-title text-foreground">{meeting.title}</h1>
+        {/* 제목 · 일시의 수정 경로는 상세 드로어와 캘린더다(U-4) — 여기서는 표시만 */}
+        <p data-header-meta className="text-meta text-fg-meta">
+          {formatMeetingTimeRange(meeting.startAt, meeting.endAt)} · {meeting.durationMinutes}분 · 예정
+        </p>
+        {meta.notice}
       </header>
 
       {/* 상단 바 슬롯 — top 150 · 본문 폭 전체 · 56 */}

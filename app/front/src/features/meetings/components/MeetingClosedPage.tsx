@@ -13,10 +13,10 @@
 
 import { useRouter } from "next/navigation";
 
-import { Breadcrumb } from "@/components/shared/AppShell";
+import { DetailHeaderBar, HOME_CRUMB, MEETINGS_CRUMB, MEETINGS_ROUTE } from "@/components/shared/AppShell";
 import { MeetingDetailBody } from "@/features/meetings/components/MeetingDetailBody";
 import { openMeetingDeleteModal } from "@/features/meetings/components/MeetingDeleteModal";
-import { MeetingMetaLine, MeetingTitleInline, useMeetingMetaSave } from "@/features/meetings/components/MeetingMetaInline";
+import { MeetingBadgeRow, MeetingMetaLine, MeetingTitleInline, useMeetingMetaSave } from "@/features/meetings/components/MeetingMetaInline";
 import { MeetingStatusChip } from "@/features/meetings/components/MeetingStatusChip";
 import { useMeetingMutations } from "@/features/meetings/hooks/useMeetingMutations";
 import type { MeetingDetail } from "@/features/meetings/types";
@@ -37,26 +37,33 @@ export function MeetingClosedPage({ meeting }: { meeting: MeetingDetail & { stat
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <Breadcrumb trail={["홈", "회의록", meeting.title]} />
+      {/* ① breadcrumb + 「←」 */}
+      <DetailHeaderBar trail={[HOME_CRUMB, MEETINGS_CRUMB, { label: meeting.title }]} backTo={MEETINGS_ROUTE} />
 
-      <header className="mt-2 flex items-end justify-between gap-4">
-        <div className="flex min-w-0 flex-1 flex-col gap-1">
-          <MeetingTitleInline meeting={meeting} meta={meta} size="page" locked={locked} />
-          <MeetingMetaLine meeting={meeting} meta={meta} locked={locked} />
-          {meta.notice}
-        </div>
-        <div className="flex shrink-0 items-center gap-2.5">
-          {/* 시안대로 텍스트 버튼 「삭제」(L1440) — SPEC-006 U-5 모달을 연다 */}
-          <button
-            type="button"
-            onClick={confirmDelete}
-            disabled={locked || mutations.remove.isPending}
-            className="flex h-[34px] items-center rounded-control border border-border bg-card px-3.5 text-meta text-fg-meta hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            삭제
-          </button>
-          <MeetingStatusChip status={meeting.status} />
-        </div>
+      {/* ② 배지 줄 → ③ 제목 → ④ 메타 한 줄(MF-8 · SPEC-008 U-3) */}
+      <header className="mt-2 flex min-w-0 flex-col gap-1.5">
+        <MeetingBadgeRow
+          meeting={meeting}
+          meta={meta}
+          locked={locked}
+          actions={
+            <>
+              {/* 시안대로 텍스트 버튼 「삭제」(L1440) — SPEC-006 U-5 모달을 연다 */}
+              <button
+                type="button"
+                onClick={confirmDelete}
+                disabled={locked || mutations.remove.isPending}
+                className="flex h-[34px] items-center rounded-control border border-border bg-card px-3.5 text-meta text-fg-meta hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                삭제
+              </button>
+              <MeetingStatusChip status={meeting.status} />
+            </>
+          }
+        />
+        <MeetingTitleInline meeting={meeting} meta={meta} size="page" locked={locked} />
+        <MeetingMetaLine meeting={meeting} meta={meta} locked={locked} />
+        {meta.notice}
       </header>
 
       <MeetingDetailBody meeting={meeting} mode="page" />

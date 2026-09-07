@@ -9,8 +9,8 @@
 
 import { openAddLineDrawer } from "@/features/meetings/components/AddLineDrawer";
 import { openAttachmentFileDrawer } from "@/features/meetings/components/AttachmentFileDrawer";
-import { openActionPayloadDrawer } from "@/features/meetings/components/CreateTaskFromLineDrawer";
-import { openTaskPayloadDrawer } from "@/features/meetings/components/LinkTaskDrawer";
+import { openActionPayloadDrawer } from "@/features/meetings/components/ActionPayloadDrawer";
+import { openTaskPayloadDrawer } from "@/features/meetings/components/TaskPayloadDrawer";
 import {
   MeetingCreateDrawer,
   MeetingCreateDrawerHeader,

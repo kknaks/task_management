@@ -14,6 +14,7 @@
 import type { ReactNode } from "react";
 import { Check } from "lucide-react";
 
+import type { TreeDensity } from "@/features/meetings/components/AgendaLineTree";
 import { cn } from "@/lib/utils";
 
 /** 배지 — `tone` 이 체크 박스·제목 색도 정한다. `caption` 은 배지 대신 캡션(「AI 안건」). `null` 은 아무것도 없음. */
@@ -33,6 +34,7 @@ export function AgendaHeader({
   title,
   badge,
   time,
+  density = "default",
   onToggleDone,
   titleControl,
 }: {
@@ -44,19 +46,23 @@ export function AgendaHeader({
   time: string | null;
   /** 있으면 체크가 버튼이다(사람 트랙). 없으면 표시만(AI 트랙 · 읽기 전용). */
   onToggleDone?: () => void;
+  /** 미리보기 패널은 `compact` — **글자 · 여백만** 줄인다(구조 · 배지는 같다 · FE §2 규칙 7). */
+  density?: TreeDensity;
   /** 편집 모드의 안건 제목 입력 상자(SPEC-008 U-7 · 시안 L1894). 있으면 제목 텍스트 대신 이것을 그린다. */
   titleControl?: ReactNode;
 }) {
+  const compact = density === "compact";
   const tone = badge && badge.tone !== "caption" ? badge.tone : "none";
   const boxClass = cn(
-    "flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[5px]",
+    "flex shrink-0 items-center justify-center rounded-[5px]",
+    compact ? "h-3.5 w-3.5" : "h-[18px] w-[18px]",
     tone === "done" && "bg-primary text-primary-foreground",
     tone === "active" && "border-[1.6px] border-primary",
     (tone === "next" || tone === "none") && "border-[1.6px] border-border",
   );
 
   return (
-    <div className="flex items-center gap-[11px] px-2">
+    <div className={cn("flex items-center px-2", compact ? "gap-2" : "gap-[11px]")}>
       {onToggleDone ? (
         <button
           type="button"
@@ -65,18 +71,19 @@ export function AgendaHeader({
           onClick={onToggleDone}
           className={cn(boxClass, "hover:opacity-80")}
         >
-          {tone === "done" ? <Check className="h-[11px] w-[11px]" strokeWidth={2.4} aria-hidden /> : null}
+          {tone === "done" ? <Check className={compact ? "h-2.5 w-2.5" : "h-[11px] w-[11px]"} strokeWidth={2.4} aria-hidden /> : null}
         </button>
       ) : (
         <span aria-hidden className={boxClass}>
-          {tone === "done" ? <Check className="h-[11px] w-[11px]" strokeWidth={2.4} aria-hidden /> : null}
+          {tone === "done" ? <Check className={compact ? "h-2.5 w-2.5" : "h-[11px] w-[11px]"} strokeWidth={2.4} aria-hidden /> : null}
         </span>
       )}
-      <span className="shrink-0 text-row-label text-fg-caption">안건 {number}</span>
+      <span className={cn("shrink-0 text-fg-caption", compact ? "text-badge" : "text-row-label")}>안건 {number}</span>
       {titleControl ?? (
         <span
           className={cn(
-            "min-w-0 truncate text-section",
+            "min-w-0 truncate",
+            compact ? "text-panel" : "text-section",
             tone === "done" ? "text-fg-caption line-through" : tone === "next" ? "text-fg-meta" : "text-foreground",
           )}
         >

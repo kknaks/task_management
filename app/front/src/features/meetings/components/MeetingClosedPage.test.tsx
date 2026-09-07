@@ -368,3 +368,28 @@ describe("U-3 상세 페이지 — 최종 회의록 · 한 줄 요약 바 · 근
     expect(await screen.findByText("종료된 회의")).toBeInTheDocument();
   });
 });
+describe("헤더 순서 · 「←」(WORK-014 · MF-8 · FE §6-3)", () => {
+  it("① breadcrumb(+「←」) → ② 배지 줄 → ③ 제목 → ④ 메타 순서다 · 메타에 유형 · 프로젝트가 없다", async () => {
+    renderClosed(endedSucceeded());
+    await screen.findByText("종료된 회의");
+    const back = screen.getByRole("link", { name: "뒤로" });
+    expect(back.getAttribute("href")).toMatch(/^\/meetings\/?$/);
+    // breadcrumb 「홈」·「회의록」이 링크다(마지막 제목만 아니다)
+    const nav = screen.getByRole("navigation", { name: "현재 위치" });
+    expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual(["홈", "회의록"]);
+
+    const badges = document.querySelector("[data-header-badges]") as HTMLElement;
+    const title = screen.getByRole("textbox", { name: "제목" });
+    const meta = document.querySelector("[data-header-meta]") as HTMLElement;
+    // **제목이 배지 줄 위에 오면 반려**다 — DOM 순서로 고정한다
+    expect(badges.compareDocumentPosition(title)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(title.compareDocumentPosition(meta)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    // ④ 메타에는 유형 · 프로젝트가 없다 — ② 로 올라갔다
+    expect(meta.textContent).not.toMatch(/미팅·회의|소개서 개정/);
+    // ② 배지 줄에 유형 · 프로젝트 · 그 화면의 액션이 **같은 줄**에 있다
+    expect(badges.textContent).toContain("미팅·회의");
+    expect(within(badges).getByRole("button", { name: "삭제" })).toBeInTheDocument();
+    expect(within(badges).getByText("종료된 회의")).toBeInTheDocument();
+  });
+});
+

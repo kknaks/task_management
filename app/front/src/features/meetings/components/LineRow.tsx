@@ -29,6 +29,7 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import { TypeBadge } from "@/components/shared/TypeBadge";
 import { EvidenceChip } from "@/features/meetings/components/EvidenceChip";
 import { InlineFieldInput } from "@/features/meetings/components/InlineFieldInput";
+import type { TreeDensity } from "@/features/meetings/components/AgendaLineTree";
 import { isLineKind, LINE_KIND_LABEL, LINE_LABEL_CLASS } from "@/features/meetings/lineKinds";
 import type { LineKind, MeetingLine } from "@/features/meetings/types";
 import { cn } from "@/lib/utils";
@@ -42,6 +43,7 @@ export function LineRow({
   line,
   recordingStartedAt,
   expandable,
+  density = "default",
   onChipClick,
   actions,
   editable = false,
@@ -55,6 +57,8 @@ export function LineRow({
   recordingStartedAt: string | null;
   /** 펼침 화살표 + 상세 + 근거 칩. 회의 중 회의록 탭은 `false`. */
   expandable: boolean;
+  /** 미리보기 패널은 `compact` — **글자 · 여백 · 라벨 폭만** 줄인다(FE §2 규칙 7). */
+  density?: TreeDensity;
   onChipClick?: (fromMs: number, toMs: number) => boolean;
   /** 줄 버튼 슬롯(Phase 5). */
   actions?: ReactNode;
@@ -73,6 +77,7 @@ export function LineRow({
   const kind: LineKind = isLineKind(line.kind) ? line.kind : "discussion";
   const emphasized = kind !== "discussion";
   const editing = editable && onSaveContent !== undefined;
+  const compact = density === "compact";
 
   return (
     <div className="flex flex-col">
@@ -80,13 +85,14 @@ export function LineRow({
         data-line-kind={kind}
         data-line-id={line.id}
         className={cn(
-          "group flex gap-3 rounded-control px-2 py-1.5",
+          "group flex rounded-control",
+          compact ? "gap-2 px-1.5 py-1" : "gap-3 px-2 py-1.5",
           kind === "decision" && !editing ? "bg-row-selected" : "hover:bg-row-hover",
           editing && "items-center",
         )}
       >
         {/* **라벨은 편집 모드에서도 라벨이다** — 종류를 바꾸는 표면이 없다(MF-60) */}
-        <span className={cn("w-[34px] shrink-0 pt-0.5 text-row-label", LINE_LABEL_CLASS[kind])}>
+        <span className={cn("shrink-0 pt-0.5", compact ? "w-[26px] text-badge" : "w-[34px] text-row-label", LINE_LABEL_CLASS[kind])}>
           {isLineKind(line.kind) ? LINE_KIND_LABEL[line.kind] : line.kind}
         </span>
         {kind === "task" && line.task ? (
@@ -103,7 +109,7 @@ export function LineRow({
             inputClassName={cn("h-9 px-3 text-body", emphasized && "font-semibold")}
           />
         ) : (
-          <span className={cn("min-w-0 flex-1 text-body text-foreground", emphasized && "font-semibold")}>
+          <span className={cn("min-w-0 flex-1 text-foreground", compact ? "text-meta" : "text-body", emphasized && "font-semibold")}>
             {line.content}
           </span>
         )}

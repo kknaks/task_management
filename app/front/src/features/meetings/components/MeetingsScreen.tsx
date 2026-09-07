@@ -113,8 +113,14 @@ export function MeetingsScreen() {
         </Button>
       </header>
 
-      {/* 타이틀 `top 66` → 패널 `top 140`(시안 L70) */}
-      <div className="mt-8 flex min-h-[560px] min-w-0 flex-1 gap-6">
+      {/*
+        타이틀 `top 66` → 패널 `top 140`(시안 L70).
+
+        **패널 높이를 여기서 고정한다**(U-6 · MF-5) — 목록·미리보기가 각자 안에서 스크롤하고 **바깥 크기는 안 변한다**.
+        고정값은 빈 상태 기준이라 회의를 골라 줄이 쌓여도 패널이 뷰포트를 넘지 않는다.
+        폭은 **좌 고정(1280~1439 400 · ≥1440 500 — `MeetingListPanel`) + 우 유동**이고, 우가 `min-w-0` 으로 줄어 **둘 다 화면 안**이다.
+      */}
+      <div className="mt-8 flex h-[calc(100vh-206px)] min-h-[480px] min-w-0 flex-1 gap-6">
         <MeetingListPanel
           period={params.period}
           data={query.data}
