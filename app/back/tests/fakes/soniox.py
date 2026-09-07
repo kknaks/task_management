@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
+from pathlib import Path
 
 from dto.meeting_stream import AudioDeclaration
-from integrations.soniox import SttToken, SttUpstreamError
+from integrations.soniox import SttToken, SttUpstreamError, TranscribeContext
 
 
 class FakeSttSession:
@@ -84,3 +86,54 @@ def token(
         start_ms=start_ms,
         end_ms=start_ms + 500 if end_ms is None else end_ms,
     )
+
+
+# --- 종료 후 재전사 대역 (WORK-012 ①) ---------------------------------------------
+
+
+@dataclass
+class FakeAsyncSttConnector:
+    """`stt-async-v5` 대역 — 실제 Soniox 를 부르지 않는다(BE §12).
+
+    `tokens` 를 그대로 돌려주고, `will_fail()`·`will_timeout()` 으로 설계한 실패 둘을 낸다.
+    `calls` 로 「올린 파일 · context · 폴링 간격 · 상한」을 본다.
+    """
+
+    tokens: list[SttToken] = field(default_factory=list)
+    calls: list[AsyncTranscribeCall] = field(default_factory=list)
+    failure: BaseException | None = None
+
+    async def transcribe(
+        self,
+        path: Path,
+        context: TranscribeContext,
+        *,
+        poll_sec: int,
+        timeout_sec: int,
+    ) -> list[SttToken]:
+        self.calls.append(
+            AsyncTranscribeCall(
+                path=path, context=context, poll_sec=poll_sec, timeout_sec=timeout_sec
+            )
+        )
+        if self.failure is not None:
+            raise self.failure
+        return list(self.tokens)
+
+    def will_fail(self, message: str = "대역: 업스트림 오류") -> None:
+        self.failure = SttUpstreamError(message)
+
+    def will_timeout(self) -> None:
+        self.failure = TimeoutError("대역: 재전사 상한 초과")
+
+    def will_return(self, tokens: list[SttToken]) -> None:
+        self.tokens = list(tokens)
+        self.failure = None
+
+
+@dataclass(frozen=True)
+class AsyncTranscribeCall:
+    path: Path
+    context: TranscribeContext
+    poll_sec: int
+    timeout_sec: int

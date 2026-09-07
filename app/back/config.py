@@ -71,15 +71,17 @@ class Settings(BaseSettings):
     # 회의 상한 300분 + 여유. 실측 후 조정한다 — 계약(회의당 하나 · 원문 컬럼 · 폐기 = 행 삭제)은 불변
     meeting_token_ttl_min: int = 330
 
-    # --- 회의 종료 파이프라인 수치 4종 (SPEC-008 §4 「수치」 — **단일 출처**. 실측 후 env 로 조정한다 · 계약은 불변) ---
-    # ① 마지막 배치(AI 트랙 전체 재정리) 상한 — 넘으면 「마지막 배치 실패」로 두고 ②로 간다
-    meeting_final_batch_timeout_sec: int = 300
-    # ② 통합 시도 하나의 상한 — 넘으면 그 시도만 실패로 센다
-    meeting_integration_timeout_sec: int = 180
-    # ② 시도 횟수 — 원 1 + 재시도 2(DEC-003 §7 L140). 즉시 재시도
-    meeting_integration_attempts: int = 3
-    # job 상한 — 넘으면 `job_service` 가 `failed(job_timeout)` 로 마감한다(무한 대기 금지 · DEC-003 §7 L141)
-    job_timeout_sec: int = 900
+    # --- 회의 종료 파이프라인 수치 5종 (SPEC-008 §4 「수치」 — **단일 출처**. 실측 후 env 로 조정한다 · 계약은 불변) ---
+    # ① async 재전사 상한(초) — 넘으면 `transcription_timeout`. 300분 상한 파일에 비례해 잡았다
+    meeting_transcribe_timeout_sec: int = 1200
+    # ① Soniox 상태 폴링 간격(초) — 파일 1건 · 단일 사용자라 잦은 폴링의 비용이 없다
+    meeting_transcribe_poll_sec: int = 5
+    # ② 최종 회의록 시도 하나의 상한(초) — 회의 전체를 한 번에 정리한다(배치 120초의 2.5배)
+    meeting_final_timeout_sec: int = 300
+    # ② 시도 횟수 — 원 1 + 재시도 2(DEC-003 §7). 즉시 재시도
+    meeting_final_attempts: int = 3
+    # job 상한 — 1200 + 300×3 = 2100 에 여유. 넘으면 `job_service` 가 `failed(job_timeout)` 로 마감한다
+    meeting_job_timeout_sec: int = 2400
 
     # --- 회의 스트림 (BE §5-1 백프레셔). 클라이언트 송신 큐 상한 — 넘으면 잠정 프레임만 버린다 ---
     meeting_stream_queue_max: int = 200

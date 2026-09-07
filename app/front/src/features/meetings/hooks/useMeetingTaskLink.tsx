@@ -5,13 +5,13 @@
  *
  * ## 완료 게이트의 네 번째 진입점 — 그러나 **판정은 여기 없다**
  *
- * 「업무 갱신」은 `PATCH …/lines/{id}/task` **하나**다(본문 없음 — 줄의 `pendingChange` 가 요청). 서버 `task_service.change_status()`
+ * 「업무 갱신」은 `PATCH …/lines/{id}/task` **하나**다(본문 없음 — 줄의 `payload` 가 요청). 서버 `task_service.change_status()`
  * 가 그래프 · 게이트 · 로그 · 실적을 판정하고 거부는 예외로 온다. 이 훅은 그 답을 **WORK-005 규격의 토스트**로 옮길 뿐이다 —
  * 결과자료 유무 · 전이 가능 여부를 여기서 미리 판단하지 않는다(SPEC-004 §5). 업무 API(`/api/tasks/...`)를 직접 부르지 않는다.
  *
  * | 응답 | 화면(SPEC-008 §4 Case Matrix · SPEC-004 U-6) |
  * |---|---|
- * | 200 | `pendingChange` 비워짐 → 「갱신 완료」. **완료 전이가 포함됐고 성공했으면** 완료 토스트 「완료 처리했습니다 · 실행취소」(4초 — `lib/hooks/useTaskDoneToast` · 업무 화면과 같은 것) |
+ * | 200 | `payload` 비워짐 → 「갱신 완료」. **완료 전이가 포함됐고 성공했으면** 완료 토스트 「완료 처리했습니다 · 실행취소」(4초 — `lib/hooks/useTaskDoneToast` · 업무 화면과 같은 것) |
  * | 422 `task_completion_blocked` | 거부 토스트(6초) + **「결과 입력」** → 그 업무 상세 드로어의 「결과자료 · 완료 결과」 카드로(WORK-004 `useCompletionCardFocus` 유도 훅). 줄은 「업무 갱신」 그대로 |
  * | 409 `invalid_status_transition` | 토스트 「이 상태로는 바꿀 수 없습니다」. 줄 그대로 |
  * | 404 | 업무가 지워졌다 — 상세 재조회(서버가 `isDeleted:true` 로 실어 오면 줄이 「삭제된 업무」 비활성) |
@@ -21,7 +21,7 @@
  * ## 낙관적 갱신을 하지 않는다 — 거부가 정상 경로다(FE §3-4). 두 요청 모두 응답 `MeetingDetail` 을 캐시에 놓는다.
  * ## 무효화 — 업무가 바뀌었으므로 `['tasks']`. 기한이 바뀔 수 있으므로 갱신 뒤 `['schedules']` 도(FE §3-3 표).
  *
- * **실패를 받는 자리** — `applyPendingChange` 는 **던지지 않는다**(버튼 · 드로어 후속 요청이 `void` 로 부른다 — 두 번째 실패가
+ * **실패를 받는 자리** — `applyLinePayload` 는 **던지지 않는다**(버튼 · 드로어 후속 요청이 `void` 로 부른다 — 두 번째 실패가
  * unhandled 로 새지 않게). `createTaskFromLine` 은 **던진다** — 드로어가 열린 채 인라인으로 붙인다(U-10 「제출 중 · 실패」).
  */
 
@@ -46,8 +46,8 @@ export const APPLY_FAILED_MESSAGE = "업무를 갱신하지 못했습니다";
 export const TASK_GONE_MESSAGE = "삭제된 업무입니다";
 
 /** 「업무 갱신」 툴팁에 실을 항목 — `status` 가 업무의 현재 상태와 같으면 뺀다(§4 「화면 계산」 · SPEC-004 L478). */
-export function pendingChangeSummary(line: MeetingLine): string[] {
-  const change = line.pendingChange;
+export function payloadSummary(line: MeetingLine): string[] {
+  const change = line.payload;
   if (!change) {
     return [];
   }
@@ -103,11 +103,11 @@ export function useMeetingTaskLink(meeting: MeetingDetail) {
 
   /**
    * U-6 「업무 갱신」 — **즉시 요청 · 확인 없음 · 요청 하나**. 성공 여부를 돌려주고 **던지지 않는다.**
-   * 완료 전이가 실려 있었고(`pendingChange.status==='done'` 이고 업무가 아직 `done` 이 아니었다) 성공했으면 완료 토스트.
+   * 완료 전이가 실려 있었고(`payload.status==='done'` 이고 업무가 아직 `done` 이 아니었다) 성공했으면 완료 토스트.
    */
-  const applyPendingChange = useCallback(
+  const applyLinePayload = useCallback(
     async (line: MeetingLine): Promise<boolean> => {
-      const completing = line.pendingChange?.status === "done" && line.task?.status !== "done";
+      const completing = line.payload?.status === "done" && line.task?.status !== "done";
       const taskId = line.taskId;
       try {
         await apply.mutateAsync(line.id);
@@ -155,7 +155,7 @@ export function useMeetingTaskLink(meeting: MeetingDetail) {
 
   return {
     createTaskFromLine,
-    applyPendingChange,
+    applyLinePayload,
     /** 어느 줄이 요청 중인가 — 그 줄의 버튼만 비활성 + 진행 표시(U-6). */
     applyingLineId: apply.isPending ? (apply.variables ?? null) : null,
     creating: create.isPending,

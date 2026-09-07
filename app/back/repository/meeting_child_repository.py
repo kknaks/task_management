@@ -141,22 +141,6 @@ async def list_agendas_by_track(
     return [_agenda_to_dto(row) for row in rows]
 
 
-async def find_ai_agenda_by_source(
-    session: AsyncSession, *, meeting_id: int, source_agenda_id: int
-) -> MeetingAgendaDTO | None:
-    """사람 안건을 미러하는 AI 안건(M-5-b). 배치가 **한 번만** 만들고 이후 재사용한다(SPEC-007 §4 검증 4단)."""
-    row = (
-        await session.scalars(
-            select(MeetingAgenda).where(
-                MeetingAgenda.meeting_id == meeting_id,
-                MeetingAgenda.track == MeetingTrack.AI.value,
-                MeetingAgenda.source_agenda_id == source_agenda_id,
-            )
-        )
-    ).one_or_none()
-    return None if row is None else _agenda_to_dto(row)
-
-
 async def mark_active_agendas_done(session: AsyncSession, *, meeting_id: int) -> int:
     """`/end` — 사람 트랙의 `active` 안건을 `done` 으로(M-5-c 「`ended` 회의에 `active` 안건은 없다」). 바뀐 행 수를 돌려준다."""
     result = await session.execute(
@@ -242,9 +226,7 @@ def _line_to_dto(line: MeetingLine, task: Task | None, work_type: WorkType | Non
         evidence=list(line.evidence or []),
         order_index=line.order_index,
         task_id=line.task_id,
-        pending_change=line.pending_change,
-        source_human_line_id=line.source_human_line_id,
-        source_ai_line_id=line.source_ai_line_id,
+        payload=line.payload,
         task=(
             None
             if task is None
@@ -368,13 +350,12 @@ async def delete_attachment(
 async def max_succeeded_batch_seq(session: AsyncSession, meeting_id: int) -> int:
     """`latestBatchSeq` — 성공한 **배치**(증분 · 최종)의 최대 `seq`(M-6-a · 파생). 비어 있으면 `0`.
 
-    통합(`phase='integration'`) 행은 배치 회차가 아니라 세지 않는다 — 「배치 n회 반영」이 통합 성공으로 늘지 않는다(SPEC-008 §4).
+    `phase` 는 이제 둘뿐이라(`incremental` · `final` — WORK-012) 거를 것이 없다.
     """
     current = await session.scalar(
         select(func.max(MeetingBatchRun.seq)).where(
             MeetingBatchRun.meeting_id == meeting_id,
             MeetingBatchRun.status == BatchRunStatus.SUCCEEDED.value,
-            MeetingBatchRun.phase != BatchPhase.INTEGRATION.value,
         )
     )
     return 0 if current is None else current

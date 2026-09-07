@@ -12,10 +12,11 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["from", "to"],
+        "required": ["stt", "correct", "grade"],
         "properties": {
-          "from": { "type": "string", "minLength": 1, "maxLength": 200 },
-          "to": { "type": "string", "minLength": 1, "maxLength": 200 }
+          "stt": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "correct": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "grade": { "type": "string", "enum": ["auto", "guess"] }
         }
       }
     },

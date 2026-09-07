@@ -15,7 +15,7 @@ from typing import Annotated, Literal
 
 from pydantic import AwareDatetime, ConfigDict, StringConstraints, field_validator, model_validator
 
-from dto.enums import PENDING_CHANGE_STATUSES
+from dto.enums import PAYLOAD_STATUSES
 from dto.meeting import (
     AgendaCreateDTO,
     AgendaUpdateDTO,
@@ -33,7 +33,7 @@ from dto.meeting import (
     MeetingListResultDTO,
     MeetingUpdateDTO,
     MergedSummaryDTO,
-    PendingChangeDTO,
+    LinePayloadDTO,
     ProjectCountDTO,
     TaskContextDTO,
     TranscriptDTO,
@@ -117,7 +117,7 @@ class AgendaUpdate(_MeetingRequest):
         )
 
 
-# SPEC-008 §4 Validation — `detail` 4000 이하 · `note` 1~2000 · `pendingChange.status` 는 `cancelled` 불가
+# SPEC-008 §4 Validation — `detail` 4000 이하 · `note` 1~2000 · `payload.status` 는 `cancelled` 불가
 LineDetail = Annotated[str, StringConstraints(max_length=4000)]
 PendingNote = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
 # SPEC-003 `POST /api/tasks` Validation 그대로(`newTask` · `/lines/{id}/task`) — 제목 1~200 · 설명 4000 이하
@@ -125,35 +125,35 @@ TaskTitle = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1
 TaskDescription = Annotated[str, StringConstraints(max_length=4000)]
 
 
-class PendingChange(_MeetingRequest):
-    """`pendingChange` — 키는 **`dueDate` · `status` · `note` 만**(M-14-a). `extra="forbid"` 가 넷째 키를, `Literal` 이 `cancelled` 를 막는다.
+class LinePayload(_MeetingRequest):
+    """`payload` — 키는 **`dueDate` · `status` · `note` 만**(M-14-a). `extra="forbid"` 가 넷째 키를, `Literal` 이 `cancelled` 를 막는다.
 
     보냈으면 키가 1개 이상이어야 한다. 값은 `null` 로 비울 수 없다(「보내지 않음」이 곧 「변경 없음」).
     """
 
     due_date: date | None = None
-    # 허용값의 정본은 `dto.enums.PENDING_CHANGE_STATUSES`(= 업무 상태 − `cancelled`) — 문자열을 여기 다시 적지 않는다
+    # 허용값의 정본은 `dto.enums.PAYLOAD_STATUSES`(= 업무 상태 − `cancelled`) — 문자열을 여기 다시 적지 않는다
     status: str | None = None
     note: PendingNote | None = None
 
     @field_validator("status")
     @classmethod
     def _status_in_allowed_set(cls, value: str | None) -> str | None:
-        if value is not None and value not in PENDING_CHANGE_STATUSES:
-            raise ValueError("pendingChange.status 에 담을 수 없는 상태입니다")
+        if value is not None and value not in PAYLOAD_STATUSES:
+            raise ValueError("payload.status 에 담을 수 없는 상태입니다")
         return value
 
     @model_validator(mode="after")
-    def _at_least_one_and_no_null(self) -> "PendingChange":
+    def _at_least_one_and_no_null(self) -> "LinePayload":
         if not self.model_fields_set:
-            raise ValueError("pendingChange 에 키가 하나 이상 있어야 합니다")
+            raise ValueError("payload 에 키가 하나 이상 있어야 합니다")
         for name in ("due_date", "status", "note"):
             if name in self.model_fields_set and getattr(self, name) is None:
                 raise ValueError(f"{name} 은 비울 수 없습니다")
         return self
 
-    def to_dto(self) -> PendingChangeDTO:
-        return PendingChangeDTO(due_date=self.due_date, status=self.status, note=self.note)
+    def to_dto(self) -> LinePayloadDTO:
+        return LinePayloadDTO(due_date=self.due_date, status=self.status, note=self.note)
 
 
 class LineNewTask(_MeetingRequest):
@@ -178,7 +178,7 @@ class LineNewTask(_MeetingRequest):
 class LineCreate(_MeetingRequest):
     """`POST …/lines` — 회의 중(SPEC-007 §4)과 종료 후 편집(SPEC-008 §4) **한 표면**.
 
-    회의 중은 `agendaId`·`kind`·`content` 만. 종료 후가 더하는 것 — `detail`(U-8) · `taskId`+`pendingChange`(U-9 · `content` 는
+    회의 중은 `agendaId`·`kind`·`content` 만. 종료 후가 더하는 것 — `detail`(U-8) · `taskId`+`payload`(U-9 · `content` 는
     서버가 업무 제목으로) · `newTask`(U-10). `content` 는 그래서 선택이고, **필수 여부는 service 가 종류로 판정**한다.
     `recording` 에서 확장 필드가 오면 service 가 `validation_error` 다.
     """
@@ -188,7 +188,7 @@ class LineCreate(_MeetingRequest):
     content: LineContent | None = None
     detail: LineDetail | None = None
     task_id: int | None = None
-    pending_change: PendingChange | None = None
+    payload: LinePayload | None = None
     new_task: LineNewTask | None = None
 
     _no_newline = field_validator("content")(_reject_newlines)
@@ -200,7 +200,7 @@ class LineCreate(_MeetingRequest):
             content=self.content,
             detail=self.detail,
             task_id=self.task_id,
-            pending_change=None if self.pending_change is None else self.pending_change.to_dto(),
+            payload=None if self.payload is None else self.payload.to_dto(),
             new_task=None if self.new_task is None else self.new_task.to_dto(),
         )
 
@@ -355,9 +355,7 @@ class LineItem(CamelModel):
     evidence: list
     order_index: int
     task_id: int | None
-    pending_change: dict | None
-    source_human_line_id: int | None
-    source_ai_line_id: int | None
+    payload: dict | None
     task: LineTaskSummary | None
     # SPEC-007 §4 — 줄 우측 시각. 안건 우측 시각은 화면이 `min(createdAt)` 으로 파생한다
     created_at: datetime
@@ -374,9 +372,7 @@ class LineItem(CamelModel):
             evidence=dto.evidence,
             order_index=dto.order_index,
             task_id=dto.task_id,
-            pending_change=dto.pending_change,
-            source_human_line_id=dto.source_human_line_id,
-            source_ai_line_id=dto.source_ai_line_id,
+            payload=dto.payload,
             task=None if dto.task is None else LineTaskSummary.from_dto(dto.task),
             created_at=dto.created_at,
         )
@@ -441,25 +437,32 @@ class MeetingAttachmentItem(CamelModel):
 
 
 class MergedSummary(CamelModel):
+    """「안건 n · 논의 n · 결정 n · 액션 n · 업무 n」 — **다섯**(SPEC-008 §4 Data Contract).
+
+    `integratedAt` 이 없다 — 통합 단계가 사라져(MF-56) 가리킬 시각이 없다.
+    """
+
     agenda_count: int
+    discussion_count: int
     decision_count: int
     action_count: int
-    integrated_at: datetime
+    task_count: int
 
     @classmethod
     def from_dto(cls, dto: MergedSummaryDTO) -> "MergedSummary":
         return cls(
             agenda_count=dto.agenda_count,
+            discussion_count=dto.discussion_count,
             decision_count=dto.decision_count,
             action_count=dto.action_count,
-            integrated_at=dto.integrated_at,
+            task_count=dto.task_count,
         )
 
 
 class MeetingDetail(CamelModel):
     """SPEC-006 §4 `GET /api/meetings/{id}` — **필드 소유 표 그대로.** SPEC-007·008 이 이 형태를 승계한다.
 
-    `durationMinutes` · `latestBatchSeq` · `mergedSummary` · `finalBatchState` · `activeJobId` 는 **파생값**(G-7).
+    `durationMinutes` · `latestBatchSeq` · `mergedSummary` · `activeJobId` 는 **파생값**(G-7).
     `recordingPath` · `aiSessionId` · 트랜스크립트 · job 은 **싣지 않는다**.
     """
 
@@ -478,7 +481,6 @@ class MeetingDetail(CamelModel):
     agendas: AgendaTracks
     attachments: list[MeetingAttachmentItem]
     latest_batch_seq: int
-    final_batch_state: Literal["succeeded", "failed"] | None
     active_job_id: int | None
     created_at: datetime
     updated_at: datetime
@@ -528,7 +530,6 @@ class MeetingDetail(CamelModel):
                 for attachment in detail.attachments
             ],
             latest_batch_seq=detail.latest_batch_seq,
-            final_batch_state=detail.final_batch_state,  # type: ignore[arg-type]
             active_job_id=detail.active_job_id,
             created_at=meeting.created_at,
             updated_at=meeting.updated_at,

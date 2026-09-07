@@ -10,7 +10,7 @@
  * | `scheduled` | 사람 트랙 안건 목록(`MeetingAgendaList` 읽기 전용) + 하단 첨부 행 |
  * | `recording` | 「기록 중입니다」 + 「상세보기」 안내 — **미리보기는 스트림을 열지 않는다** |
  * | `generating` | 「회의록 생성중」 + 진행 표시 |
- * | `ended` + succeeded | **AI 한 줄 요약 바**(`headline` 있을 때만 · `MeetingStatusBar variant="headline"`) + **통합본 트리**(`AgendaLineTree` 를 `agendas={merged}` · 읽기 전용으로 — SPEC-006 §7 「SPEC-008 규격을 읽기 전용으로 그대로」 · WORK-008 검수 W-1) + 첨부 행 |
+ * | `ended` + succeeded | **AI 한 줄 요약 바**(`headline` 있을 때만 · `MeetingStatusBar variant="headline"`) + **최종 회의록 트리**(`AgendaLineTree` 를 `agendas={merged}` · 읽기 전용으로 — SPEC-006 §7 「SPEC-008 규격을 읽기 전용으로 그대로」 · WORK-008 검수 W-1) + 첨부 행 |
  * | `ended` + failed | 요약 바 없이 사람 원본 트리 + 「통합 정리 실패」 캡션 |
  *
  * **그리지 않는 것**(§7): 「· 회의실 A」 · 「요약 · AI 생성」 문단 · 취소 행 · PNG 첨부 행.
@@ -154,7 +154,7 @@ function NotesBody({ meeting }: { meeting: MeetingDetail }) {
           {meeting.headline ? (
             <MeetingStatusBar variant="headline" headline={meeting.headline} summary={meeting.mergedSummary} />
           ) : null}
-          {/* 통합본(`merged`) 트리 — 상세 본문(`MeetingDetailBody`)과 **같은 컴포넌트 · 같은 판정**(트랙은 `closeState` 가 고른다 · 펼침은 U-5).
+          {/* 최종 회의록(`merged`) 트리 — 상세 본문(`MeetingDetailBody`)과 **같은 컴포넌트 · 같은 판정**(트랙은 `closeState` 가 고른다 · 펼침은 U-5).
               읽기 전용: 편집 prop · 줄 버튼 · 근거 칩 클릭이 없다(칩은 표시만 — 스크립트는 상세 페이지가 그린다). */}
           <AgendaLineTree
             agendas={notesAgendasOf(meeting)}

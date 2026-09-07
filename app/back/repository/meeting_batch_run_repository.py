@@ -38,12 +38,11 @@ async def succeeded_cursor(session: AsyncSession, meeting_id: int) -> int | None
 
 
 async def next_seq(session: AsyncSession, meeting_id: int) -> int:
-    """다음 **배치** 회차 — 통합(`phase='integration'`) 행은 회차가 아니라 세지 않는다(그 행의 `seq` 는 통합 시도 번호다)."""
+    """다음 **배치** 회차 — `phase` 는 둘뿐이라(`incremental` · `final` — WORK-012) 거를 것이 없다."""
     current = await session.scalar(
         select(func.max(MeetingBatchRun.seq)).where(
             MeetingBatchRun.meeting_id == meeting_id,
             MeetingBatchRun.status == BatchRunStatus.SUCCEEDED.value,
-            MeetingBatchRun.phase != BatchPhase.INTEGRATION.value,
         )
     )
     return 1 if current is None else current + 1
@@ -52,7 +51,10 @@ async def next_seq(session: AsyncSession, meeting_id: int) -> int:
 async def find_latest_by_phase(
     session: AsyncSession, meeting_id: int, *, phase: str
 ) -> BatchRunDTO | None:
-    """그 phase 의 **최신 행**(id 최대). `finalBatchState`(`phase='final'`) · `mergedSummary.integratedAt`(`phase='integration'`) 의 원천."""
+    """그 phase 의 **최신 행**(id 최대).
+
+    쓰는 곳은 `job_service.derive_progress` 하나다 — `phase='final'` 행이 생겼는가로 `progress.phase` 를 가른다(SPEC-008 §4).
+    """
     row = (
         await session.scalars(
             select(MeetingBatchRun)

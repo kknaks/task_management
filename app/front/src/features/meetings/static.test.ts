@@ -348,7 +348,7 @@ describe("⑮ 트리 — 컴포넌트 하나 · `track` prop 으로 부르지 �
     expect(trees).toEqual(["features/meetings/components/AgendaLineTree.tsx"]);
   });
 
-  it("`<AgendaLineTree` 호출에 `track=` prop 이 없다 — 통합본은 `agendas={…merged}` 로 부를 뿐이다", () => {
+  it("`<AgendaLineTree` 호출에 `track=` prop 이 없다 — 최종 회의록은 `agendas={…merged}` 로 부를 뿐이다", () => {
     const offenders = meetingSources.filter((file) => /<AgendaLineTree[\s\S]*?track=/.test(read(file))).map(rel);
     expect(offenders).toEqual([]);
   });
@@ -425,11 +425,12 @@ describe("⑲ 편집 저장 경계 — 삭제는 낙관적이지 않다 · 폴�
     expect(direct).toEqual([]);
   });
 
-  it("`useMeetingFinalizeJob` 에 `setInterval`·`setTimeout`·`retry` 가 없고 주기 2000 · 상한 480 이 상수로 있다", () => {
+  it("`useMeetingFinalizeJob` 에 타이머·자동 재시도가 없고 주기 2000 · 상한 **1230** 이 상수로 있다(SPEC-008 §4 수치)", () => {
     const code = stripComments(read(path.join(MEETINGS, "hooks/useMeetingFinalizeJob.ts")));
-    expect(code).not.toMatch(/setInterval|setTimeout|\bretry\b|backoff/);
+    // `retry` 는 「다시 시도」(`POST …/finalize`)의 이름이라 살아 있다 — 막는 것은 **자동** 재시도다
+    expect(code).not.toMatch(/setInterval|setTimeout|retry:\s*(true|\d)|retryDelay|backoff/);
     expect(code).toMatch(/JOB_POLL_INTERVAL_MS = 2000/);
-    expect(code).toMatch(/JOB_POLL_MAX_COUNT = 480/);
+    expect(code).toMatch(/JOB_POLL_MAX_COUNT = 1230/);
   });
 
   it("자동 저장 실패를 `useState` 로 드는 WORK-008 컴포넌트가 0건이다 — 소유자는 `useRowFailures`", () => {
@@ -511,3 +512,36 @@ describe("㉑ WORK-011 — 줄 시각 0건 · 고아 판정 0건 · 명령어 �
     expect(offenders).toEqual([]);
   });
 });
+
+describe("㉒ WORK-012 — 옛 통합 어휘 0건 · 경로 하나 · 수치", () => {
+  it("화면 문구에 「종결」·「다시 생성」이 0건이다(주석 제외) — 통합 단계가 사라졌다(MF-56 · U-1 · U-2)", () => {
+    const offenders = meetingSources.filter((file) => /종결|다시 생성/.test(stripComments(read(file)))).map(rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it("옛 계약 이름이 0건이다 — `pendingChange` · `integratedAt` · `final_batch` · `finalBatchState` · `\"integration\"`(주석 제외)", () => {
+    // `finalBatchState` 는 SPEC-008 §7 #3 이 지운 필드다 — 백엔드가 응답에서 뺐으므로 타입 · 픽스처에도 없다(검수 W-3)
+    const offenders = meetingSources
+      .filter((file) => /pendingChange|integratedAt|final_batch|finalBatchState|["']integration["']/.test(stripComments(read(file))))
+      .map(rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it("종료 재시도 경로가 `POST …/finalize` 하나다 — `/integrate` 를 부르는 코드가 0건(주석 제외)", () => {
+    const offenders = meetingSources.filter((file) => /\/integrate/.test(stripComments(read(file)))).map(rel);
+    expect(offenders).toEqual([]);
+    const api = read(path.join(MEETINGS, "api.ts"));
+    expect(api).toMatch(/\/finalize`/);
+    // 요청을 부르는 곳은 폴링 훅 하나다 — 두 번째 호출자를 만들지 않는다
+    const callers = meetingSources.filter((file) => /finalizeMeeting\(/.test(read(file))).map(rel);
+    expect(callers.sort()).toEqual(["features/meetings/api.ts", "features/meetings/hooks/useMeetingFinalizeJob.ts"]);
+  });
+
+  it("실패 배너 · 단계 문구가 `MeetingStatusBar.tsx` 하나에만 있다 — 두 번째 바를 만들지 않는다(⑥ 재실행)", () => {
+    const owners = meetingSources
+      .filter((file) => /녹음을 다시 받아쓰고 있습니다|회의록을 정리하고 있습니다|회의록 생성 실패/.test(read(file)))
+      .map(rel);
+    expect(owners).toEqual(["features/meetings/components/MeetingStatusBar.tsx"]);
+  });
+});
+

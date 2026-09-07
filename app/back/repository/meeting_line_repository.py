@@ -39,9 +39,7 @@ async def create_line(
     detail: str | None = None,
     evidence: list | None = None,
     task_id: int | None = None,
-    pending_change: dict | None = None,
-    source_human_line_id: int | None = None,
-    source_ai_line_id: int | None = None,
+    payload: dict | None = None,
 ) -> int:
     """새 줄의 id 를 돌려준다. dto 는 `find_by_ids` 로 다시 읽는다(업무 요약 조인 때문).
 
@@ -57,9 +55,7 @@ async def create_line(
         evidence=evidence,
         order_index=order_index,
         task_id=task_id,
-        pending_change=pending_change,
-        source_human_line_id=source_human_line_id,
-        source_ai_line_id=source_ai_line_id,
+        payload=payload,
     )
     session.add(row)
     await session.flush()

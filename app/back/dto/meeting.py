@@ -21,13 +21,11 @@ __all__ = [
     "LineCreateDTO",
     "LineNewTaskDTO",
     "LineUpdateDTO",
-    "PendingChangeDTO",
-    "MergePlanDTO",
-    "MergedAgendaPlanDTO",
-    "MergedLinePlanDTO",
+    "LinePayloadDTO",
     "MeetingAiContextDTO",
     "MeetingTaskFilterDTO",
     "TaskContextDTO",
+    "TranscriptBlockDTO",
     "TranscriptDTO",
     "TranscriptItemDTO",
     "BatchRunDTO",
@@ -105,9 +103,7 @@ class MeetingLineDTO:
     evidence: list
     order_index: int
     task_id: int | None
-    pending_change: dict | None
-    source_human_line_id: int | None
-    source_ai_line_id: int | None
+    payload: dict | None
     task: LineTaskSummaryDTO | None
     # SPEC-007 §4 `createdAt` — 줄 우측 시각 · 안건 시각(`min(createdAt)`)의 원천
     created_at: datetime
@@ -157,12 +153,16 @@ class MeetingAttachmentDTO:
 
 @dataclass(frozen=True)
 class MergedSummaryDTO:
-    """요약 바 우측 「안건 n · 결정 n · 액션 n」— **파생**, 통합 전 None(SPEC-008 이 채운다)."""
+    """요약 바 우측 「안건 n · 논의 n · 결정 n · 액션 n · 업무 n」— **파생 다섯**(SPEC-008 §4 Data Contract).
+
+    저장하지 않는다. `integratedAt` 은 **없다** — 통합 단계가 사라져(MF-56) 가리킬 시각이 없다.
+    """
 
     agenda_count: int
+    discussion_count: int
     decision_count: int
     action_count: int
-    integrated_at: datetime
+    task_count: int
 
 
 @dataclass(frozen=True)
@@ -171,7 +171,7 @@ class MeetingDetailDTO:
 
     **이 dto 를 만드는 곳은 `meeting_service.build_detail()` 하나다.** 상세·생성·PATCH·`/start`·
     안건·첨부 응답이 전부 거기를 지난다. WORK-007·008 은 그 함수에 값을 더한다.
-    파생값(`duration_minutes` · `latest_batch_seq` · `merged_summary` · `final_batch_state` · `active_job_id`)은
+    파생값(`duration_minutes` · `latest_batch_seq` · `merged_summary` · `active_job_id`)은
     **서버가 계산**하고 컬럼으로 두지 않는다(G-7).
     """
 
@@ -182,7 +182,6 @@ class MeetingDetailDTO:
     agendas: MeetingAgendaTracksDTO
     attachments: list[MeetingAttachmentDTO]
     latest_batch_seq: int
-    final_batch_state: str | None
     active_job_id: int | None
 
 
@@ -264,11 +263,11 @@ class AgendaUpdateDTO:
 
 
 @dataclass(frozen=True)
-class PendingChangeDTO:
-    """`pendingChange` — 담는 것은 **기한 · 상태 · note 셋뿐**(M-14-a · DEC-003 §4 L102). 보낸 키만 값이 있다.
+class LinePayloadDTO:
+    """`payload` — 담는 것은 **기한 · 상태 · note 셋뿐**(M-14-a · DEC-003 §4 L102). 보낸 키만 값이 있다.
 
     저장 형태는 JSONB `{dueDate, status, note}` 이고 `to_json()` 이 **보낸 키만** 싣는다 — 「보내지 않음」이 곧 「변경 없음」이다.
-    `cancelled` 는 담지 않는다(사유가 필수라 세 키로 표현할 수 없다 — SPEC-008 §4 Validation). 적용은 `meeting_task_link_service.apply_pending_change`.
+    `cancelled` 는 담지 않는다(사유가 필수라 세 키로 표현할 수 없다 — SPEC-008 §4 Validation). 적용은 `meeting_task_link_service.apply_payload`.
     """
 
     due_date: date | None = None
@@ -301,7 +300,7 @@ class LineNewTaskDTO:
 class LineCreateDTO:
     """`POST …/lines` — 사람 줄 하나. 회의 중(SPEC-007 §4)과 종료 후 편집(SPEC-008 §4)이 **같은 표면**이다.
 
-    회의 중에는 `agenda_id`·`kind`·`content` 만 — `detail`·`task_id`·`pending_change`·`new_task` 는 **`ended` 에서만** 받고
+    회의 중에는 `agenda_id`·`kind`·`content` 만 — `detail`·`task_id`·`payload`·`new_task` 는 **`ended` 에서만** 받고
     `recording` 에서 오면 `meeting_edit_service` 가 `validation_error` 로 거른다(SPEC-007 규칙 유지).
     `content` 는 `task_id`·`new_task` 줄에서는 서버가 업무 제목으로 채우므로 None 일 수 있다.
     """
@@ -311,54 +310,16 @@ class LineCreateDTO:
     content: str | None
     detail: str | None = None
     task_id: int | None = None
-    pending_change: PendingChangeDTO | None = None
+    payload: LinePayloadDTO | None = None
     new_task: LineNewTaskDTO | None = None
 
 
 @dataclass(frozen=True)
 class LineUpdateDTO:
-    """`PATCH …/lines/{id}` — **보낸 필드만**(SPEC-008 §4). `kind` 가 `task` 를 벗어나면 `task_id`·`pending_change` 가 비워진다."""
+    """`PATCH …/lines/{id}` — **보낸 필드만**(SPEC-008 §4). `kind` 가 `task` 를 벗어나면 `task_id`·`payload` 가 비워진다."""
 
     content: str | Unset = UNSET
     kind: str | Unset = UNSET
-
-
-# --- 통합본 (SPEC-008 §4 「통합 규칙」) -------------------------------------------
-
-
-@dataclass(frozen=True)
-class MergedLinePlanDTO:
-    """`meeting_merge_service.validate_and_build()` 가 낸 통합 줄 하나 — **본문은 원본에서 복사한 값**이다(M-8-a).
-
-    `source_human_line_id`·`source_ai_line_id` 중 최소 하나가 있다. 모델 출력의 텍스트가 여기 들어올 자리가 없다.
-    """
-
-    kind: str
-    content: str
-    detail: str | None
-    evidence: list
-    task_id: int | None
-    pending_change: dict | None
-    source_human_line_id: int | None
-    source_ai_line_id: int | None
-
-
-@dataclass(frozen=True)
-class MergedAgendaPlanDTO:
-    """통합 안건 하나 — 사람 안건(순서 그대로 · `state` 복사) 또는 어느 사람 안건에도 안 붙은 AI 안건(뒤에 · `state=None`)."""
-
-    title: str
-    state: str | None
-    source_agenda_id: int
-    lines: list[MergedLinePlanDTO]
-
-
-@dataclass(frozen=True)
-class MergePlanDTO:
-    """검증 7종을 전부 지난 통합 결과 — `headline`(모델 문장 · 1~200자) + `merged` 트리. 적재는 `meeting_finalize_service` 가 한 트랜잭션에서 한다."""
-
-    headline: str
-    agendas: list[MergedAgendaPlanDTO]
 
 
 # --- 회의 중 (SPEC-007) ----------------------------------------------------
@@ -386,15 +347,33 @@ class TranscriptDTO:
 
 
 @dataclass(frozen=True)
+class TranscriptBlockDTO:
+    """확정 발화 블록 하나 — 아직 행이 아닌 값(`meeting_transcript_blocks` 가 만들고 repository 가 적재한다).
+
+    실시간·재전사가 **같은 모양**을 낸다(M-9-a).
+    """
+
+    speaker_label: str
+    at_ms: int
+    end_ms: int
+    content: str
+
+
+@dataclass(frozen=True)
 class MeetingAiContextDTO:
     """배치·웜스타트가 읽는 회의의 서버 내부값 — `ai_session_id` 는 **여기서만** 읽는다(응답에 싣지 않는다)."""
 
     id: int
     account_id: int
+    title: str
     project_id: int | None
     project_name: str | None
     status: str
+    # ① 재전사가 「직전 회의」를 가르는 기준(M-1 — 예정 일시)
+    start_at: datetime
     recording_started_at: datetime | None
+    # ① 재전사가 올릴 녹음 원본. **응답에 싣지 않는다**(SPEC-006 §4)
+    recording_path: str | None
     ai_session_id: str | None
 
 

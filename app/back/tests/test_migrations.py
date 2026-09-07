@@ -1,4 +1,4 @@
-"""WORK-009 W-5 — 리비전 `0007` 왕복(WP Phase 1 검증 첫 항목).
+"""리비전 왕복 — `0008`(WORK-012) · `0007`(WORK-009).
 
 `conftest.py` 는 `upgrade head` 만 돈다. **되감기가 도는지는 아무도 안 봤다** — 여기서 본다.
 
@@ -59,6 +59,20 @@ def _seed(engine: Engine) -> dict[str, int]:
             ),
             {"a": account_id, "w": work_type_id, "s": now, "e": now + timedelta(hours=1)},
         ).scalar_one()
+        agenda_id = conn.execute(
+            text(
+                "INSERT INTO meeting_agenda (meeting_id, track, title, order_index)"
+                " VALUES (:m, 'human', '왕복 안건', 0) RETURNING id"
+            ),
+            {"m": meeting_id},
+        ).scalar_one()
+        line_id = conn.execute(
+            text(
+                "INSERT INTO meeting_line (meeting_id, agenda_id, track, kind, content, order_index)"
+                " VALUES (:m, :g, 'human', 'action', '왕복 줄', 0) RETURNING id"
+            ),
+            {"m": meeting_id, "g": agenda_id},
+        ).scalar_one()
         conn.execute(
             text(
                 "INSERT INTO auth_session (account_id, kind, refresh_token_hash, expires_at)"
@@ -73,7 +87,13 @@ def _seed(engine: Engine) -> dict[str, int]:
             ),
             {"a": account_id, "m": meeting_id, "t": _MEETING_TOKEN, "x": now + timedelta(hours=6)},
         )
-    return {"account_id": account_id, "work_type_id": work_type_id, "meeting_id": meeting_id}
+    return {
+        "account_id": account_id,
+        "work_type_id": work_type_id,
+        "meeting_id": meeting_id,
+        "agenda_id": agenda_id,
+        "line_id": line_id,
+    }
 
 
 def _cleanup(engine: Engine, seeded: dict[str, int]) -> None:
@@ -81,18 +101,107 @@ def _cleanup(engine: Engine, seeded: dict[str, int]) -> None:
         conn.execute(
             text("DELETE FROM auth_session WHERE account_id = :a"), {"a": seeded["account_id"]}
         )
+        conn.execute(text("DELETE FROM meeting_line WHERE meeting_id = :m"), {"m": seeded["meeting_id"]})
+        conn.execute(text("DELETE FROM meeting_agenda WHERE meeting_id = :m"), {"m": seeded["meeting_id"]})
         conn.execute(text("DELETE FROM meeting WHERE id = :m"), {"m": seeded["meeting_id"]})
         conn.execute(text("DELETE FROM work_type WHERE id = :w"), {"w": seeded["work_type_id"]})
         conn.execute(text("DELETE FROM account WHERE id = :a"), {"a": seeded["account_id"]})
 
 
 @pytest.mark.slow
-def test_revision_0007_round_trip(sync_engine: Engine) -> None:
-    """`upgrade → downgrade -1 → upgrade` 를 실제 alembic 명령으로 돈다(WP Phase 1)."""
+def test_revision_0008_round_trip(sync_engine: Engine) -> None:
+    """`0008` 왕복 — `pending_change` 값이 **`payload` 로 살아서** 옮겨지고, 통합 잔재가 사라진다(WORK-012 Phase 0)."""
     config = _alembic()
     seeded = _seed(sync_engine)
     try:
+        with sync_engine.begin() as conn:
+            conn.execute(
+                text("UPDATE meeting_line SET payload = :p WHERE id = :i"),
+                {"p": '{"note": "이 값이 살아 옮겨져야 한다"}', "i": seeded["line_id"]},
+            )
+
         command.downgrade(config, "-1")
+
+        with sync_engine.connect() as conn:
+            columns = set(
+                conn.execute(
+                    text(
+                        "SELECT column_name FROM information_schema.columns"
+                        " WHERE table_name = 'meeting_line'"
+                    )
+                ).scalars()
+            )
+            # 되감으면 옛 이름으로 돌아가고 값은 그대로다(RENAME 이라 데이터가 남는다)
+            assert "payload" not in columns and "pending_change" in columns
+            assert {"source_human_line_id", "source_ai_line_id"} <= columns
+            assert (
+                conn.execute(
+                    text("SELECT pending_change ->> 'note' FROM meeting_line WHERE id = :i"),
+                    {"i": seeded["line_id"]},
+                ).scalar_one()
+                == "이 값이 살아 옮겨져야 한다"
+            )
+
+        command.upgrade(config, "head")
+
+        with sync_engine.connect() as conn:
+            columns = set(
+                conn.execute(
+                    text(
+                        "SELECT column_name FROM information_schema.columns"
+                        " WHERE table_name = 'meeting_line'"
+                    )
+                ).scalars()
+            )
+            assert "payload" in columns and "pending_change" not in columns
+            # `source_*_line_id` · FK 2 · 부분 UNIQUE 2 · CHECK 가 DB 에 없다
+            assert {"source_human_line_id", "source_ai_line_id"} & columns == set()
+            indexes = set(
+                conn.execute(
+                    text("SELECT indexname FROM pg_indexes WHERE tablename = 'meeting_line'")
+                ).scalars()
+            )
+            assert "uq_meeting_line_source_human_line_id" not in indexes
+            assert "uq_meeting_line_source_ai_line_id" not in indexes
+            assert (
+                conn.execute(
+                    text("SELECT payload ->> 'note' FROM meeting_line WHERE id = :i"),
+                    {"i": seeded["line_id"]},
+                ).scalar_one()
+                == "이 값이 살아 옮겨져야 한다"
+            )
+            # `meeting.term_corrections` · CHECK 둘
+            assert (
+                conn.execute(
+                    text(
+                        "SELECT data_type FROM information_schema.columns"
+                        " WHERE table_name = 'meeting' AND column_name = 'term_corrections'"
+                    )
+                ).scalar_one()
+                == "jsonb"
+            )
+            checks = dict(
+                conn.execute(
+                    text(
+                        "SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint"
+                        " WHERE conname IN ('ck_job_error_code', 'ck_meeting_batch_run_phase')"
+                    )
+                ).all()
+            )
+            assert "integration" not in checks["ck_meeting_batch_run_phase"]
+            assert "transcription_failed" in checks["ck_job_error_code"]
+            assert "integration_failed" not in checks["ck_job_error_code"]
+    finally:
+        _cleanup(sync_engine, seeded)
+
+
+@pytest.mark.slow
+def test_revision_0007_round_trip(sync_engine: Engine) -> None:
+    """`0007` 왕복 — 두 칸 내려가 본다(`0008` 이 위에 얹혀 있으므로)."""
+    config = _alembic()
+    seeded = _seed(sync_engine)
+    try:
+        command.downgrade(config, "-2")
 
         with sync_engine.connect() as conn:
             # 되감긴 스키마에는 세 컬럼이 없다

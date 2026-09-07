@@ -71,9 +71,12 @@ export function endMeeting(id: number): Promise<JobAccepted> {
   return apiFetch<JobAccepted>(`/api/meetings/${id}/end`, { method: "POST" });
 }
 
-/** **「다시 생성」** — `ended`+`failed` 에서만(그 밖은 409). 통합(②)만 다시 돈다 · 한 줄 요약도 같은 응답에서 온다. */
-export function integrateMeeting(id: number): Promise<JobAccepted> {
-  return apiFetch<JobAccepted>(`/api/meetings/${id}/integrate`, { method: "POST" });
+/**
+ * **「다시 시도」** — `ended`+`failed` 에서만(그 밖은 409). **①(재전사)부터 다시 돈다**(MF-58 — 부분 재시도 갈래가 없다).
+ * 옛 `POST …/integrate` 를 대체한다 — 통합 단계가 사라졌다(MF-56).
+ */
+export function finalizeMeeting(id: number): Promise<JobAccepted> {
+  return apiFetch<JobAccepted>(`/api/meetings/${id}/finalize`, { method: "POST" });
 }
 
 /** 종료 job 폴링 — 2초 간격 · 종결에서 멈춘다(`useMeetingFinalizeJob`). 남의 job 은 404. */
@@ -113,7 +116,7 @@ export function deleteAgenda(meetingId: number, agendaId: number): Promise<void>
 // --- 회의 중(SPEC-007) — 줄 · 트랜스크립트 ------------------------------------
 
 /**
- * 사람 줄 하나 — 회의 중(SPEC-007)과 종료 후 편집(SPEC-008 확장 갈래 — `detail` · `taskId`+`pendingChange` · `newTask`)이 한 표면.
+ * 사람 줄 하나 — 회의 중(SPEC-007)과 종료 후 편집(SPEC-008 확장 갈래 — `detail` · `taskId`+`payload` · `newTask`)이 한 표면.
  * 응답은 **`LineItem`(201)** 이지 상세 전체가 아니다(SPEC-007 §4). 회의 중 사람 줄은 항상 `detail:null · evidence:[] · taskId:null` 이다(M-14).
  */
 export function addLine(meetingId: number, input: AddLineInput): Promise<MeetingLine> {
@@ -157,8 +160,8 @@ export function createTaskFromLine(meetingId: number, lineId: number, input: New
 }
 
 /**
- * **「업무 갱신」**(U-6) — `PATCH …/lines/{id}/task`, **본문 없음**. 줄에 저장된 `pendingChange` 가 요청이다.
- * 서버가 ① 상태(현재와 다를 때만) → ② 기한 → ③ 메모 → ④ `pendingChange=null` 을 한 트랜잭션으로 · 거부되면 전부 롤백.
+ * **「업무 갱신」**(U-6) — `PATCH …/lines/{id}/task`, **본문 없음**. 줄에 저장된 `payload` 가 요청이다.
+ * 서버가 ① 상태(현재와 다를 때만) → ② 기한 → ③ 메모 → ④ `payload=null` 을 한 트랜잭션으로 · 거부되면 전부 롤백.
  * **한 번에 요청은 이것 하나다** — 업무 API 를 나눠 부르지 않는다(WORK-005 L294 검증 항목).
  */
 export function applyLineTaskChange(meetingId: number, lineId: number): Promise<MeetingDetail> {

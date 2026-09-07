@@ -18,10 +18,10 @@ from models.meeting import Meeting, MeetingLine, MeetingTranscript
 from models.task import Task, TaskLog, TaskMemo
 from tests.fakes.agent import FakeAgentGateway
 from tests.meeting_close_fixtures import (  # noqa: F401
-    answer,
     close_scope,
+    fake_async_stt,
     end_meeting,
-    final_output,
+    notes_output,
     finalize_successfully,
     finalize_with_failure,
     prepare_recording,
@@ -31,7 +31,7 @@ from tests.meeting_close_fixtures import (  # noqa: F401
 from tests.meeting_fixtures import BASE, MeetingOwner, owner, stranger  # noqa: F401
 from tests.meeting_live_fixtures import add_task, start_meeting
 
-pytestmark = pytest.mark.usefixtures("close_scope")
+pytestmark = pytest.mark.usefixtures("close_scope", "fake_async_stt")
 
 
 def _lines(body: dict, track: str) -> list[dict]:
@@ -95,10 +95,10 @@ async def test_any_line_write_during_generating_is_409(
 async def test_line_write_during_recording_keeps_spec_007_rules(
     client: AsyncClient, owner: MeetingOwner, db_session: AsyncSession
 ) -> None:
-    """회의 중에는 확장 필드(`detail`·`taskId`·`pendingChange`·`newTask`)를 **거부**하고, 편집(PATCH·DELETE)은 409 다."""
+    """회의 중에는 확장 필드(`detail`·`taskId`·`payload`·`newTask`)를 **거부**하고, 편집(PATCH·DELETE)은 409 다."""
     detail = await start_meeting(client, owner)
     agenda_id = detail["agendas"]["human"][0]["id"]
-    for extra, field in (({"detail": "x"}, "detail"), ({"taskId": 1}, "taskId"), ({"pendingChange": {"note": "n"}}, "pendingChange"),
+    for extra, field in (({"detail": "x"}, "detail"), ({"taskId": 1}, "taskId"), ({"payload": {"note": "n"}}, "payload"),
                          ({"newTask": {"title": "t", "workTypeId": owner.task_type_id}}, "newTask")):
         response = await client.post(f"{BASE}/{detail['id']}/lines", json={"agendaId": agenda_id, "kind": "discussion", "content": "x", **extra}, headers=owner.headers)
         assert (response.status_code, response.json()["code"], response.json()["field"]) == (422, "validation_error", field), extra
@@ -116,21 +116,21 @@ async def test_leaving_task_kind_unlinks_the_task_but_keeps_it_and_entering_need
 ) -> None:
     task_id = await add_task(db_session, owner, title="연결된 업무", project_id=owner.project_id)
     detail = await prepare_recording(client, owner, db_session, projectId=owner.project_id)
-    fake_agent.will_return(final_output(detail, task_id=task_id))
-    fake_agent.will_answer(answer())
+    fake_agent.will_return(notes_output(detail, task_id=task_id))
     await run_job(await end_meeting(client, owner, detail["id"]))
     body = (await client.get(f"{BASE}/{detail['id']}", headers=owner.headers)).json()
     task_line = next(l for l in _lines(body, "merged") if l["kind"] == "task")
     assert task_line["taskId"] == task_id and task_line["task"]["title"] == "연결된 업무"
-    await db_session.execute(update(MeetingLine).where(MeetingLine.id == task_line["id"]).values(pending_change={"note": "메모"}))
+    await db_session.execute(update(MeetingLine).where(MeetingLine.id == task_line["id"]).values(payload={"note": "메모"}))
 
     response = await client.patch(f"{BASE}/{body['id']}/lines/{task_line['id']}", json={"kind": "decision"}, headers=owner.headers)
     assert response.status_code == 200, response.text
     changed = next(l for l in _lines(response.json(), "merged") if l["id"] == task_line["id"])
-    assert (changed["kind"], changed["taskId"], changed["pendingChange"], changed["task"]) == ("decision", None, None, None)
+    assert (changed["kind"], changed["taskId"], changed["payload"], changed["task"]) == ("decision", None, None, None)
     assert await db_session.scalar(select(Task.deleted_at).where(Task.id == task_id)) is None  # 업무 행은 그대로
     assert response.json()["mergedSummary"]["decisionCount"] == body["mergedSummary"]["decisionCount"] + 1
-    assert response.json()["mergedSummary"]["actionCount"] == body["mergedSummary"]["actionCount"] - 1
+    # 카운트가 다섯으로 갈렸다(WORK-012) — `task` → `decision` 은 `taskCount` 를 줄인다
+    assert response.json()["mergedSummary"]["taskCount"] == body["mergedSummary"]["taskCount"] - 1
 
     back = await client.patch(f"{BASE}/{body['id']}/lines/{task_line['id']}", json={"kind": "task"}, headers=owner.headers)
     assert (back.status_code, back.json()["code"], back.json()["field"]) == (422, "validation_error", "kind")
@@ -159,13 +159,13 @@ async def test_deleting_a_merged_line_leaves_sources_ai_transcript_recording_and
     await db_session.flush()
     detail = await prepare_recording(client, owner, db_session, projectId=owner.project_id)
     await db_session.execute(update(Meeting).where(Meeting.id == detail["id"]).values(recording_path="/rec/meeting.pcm"))
-    fake_agent.will_return(final_output(detail, task_id=task_id))
-    fake_agent.will_answer(answer())
+    fake_agent.will_return(notes_output(detail, task_id=task_id))
     await run_job(await end_meeting(client, owner, detail["id"]))
     body = (await client.get(f"{BASE}/{detail['id']}", headers=owner.headers)).json()
 
     merged = _lines(body, "merged")
-    inherited = next(l for l in merged if l["sourceHumanLineId"] and l["sourceAiLineId"])
+    # 계승(`source_*_line_id`)이 사라졌다(MF-56 · 57) — merged 줄은 ② 가 본문째 낸다
+    inherited = next(l for l in merged if l["kind"] == "discussion")
     task_line = next(l for l in merged if l["kind"] == "task")
     same_agenda = [l for l in merged if l["agendaId"] == inherited["agendaId"]]
     assert [l["orderIndex"] for l in same_agenda] == list(range(len(same_agenda)))
@@ -179,11 +179,10 @@ async def test_deleting_a_merged_line_leaves_sources_ai_transcript_recording_and
         "task": await db_session.scalar(select(Task.status, Task.deleted_at).where(Task.id == task_id)),
         "task_log": await _count(db_session, TaskLog, TaskLog.task_id == task_id),
         "task_memo": await _count(db_session, TaskMemo, TaskMemo.task_id == task_id),
-        "source_human": await db_session.scalar(select(MeetingLine.content).where(MeetingLine.id == inherited["sourceHumanLineId"])),
-        "source_ai": await db_session.scalar(select(MeetingLine.evidence).where(MeetingLine.id == inherited["sourceAiLineId"])),
     }
-    assert before["human"] == 3 and before["ai"] == 4 and before["transcript"] == 1
-    assert before["task_log"] == 1 and before["task_memo"] == 1 and before["source_ai"]
+    # 종료 시 배치가 없다(MF-56) — AI 트랙은 회의 중에 생긴 줄 하나뿐이고, 트랜스크립트는 재전사분 둘이다
+    assert before["human"] == 3 and before["ai"] == 1 and before["transcript"] == 2
+    assert before["task_log"] == 1 and before["task_memo"] == 1
 
     # --- 삭제 둘: 계승 줄 · 업무 줄 ---
     for line in (inherited, task_line):
@@ -203,8 +202,6 @@ async def test_deleting_a_merged_line_leaves_sources_ai_transcript_recording_and
         "task": await db_session.scalar(select(Task.status, Task.deleted_at).where(Task.id == task_id)),
         "task_log": await _count(db_session, TaskLog, TaskLog.task_id == task_id),
         "task_memo": await _count(db_session, TaskMemo, TaskMemo.task_id == task_id),
-        "source_human": await db_session.scalar(select(MeetingLine.content).where(MeetingLine.id == inherited["sourceHumanLineId"])),
-        "source_ai": await db_session.scalar(select(MeetingLine.evidence).where(MeetingLine.id == inherited["sourceAiLineId"])),
     }
     assert after == before, {k: (before[k], after[k]) for k in before if before[k] != after[k]}
 
@@ -214,7 +211,8 @@ async def test_deleting_a_merged_line_leaves_sources_ai_transcript_recording_and
     assert {l["id"] for l in merged_after}.isdisjoint({inherited["id"], task_line["id"]})
     kept = [l for l in merged_after if l["agendaId"] == inherited["agendaId"]]
     assert [l["orderIndex"] for l in kept] == list(range(len(kept)))  # 뒤 줄이 당겨졌다
-    assert remaining["mergedSummary"]["actionCount"] == body["mergedSummary"]["actionCount"] - 1
+    # 지운 둘 중 하나가 업무 줄이다 — 카운트가 다섯으로 갈려 `taskCount` 가 줄어든다(WORK-012)
+    assert remaining["mergedSummary"]["taskCount"] == body["mergedSummary"]["taskCount"] - 1
     # AI 탭 · 근거 칩 원천은 그대로다
     assert _lines(remaining, "ai") == _lines(body, "ai")
     assert _lines(remaining, "human") == _lines(body, "human")
@@ -258,19 +256,19 @@ async def test_adding_lines_after_the_meeting_ended(
     assert added.status_code == 201, added.text
     item = added.json()
     assert (item["track"], item["kind"], item["content"], item["detail"], item["orderIndex"]) == ("merged", "decision", "종료 후 결정", "상세", len(merged_agenda["lines"]))
-    assert (item["sourceHumanLineId"], item["sourceAiLineId"], item["evidence"]) == (None, None, [])
+    assert item["evidence"] == []
 
-    # U-9 — taskId + pendingChange · content 는 서버가 업무 제목으로
+    # U-9 — taskId + payload · content 는 서버가 업무 제목으로
     linked = await client.post(path, json={"agendaId": merged_agenda["id"], "kind": "task", "taskId": task_id,
-                                            "pendingChange": {"dueDate": "2026-09-02", "note": "검수 일정 변경"}}, headers=owner.headers)
+                                            "payload": {"dueDate": "2026-09-02", "note": "검수 일정 변경"}}, headers=owner.headers)
     assert linked.status_code == 201, linked.text
     assert (linked.json()["content"], linked.json()["taskId"], linked.json()["task"]["title"]) == ("연관 업무 제목", task_id, "연관 업무 제목")
-    assert linked.json()["pendingChange"] == {"dueDate": "2026-09-02", "note": "검수 일정 변경"}
+    assert linked.json()["payload"] == {"dueDate": "2026-09-02", "note": "검수 일정 변경"}
 
     # U-10 — newTask 는 업무 생성 + 줄 한 트랜잭션(Phase 5 · `meeting_task_link_service`). 상세는 `test_meeting_task_link.py`
     created = await client.post(path, json={"agendaId": merged_agenda["id"], "kind": "task", "newTask": {"title": "새 업무", "workTypeId": owner.task_type_id}}, headers=owner.headers)
     assert created.status_code == 201, created.text
-    assert (created.json()["kind"], created.json()["content"], created.json()["task"]["status"], created.json()["pendingChange"]) == ("task", "새 업무", "todo", None)
+    assert (created.json()["kind"], created.json()["content"], created.json()["task"]["status"], created.json()["payload"]) == ("task", "새 업무", "todo", None)
     assert created.json()["taskId"] is not None
 
     # 검증 — 편집 대상 트랙 밖 안건 · task 인데 둘 다/둘 다 없음 · 비업무 줄의 업무 필드 · content 없음 · cancelled · 넷째 키 · 삭제된/남의 업무
@@ -280,9 +278,9 @@ async def test_adding_lines_after_the_meeting_ended(
         ({"agendaId": merged_agenda["id"], "kind": "task", "taskId": task_id, "newTask": {"title": "t", "workTypeId": owner.task_type_id}}, 422, "taskId"),
         ({"agendaId": merged_agenda["id"], "kind": "discussion", "content": "x", "taskId": task_id}, 422, "taskId"),
         ({"agendaId": merged_agenda["id"], "kind": "discussion"}, 422, "content"),
-        ({"agendaId": merged_agenda["id"], "kind": "task", "taskId": task_id, "pendingChange": {"status": "cancelled"}}, 422, "pendingChange.status"),
-        ({"agendaId": merged_agenda["id"], "kind": "task", "taskId": task_id, "pendingChange": {"priority": 1}}, 422, "pendingChange.priority"),
-        ({"agendaId": merged_agenda["id"], "kind": "task", "taskId": task_id, "pendingChange": {}}, 422, "pendingChange"),
+        ({"agendaId": merged_agenda["id"], "kind": "task", "taskId": task_id, "payload": {"status": "cancelled"}}, 422, "payload.status"),
+        ({"agendaId": merged_agenda["id"], "kind": "task", "taskId": task_id, "payload": {"priority": 1}}, 422, "payload.priority"),
+        ({"agendaId": merged_agenda["id"], "kind": "task", "taskId": task_id, "payload": {}}, 422, "payload"),
         ({"agendaId": merged_agenda["id"], "kind": "task", "taskId": 999999}, 404, None),
     ]
     for payload, status, field in cases:
@@ -300,13 +298,13 @@ async def test_agenda_title_after_the_meeting_ended(
 ) -> None:
     body, _ = await finalize_successfully(client, owner, db_session, fake_agent)
     merged_agenda = body["agendas"]["merged"][2]  # AI 신설 안건도 merged 안건이라 이름을 고칠 수 있다
-    human_agenda, ai_agenda = body["agendas"]["human"][0], body["agendas"]["ai"][1]
+    human_agenda, ai_agenda = body["agendas"]["human"][0], body["agendas"]["ai"][0]
     base = f"{BASE}/{body['id']}/agendas"
 
     renamed = await client.patch(f"{base}/{merged_agenda['id']}", json={"title": "디자인 반영 일정"}, headers=owner.headers)
     assert renamed.status_code == 200, renamed.text
     assert renamed.json()["agendas"]["merged"][2]["title"] == "디자인 반영 일정"
-    assert renamed.json()["agendas"]["ai"][1]["title"] == ai_agenda["title"]  # AI 원본 안건 제목은 그대로
+    assert renamed.json()["agendas"]["ai"][0]["title"] == ai_agenda["title"]  # AI 원본 안건 제목은 그대로
 
     with_state = await client.patch(f"{base}/{merged_agenda['id']}", json={"title": "x", "state": "done"}, headers=owner.headers)
     assert (with_state.status_code, with_state.json()["code"], with_state.json()["field"]) == (422, "validation_error", "state")

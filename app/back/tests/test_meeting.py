@@ -63,7 +63,6 @@ async def test_a_meeting_is_created_with_title_type_and_time_only(
     assert created["latestBatchSeq"] == 0
     assert created["headline"] is None
     assert created["mergedSummary"] is None
-    assert created["finalBatchState"] is None
     assert created["activeJobId"] is None
     assert created["attachments"] == []
     # 서버 내부값은 싣지 않는다(§4)

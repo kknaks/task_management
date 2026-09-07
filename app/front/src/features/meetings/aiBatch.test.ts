@@ -20,9 +20,7 @@ const line = (id: number, agendaId: number, content: string): MeetingLine => ({
   evidence: [],
   orderIndex: id,
   taskId: null,
-  pendingChange: null,
-  sourceHumanLineId: null,
-  sourceAiLineId: null,
+  payload: null,
   task: null,
   createdAt: "2026-08-27T00:41:00Z",
 });

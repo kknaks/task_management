@@ -15,8 +15,8 @@
  * | `live` | `#EEF1FE`/`#C9D1FB` · dot 광륜 | 「기록 중」 + 경과 | L809~812 |
  * | `paused` | 회색 | 「일시정지」 + 사유 + 경과 · 「다른 창에서 기록 중입니다」 | U-1 · Case Matrix |
  * | `headline` | `#EEF1FE`/`#C9D1FB` | AI 한 줄 요약 — 페이지 56 한 줄 / 드로어 72 두 줄(`layout`) | SPEC-008 U-3 · U-4 · [09] L727~733 |
- * | `generating` | 회색 · 16px 스피너 | 「AI 요약을 정리하고 있습니다」 / 「회의록을 통합하고 있습니다 · 다시 시도 중 (n/2)」 + 「경과 mm:ss」 · 폴링 실패면 「상태를 확인하지 못했습니다 · 다시 확인」 | SPEC-008 U-1 |
- * | `failed` | `#FCEEEC`/`#E2685B` 배너 | 「통합 정리 실패 · 회의록 탭에 회의 중 작성한 원본을 보여 드립니다」 + 「다시 생성」 | SPEC-008 U-2 |
+ * | `generating` | 회색 · 16px 스피너 | 「녹음을 다시 받아쓰고 있습니다」 / 「회의록을 정리하고 있습니다 · 다시 시도 중 (n/2)」 + 「경과 mm:ss」 · 폴링 실패면 「상태를 확인하지 못했습니다 · 다시 확인」 | SPEC-008 U-1 |
+ * | `failed` | `#FCEEEC`/`#E2685B` 배너 | 「회의록 생성 실패 · 회의록 탭에 회의 중 작성한 원본을 보여 드립니다」 + 「다시 시도」(사유는 툴팁으로만) | SPEC-008 U-2 |
  *
  * **회의 중 상태 바에 없는 것**(SPEC-007 §7-B): 파형 15개 막대(L813~829) · 「자동 저장 · 09:42」(L830) · AI 한 줄 요약.
  * 경과 시간은 **`now − recordingStartedAt`** 이고 일시정지 중에도 멈추지 않는다(U-1 기대 결과).
@@ -26,7 +26,7 @@
 
 import { Loader2 } from "lucide-react";
 
-import type { JobPhase, MergedSummary, PauseReason } from "@/features/meetings/types";
+import type { JobErrorCode, JobPhase, MergedSummary, PauseReason } from "@/features/meetings/types";
 import { formatElapsed } from "@/lib/datetime";
 import { useNow } from "@/lib/hooks/useNow";
 import { cn } from "@/lib/utils";
@@ -49,21 +49,26 @@ export type MeetingStatusBarProps =
     }
   | {
       variant: "generating";
-      /** `final_batch` → 「AI 요약을 정리하고 있습니다」 · `integration` → 「회의록을 통합하고 있습니다」. 모르면(첫 폴링 전) ① 문구. */
+      /** `transcription` → 「녹음을 다시 받아쓰고 있습니다」 · `final` → 「회의록을 정리하고 있습니다」. 모르면(첫 폴링 전) ① 문구. */
       phase: JobPhase | null;
-      /** 통합 시도 회차(1~3). 2 이상이면 「· 다시 시도 중 (n−1/2)」 — 재시도 2회(DEC-003 §7). */
+      /** ② 시도 회차(1~3 · ① 동안 0). 2 이상이면 「· 다시 시도 중 (n−1/2)」 — 재시도 2회(DEC-003 §7). */
       attempt: number;
       /** 「경과 mm:ss」의 기준 — 종료 요청 응답 시각(ms). 재진입이면 폴링을 처음 붙인 시각이다. `null` 이면 숨긴다. */
       elapsedFromMs: number | null;
-      /** 폴링 조회 실패(5xx · 네트워크) 또는 480회 상한 — 스피너는 그대로, 우측에 「상태를 확인하지 못했습니다 · 다시 확인」. */
+      /** 폴링 조회 실패(5xx · 네트워크) 또는 1230회 상한 — 스피너는 그대로, 우측에 「상태를 확인하지 못했습니다 · 다시 확인」. */
       pollFailed: boolean;
       onRecheck: () => void;
     }
   | {
       variant: "failed";
-      /** 「다시 생성」 — `POST …/integrate`. 요청 중이면 비활성 + 스피너. */
-      onRegenerate: () => void;
-      regenerating: boolean;
+      /** 「다시 시도」 — `POST …/finalize`(①부터). 요청 중이면 비활성 + 스피너. */
+      onRetry: () => void;
+      retrying: boolean;
+      /**
+       * 실패 사유(U-2) — **배너는 하나**이고 사유는 **툴팁으로만** 갈린다.
+       * `null`(새로고침으로 들어와 볼 job 이 없다)이면 툴팁 없이 배너만.
+       */
+      errorCode: JobErrorCode | null;
       /** 드로어(U-4)에서도 되지만 편집 잠금 등 부모 사정으로 막을 때. */
       disabled?: boolean;
     };
@@ -100,18 +105,33 @@ function ElapsedSince({ fromMs }: { fromMs: number }) {
   );
 }
 
-/** 단계 문구(U-1) — `progress.phase` · `attempt` 파생. 시도 회차는 재시도 횟수(n−1)/2 로 적는다. */
+export const TRANSCRIBING_LABEL = "녹음을 다시 받아쓰고 있습니다";
+export const FINALIZING_LABEL = "회의록을 정리하고 있습니다";
+
+/**
+ * 단계 문구(U-1) — `progress.phase` · `attempt` 파생. **처리 시간을 적지 않는다**(MF-37).
+ * 시도 회차는 재시도 횟수(n−1)/2 로 적는다 — ② 는 자동 재시도 2회다(DEC-003 §7).
+ */
 export function generatingLabel(phase: JobPhase | null, attempt: number): string {
-  if (phase !== "integration") {
-    return "AI 요약을 정리하고 있습니다";
+  if (phase !== "final") {
+    return TRANSCRIBING_LABEL;
   }
   const retry = Math.max(0, attempt - 1);
-  return retry > 0 ? `회의록을 통합하고 있습니다 · 다시 시도 중 (${retry}/2)` : "회의록을 통합하고 있습니다";
+  return retry > 0 ? `${FINALIZING_LABEL} · 다시 시도 중 (${retry}/2)` : FINALIZING_LABEL;
 }
 
 export const POLL_FAILED_LABEL = "상태를 확인하지 못했습니다";
-export const FAILED_BANNER_TITLE = "통합 정리 실패";
+export const FAILED_BANNER_TITLE = "회의록 생성 실패";
 export const FAILED_BANNER_BODY = "회의록 탭에 회의 중 작성한 원본을 보여 드립니다";
+export const RETRY_TOOLTIP = "녹음을 다시 받아쓰고 회의록을 다시 정리합니다 · 원본은 바뀌지 않습니다";
+
+/** 사유 툴팁(U-2) — ①에서 떨어졌나 ②에서 떨어졌나 둘뿐이다. `job_timeout` 은 ② 쪽으로 읽는다. */
+export function failedReasonTooltip(errorCode: JobErrorCode | null): string | undefined {
+  if (errorCode === null) {
+    return undefined;
+  }
+  return errorCode.startsWith("transcription_") ? "녹음을 다시 받아쓰지 못했습니다" : "회의록을 정리하지 못했습니다";
+}
 
 const GRAY_BAR = "flex h-14 w-full items-center gap-3.5 rounded-xl border border-chip-border bg-chip-bg px-5";
 const LIVE_BAR = "flex h-14 w-full items-center gap-3.5 rounded-xl border border-ai-bar-border bg-ai-bar px-5";
@@ -165,9 +185,11 @@ export function MeetingStatusBar(props: MeetingStatusBarProps) {
           AI 한 줄 요약
         </span>
       );
+      // **다섯**(MF-25) — 최종 회의록 기준. 화면이 세지 않는다(서버가 그리는 그것을 센다).
       const counts = props.summary ? (
         <span className="shrink-0 text-caption text-muted-foreground">
-          안건 {props.summary.agendaCount} · 결정 {props.summary.decisionCount} · 액션 {props.summary.actionCount}
+          안건 {props.summary.agendaCount} · 논의 {props.summary.discussionCount} · 결정 {props.summary.decisionCount} · 액션{" "}
+          {props.summary.actionCount} · 업무 {props.summary.taskCount}
         </span>
       ) : null;
       if (props.layout === "stacked") {
@@ -229,22 +251,24 @@ export function MeetingStatusBar(props: MeetingStatusBarProps) {
         <div
           role="alert"
           aria-label={FAILED_BANNER_TITLE}
+          data-error-code={props.errorCode ?? undefined}
           className="flex h-14 w-full items-center gap-3 rounded-xl border border-status-overdue bg-banner-fail px-5"
         >
-          <span className="min-w-0 flex-1 truncate text-control-label text-status-overdue">
+          {/* 배너는 **하나**다 — ①(재전사)이든 ②(최종 회의록)든 같은 문구, 사유는 툴팁으로만(U-2) */}
+          <span title={failedReasonTooltip(props.errorCode)} className="min-w-0 flex-1 truncate text-control-label text-status-overdue">
             <span className="font-semibold">{FAILED_BANNER_TITLE}</span>
             <span aria-hidden> · </span>
             {FAILED_BANNER_BODY}
           </span>
           <button
             type="button"
-            onClick={props.onRegenerate}
-            disabled={props.regenerating || props.disabled}
-            title="사람 원본과 AI 요약을 다시 통합합니다 · 원본은 바뀌지 않습니다"
+            onClick={props.onRetry}
+            disabled={props.retrying || props.disabled}
+            title={RETRY_TOOLTIP}
             className="flex h-[30px] shrink-0 items-center gap-1.5 rounded-control bg-primary px-3 text-caption font-semibold text-primary-foreground hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {props.regenerating ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : null}
-            다시 생성
+            {props.retrying ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : null}
+            다시 시도
           </button>
         </div>
       );

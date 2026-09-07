@@ -16,6 +16,8 @@ dependencies = [
     "open-kknaks>=2.1.2",
     "websockets>=13.0",
     "jsonschema>=4.23",
+    # 종료 후 재전사(Soniox `stt-async-v5` REST — WORK-012). 실시간 갈래는 websockets 다
+    "httpx>=0.28.0",
 ]
 
 [dependency-groups]

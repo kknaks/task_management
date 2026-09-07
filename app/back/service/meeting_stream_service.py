@@ -59,7 +59,7 @@ from repository import (
     meeting_repository,
     meeting_transcript_repository,
 )
-from service import meeting_batch_service
+from service import meeting_batch_service, meeting_transcript_blocks
 
 # --- close code (SPEC-007 §4) ----------------------------------------------------
 CLOSE_NOT_FOUND = 4404
@@ -74,11 +74,9 @@ REASON_DISCONNECTED = "meeting_stream_disconnected"
 CLOSE_ENDED = 1000
 REASON_ENDED = "meeting_ended"
 
-# 발화 블록 경계 — SPEC-007 §4 가 정한 값(WP L145 「이미 SPEC 에 있다」). env 가 아니다
-BLOCK_MAX_CHARS = 300
-BLOCK_GAP_MS = 2000
-# 화자 라벨이 아직 없는 확정 토큰(분리 전) — 직전 블록 화자에 붙이고, 없으면 첫 화자
-_DEFAULT_SPEAKER = "1"
+# 발화 블록 경계는 **`meeting_transcript_blocks` 한 곳**에 있다(WORK-012) — 재전사와 같은 것을 쓴다.
+# 여기서 다시 적지 않는다: 두 벌이면 재전사 뒤 근거 칩 구간이 어긋난다(M-9-a)
+_DEFAULT_SPEAKER = meeting_transcript_blocks.DEFAULT_SPEAKER
 
 
 class StreamClientClosed(Exception):
@@ -182,14 +180,6 @@ async def push_ai_batch(
 # --- 세션 -------------------------------------------------------------------
 
 
-@dataclass
-class _OpenBlock:
-    speaker: str
-    start_ms: int
-    end_ms: int
-    text: str
-
-
 def _now_ms_since(started_at: datetime) -> int:
     return int((datetime.now(UTC) - started_at).total_seconds() * 1000)
 
@@ -215,7 +205,7 @@ class StreamSession:
         self._base_ms = 0
         self._outbox: asyncio.Queue[OutboundFrame] = asyncio.Queue()
         self._queue_max = get_settings().meeting_stream_queue_max
-        self._block: _OpenBlock | None = None
+        self._blocks = meeting_transcript_blocks.BlockBuilder()
         self._speakers: set[str] = set()
         self._recording_path_saved = False
         self._failed: str | None = None
@@ -262,8 +252,7 @@ class StreamSession:
     async def shutdown(self) -> None:
         """`finally` 에서 부른다 — 열린 블록을 적재하고 **업스트림을 반드시 닫는다**."""
         try:
-            if self._block is not None:
-                await self._close_block(push=False)
+            await self._close_block(push=False)
         finally:
             if self.upstream is not None:
                 await self.upstream.close()
@@ -366,44 +355,30 @@ class StreamSession:
         return segments
 
     async def _absorb_final(self, token: SttToken) -> None:
-        """블록 경계 — 화자 변경 · 300자 · 토큰 사이 2초 공백 중 먼저 오는 것에서 닫는다."""
-        speaker = token.speaker or (self._block.speaker if self._block else _DEFAULT_SPEAKER)
-        block = self._block
-        if block is not None and (
-            speaker != block.speaker or token.start_ms - block.end_ms >= BLOCK_GAP_MS
-        ):
-            await self._close_block()
-            block = None
-        if block is None:
-            block = _OpenBlock(
-                speaker=speaker,
-                start_ms=self._base_ms + token.start_ms,
-                end_ms=token.end_ms,
-                text=token.text,
-            )
-            self._block = block
-        else:
-            block.text += token.text
-            block.end_ms = max(block.end_ms, token.end_ms)
-        if len(block.text.strip()) >= BLOCK_MAX_CHARS:
-            await self._close_block()
+        """경계 판정은 `meeting_transcript_blocks.BlockBuilder` 가 한다 — 재전사와 **같은 것**이다."""
+        self._blocks.base_ms = self._base_ms
+        for block in self._blocks.add(token):
+            await self._persist_block(block)
 
     async def _close_block(self, *, push: bool = True) -> None:
+        """열린 블록을 닫는다 — 스트림 종료·일시정지 자리에서 부른다."""
+        for block in self._blocks.flush():
+            await self._persist_block(block, push=push)
+
+    async def _persist_block(
+        self, block: meeting_transcript_blocks.TranscriptBlock, *, push: bool = True
+    ) -> None:
         """**INSERT 와 `transcript.final` push 가 같은 시점.** 닫힌 뒤 배치 트리거를 평가한다."""
-        block = self._block
-        self._block = None
-        if block is None or not block.text.strip():
-            return
         async with session_scope() as session:
             item = await meeting_transcript_repository.create_block(
                 session,
                 meeting_id=self.meeting_id,
-                speaker_label=block.speaker,
-                at_ms=block.start_ms,
-                end_ms=self._base_ms + block.end_ms,
-                content=block.text.strip(),
+                speaker_label=block.speaker_label,
+                at_ms=block.at_ms,
+                end_ms=block.end_ms,
+                content=block.content,
             )
-        self._speakers.add(block.speaker)
+        self._speakers.add(block.speaker_label)
         if push:
             self.enqueue(TranscriptFinalFrame(item=item))
         meeting_batch_service.schedule(self.meeting_id, BatchTriggerCause.TRANSCRIPT.value)
@@ -434,8 +409,8 @@ class StreamSession:
             )
         # DB 에 닫힌 블록 + 이 세션에서 본 화자(아직 열린 블록 포함) — 확정 발화의 화자 수다
         seen = set(self._speakers)
-        if self._block is not None:
-            seen.add(self._block.speaker)
+        if self._blocks.open_speaker is not None:
+            seen.add(self._blocks.open_speaker)
         self.enqueue(
             ReadyFrame(
                 recording_started_at=self.recording_started_at,

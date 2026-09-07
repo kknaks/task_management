@@ -108,6 +108,6 @@ export function validationFieldOf(error: unknown): string | null {
 
 /** 줄 삭제 실패 토스트(Case Matrix 「줄 삭제 실패」) — 모달은 닫히고 줄은 그대로 남는다. */
 export const LINE_DELETE_FAILED_MESSAGE = "삭제하지 못했습니다";
-/** 「회의 종료」 · 「다시 생성」 요청 자체가 실패했을 때(5xx · 네트워크) — 가리지 않는다. */
+/** 「회의 종료」 · 「다시 시도」 요청 자체가 실패했을 때(5xx · 네트워크) — 가리지 않는다. */
 export const END_FAILED_MESSAGE = "회의를 종료하지 못했습니다";
-export const INTEGRATE_FAILED_MESSAGE = "다시 생성을 시작하지 못했습니다";
+export const FINALIZE_FAILED_MESSAGE = "다시 시도를 시작하지 못했습니다";

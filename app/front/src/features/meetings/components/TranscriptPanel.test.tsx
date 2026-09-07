@@ -4,6 +4,7 @@
  * - `scrollToRange(241000, 247300)` 로 **겹치는 블록 전부** 하이라이트(`#F4F5FF` + 「근거 구간」) · `Esc` 로 풀린다 · 대상 없으면 `false`
  * - 화자 색은 라벨 홀짝 · 시각은 `recordingStartedAt + atMs` 벽시계 · 잠정은 회색 + 캐럿, **시각 없음**
  * - 푸터 2종 · 빈 상태
+ * - **종료 후**(SPEC-008 U-3) — `follow={false}` 면 새 블록이 와도 바닥으로 따라가지 않는다
  */
 
 import { createRef } from "react";
@@ -93,5 +94,37 @@ describe("scrollToRange — 근거 구간 하이라이트", () => {
       ref.current!.scrollToRange(480_000, 481_000);
     });
     expect([...document.querySelectorAll("[data-highlighted]")].map((el) => el.getAttribute("data-transcript-id"))).toEqual(["301"]);
+  });
+});
+
+describe("자동 따라가기 — 회의 중만(SPEC-008 U-3)", () => {
+  /** jsdom 은 레이아웃이 없다 — 스크롤 가능한 상자를 흉내 낸다. */
+  function scroller() {
+    const el = document.querySelector("[data-transcript-scroller]") as HTMLElement;
+    Object.defineProperty(el, "scrollHeight", { value: 900, configurable: true });
+    Object.defineProperty(el, "clientHeight", { value: 300, configurable: true });
+    return el;
+  }
+
+  it("회의 중(`follow` 기본값)은 새 블록에서 바닥으로 따라간다", () => {
+    const { rerender } = render(<TranscriptPanel items={ITEMS.slice(0, 2)} partial={null} recordingStartedAt={STARTED} paused={false} />);
+    const el = scroller();
+    el.scrollTop = 0;
+    rerender(<TranscriptPanel items={ITEMS} partial={null} recordingStartedAt={STARTED} paused={false} />);
+    expect(el.scrollTop).toBe(900);
+  });
+
+  it("**종료 후**(`follow={false}`)는 새 블록이 와도 스크롤을 건드리지 않는다", () => {
+    const { rerender } = render(
+      <TranscriptPanel items={ITEMS.slice(0, 2)} partial={null} recordingStartedAt={STARTED} paused follow={false} footer={<span>전체 스크립트 9분 · 화자 2명</span>} />,
+    );
+    const el = scroller();
+    el.scrollTop = 0;
+    rerender(
+      <TranscriptPanel items={ITEMS} partial={null} recordingStartedAt={STARTED} paused follow={false} footer={<span>전체 스크립트 9분 · 화자 2명</span>} />,
+    );
+    expect(el.scrollTop).toBe(0);
+    expect(screen.getByText("전체 스크립트 9분 · 화자 2명")).toBeInTheDocument();
+    expect(screen.queryByText("받아쓰기 중 · 확정된 발화는 바로 저장됩니다")).not.toBeInTheDocument();
   });
 });

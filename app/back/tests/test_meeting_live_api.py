@@ -128,7 +128,7 @@ async def test_line_write_outside_recording_is_409(
 async def test_line_is_appended_to_the_human_agenda(
     client: AsyncClient, owner: MeetingOwner, db_session: AsyncSession
 ) -> None:
-    """201 `LineItem` — `track=human` · `detail:null · evidence:[] · taskId:null · pendingChange:null` · `orderIndex` 끝 + 1 · `createdAt`."""
+    """201 `LineItem` — `track=human` · `detail:null · evidence:[] · taskId:null · payload:null` · `orderIndex` 끝 + 1 · `createdAt`."""
     detail = await start_meeting(client, owner)
     agenda_id = detail["agendas"]["human"][0]["id"]
     path = f"{BASE}/{detail['id']}/lines"
@@ -140,7 +140,7 @@ async def test_line_is_appended_to_the_human_agenda(
     body = first.json()
     assert body["track"] == "human" and body["agendaId"] == agenda_id and body["kind"] == "discussion"
     assert body["content"] == "첫 줄"
-    assert (body["detail"], body["evidence"], body["taskId"], body["pendingChange"], body["task"]) == (
+    assert (body["detail"], body["evidence"], body["taskId"], body["payload"], body["task"]) == (
         None, [], None, None, None,
     )
     assert body["orderIndex"] == 0 and body["createdAt"]

@@ -2,7 +2,7 @@
  * **회의 상세 드로어 — 앱 창 확인 항목의 테스트 판**(WP Phase 6 검증 · SPEC-008 U-4).
  *
  * - 드로어와 전체 페이지가 **같은 `MeetingDetailBody`** 를 쓴다(컴포넌트 동일성 — 같은 모듈 export 가 `mode` 만 다르게 불린다)
- * - `ended`+`succeeded`: 한 줄 요약 **두 줄 배치**(같은 값) · 통합본 트리 · 첨부 n · 캡션 「편집과 업무 연동은 전체 페이지에서 합니다」 ·
+ * - `ended`+`succeeded`: 한 줄 요약 **두 줄 배치**(같은 값 다섯) · 최종 회의록 트리 · 첨부 n · 캡션 「편집과 업무 연동은 전체 페이지에서 합니다」 ·
  *   **줄 버튼 · 「편집」 · 「제거」 · 스크립트 패널 없음** · 칩은 표시만 + 캡션
  * - ⤢ → 전체 페이지 라우트 · `⋯` → 「삭제」 → 드로어가 닫힌 뒤 모달
  * - 헤더 제목 인라인 편집 → `PATCH {title}` · `generating` 은 메타 · 삭제 잠금
@@ -104,13 +104,13 @@ describe("같은 본문 · 드로어에서 빠진 넷", () => {
     expect(typeof BodyModule.MeetingDetailBody).toBe("function");
   });
 
-  it("`ended`+`succeeded` 드로어 — 두 줄 요약(같은 값 · 툴팁) · 통합본 · 첨부 n · 캡션 · 「편집」·「제거」·줄 버튼·스크립트 패널 없음 · 칩은 표시만", async () => {
+  it("`ended`+`succeeded` 드로어 — 두 줄 요약(같은 값 다섯 · 툴팁) · 최종 회의록 · 첨부 n · 캡션 · 「편집」·「제거」·줄 버튼·스크립트 패널 없음 · 칩은 표시만", async () => {
     mockMeeting(endedSucceeded());
     renderWithProviders(<Opener meetingId={21} />);
     const bar = await screen.findByRole("note", { name: "AI 한 줄 요약" });
     expect(bar).toHaveAttribute("data-layout", "stacked");
     expect(bar).toHaveTextContent(HEADLINE);
-    expect(bar).toHaveTextContent("안건 4 · 결정 1 · 액션 2");
+    expect(bar).toHaveTextContent("안건 4 · 논의 2 · 결정 1 · 액션 1 · 업무 1");
     expect(within(bar).getByTitle(HEADLINE)).toBeInTheDocument();
     expect(screen.getByText("편집과 업무 연동은 전체 페이지에서 합니다")).toBeInTheDocument();
     expect(screen.getByText("도입 사례는 3건만 유지하고 나머지는 별도 페이지로 분리한다.")).toBeInTheDocument();
@@ -192,7 +192,7 @@ describe("상태별 본문", () => {
     expect(screen.queryByRole("button", { name: "일시" })).not.toBeInTheDocument();
   });
 
-  it("`generating` — 스피너 + 「AI 요약을 정리하고 있습니다」 · job 폴링이 돈다 · 메타 · 삭제 잠금 · 끝나면 통합본으로 바뀐다", async () => {
+  it("`generating` — 스피너 + 「녹음을 다시 받아쓰고 있습니다」 · job 폴링이 돈다 · 메타 · 삭제 잠금 · 끝나면 최종 회의록으로 바뀐다", async () => {
     let jobReads = 0;
     const state = mockMeeting(generatingMeeting());
     server.use(
@@ -206,7 +206,7 @@ describe("상태별 본문", () => {
       }),
     );
     renderWithProviders(<Opener meetingId={21} />, createTestClient());
-    expect(await screen.findByRole("status", { name: "회의록 생성중" })).toHaveTextContent("AI 요약을 정리하고 있습니다");
+    expect(await screen.findByRole("status", { name: "회의록 생성중" })).toHaveTextContent("녹음을 다시 받아쓰고 있습니다");
     expect(screen.getByText("회의록 생성중")).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "제목" })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "더 보기" }));

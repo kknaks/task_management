@@ -213,7 +213,7 @@ describe("자동 저장 — 본문 · 종류 · 안건 이름", () => {
           await new Promise<void>((resolve) => {
             release = resolve;
           });
-          state.detail = withLine(state.detail, 305, (current) => ({ ...current, kind: body.kind, taskId: null, task: null, pendingChange: null }));
+          state.detail = withLine(state.detail, 305, (current) => ({ ...current, kind: body.kind, taskId: null, task: null, payload: null }));
         } else {
           state.detail = withLine(state.detail, 300, (current) => ({ ...current, kind: body.kind }));
         }
@@ -277,7 +277,7 @@ describe("줄 삭제 — 확인 모달", () => {
         calls.push("delete");
         state.detail = {
           ...endedSucceeded(),
-          mergedSummary: { agendaCount: 4, decisionCount: 1, actionCount: 2, integratedAt: "2026-08-27T01:31:00Z" },
+          mergedSummary: { agendaCount: 4, discussionCount: 2, decisionCount: 1, actionCount: 1, taskCount: 1 },
           agendas: { ...endedSucceeded().agendas, merged: MERGED.map((a) => (a.id === 74 ? { ...a, lines: [] } : a)) },
         };
         return new HttpResponse(null, { status: 204 });

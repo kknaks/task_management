@@ -372,7 +372,7 @@ describe("프레임 분배", () => {
     const ws = await goLive(result);
     const aiLine = {
       id: 620, track: "ai", agendaId: 40, kind: "decision", content: "3건만 유지", detail: "상세", evidence: [{ fromMs: 1000, toMs: 4000 }],
-      orderIndex: 0, taskId: null, pendingChange: null, sourceHumanLineId: null, sourceAiLineId: null, task: null, createdAt: "2026-08-27T00:41:02Z",
+      orderIndex: 0, taskId: null, payload: null, task: null, createdAt: "2026-08-27T00:41:02Z",
     };
     const aiAgenda = { id: 40, track: "ai", title: "개정 대상 섹션 확정", orderIndex: 0, state: null, sourceAgendaId: 301, lines: [aiLine] };
     act(() => ws.serverSend({ type: "ai.batch", seq: 1, agendas: [aiAgenda] }));

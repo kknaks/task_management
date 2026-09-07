@@ -10,7 +10,7 @@
 | `ai` 트랙 | **어느 표면에서도 거부** — `422 validation_error`(M-6 · M-20) |
 
 줄 표면 — `add_line`(`POST …/lines` 의 `ended` 확장 갈래 · `recording` 은 `meeting_service.add_line` 으로 넘긴다) ·
-`update_line`(본문 · 종류 — `task` 이탈 시 `task_id`·`pending_change` NULL · `task` 진입은 `task_id` 있을 때만) ·
+`update_line`(본문 · 종류 — `task` 이탈 시 `task_id`·`payload` NULL · `task` 진입은 `task_id` 있을 때만) ·
 **`delete_line`(하드 · 뒤 줄 `order_index` 당김 — 원본 줄 · `ai` · 트랜스크립트 · 녹음 · 업무를 건드리는 코드가 이 경로에 없다)**.
 안건 표면 — `update_agenda`(`ended` 갈래 — 이름만 · `state` 동봉 거부 · `merged`/`human` 안건만).
 
@@ -42,8 +42,8 @@ _NOT_FOUND_LINE = "줄을 찾을 수 없습니다"
 _NOT_FOUND_TASK = "업무를 찾을 수 없습니다"
 
 # `ended` 에서만 받는 확장 필드(SPEC-008 §4 `POST …/lines`) — `recording` 에 오면 거부(SPEC-007 규칙 유지)
-_ENDED_ONLY_FIELDS = ("detail", "task_id", "pending_change", "new_task")
-_FIELD_NAMES = {"detail": "detail", "task_id": "taskId", "pending_change": "pendingChange", "new_task": "newTask"}
+_ENDED_ONLY_FIELDS = ("detail", "task_id", "payload", "new_task")
+_FIELD_NAMES = {"detail": "detail", "task_id": "taskId", "payload": "payload", "new_task": "newTask"}
 
 
 def _invalid_input(field: str | None = None) -> ValidationError:
@@ -109,14 +109,14 @@ async def add_line(
 
     content = command.content
     task_id: int | None = None
-    pending_change: dict | None = None
+    payload: dict | None = None
     if command.kind == LineKind.TASK.value:
         if (command.task_id is None) == (command.new_task is None):
             raise _invalid_input("taskId")
         if command.new_task is not None:
-            if command.pending_change is not None:
+            if command.payload is not None:
                 # 새로 만든 업무에 반영할 「변경」은 없다 — 값은 생성 본문에 이미 들어 있다(U-10)
-                raise _invalid_input("pendingChange")
+                raise _invalid_input("payload")
             # 순환 회피 — link service 가 이 파일의 트랙 규칙을 쓴다. 업무 생성 + 줄은 그쪽이 한 트랜잭션으로 만든다
             from service import meeting_task_link_service
 
@@ -130,12 +130,12 @@ async def add_line(
             raise NotFoundError(_NOT_FOUND_TASK)
         task_id = task.id
         content = task.title
-        pending_change = None if command.pending_change is None else command.pending_change.to_json()
+        payload = None if command.payload is None else command.payload.to_json()
     else:
         if command.task_id is not None or command.new_task is not None:
             raise _invalid_input("taskId")
-        if command.pending_change is not None:
-            raise _invalid_input("pendingChange")
+        if command.payload is not None:
+            raise _invalid_input("payload")
         if content is None:
             raise _invalid_input("content")
 
@@ -149,7 +149,7 @@ async def add_line(
         order_index=await meeting_line_repository.next_order_index(session, agenda_id=agenda.id),
         detail=command.detail,
         task_id=task_id,
-        pending_change=pending_change,
+        payload=payload,
     )
     (line,) = await meeting_line_repository.find_by_ids(session, line_ids=[line_id])
     return line
@@ -162,7 +162,7 @@ async def update_line(
     session: AsyncSession, *, account_id: int, meeting_id: int, line_id: int, command: LineUpdateDTO
 ) -> MeetingDetailDTO:
     """`PATCH …/lines/{id}` — 보낸 필드만. `kind` 전환 규칙(SPEC-008 §4 · §7 「`task` 이탈」) —
-    `task` 로 가려면 줄에 `task_id` 가 있어야 하고(422), `task` 에서 벗어나면 `task_id`·`pending_change` 가 비워진다(업무는 그대로).
+    `task` 로 가려면 줄에 `task_id` 가 있어야 하고(422), `task` 에서 벗어나면 `task_id`·`payload` 가 비워진다(업무는 그대로).
     """
     meeting = await meeting_service.require_meeting(session, account_id=account_id, meeting_id=meeting_id)
     meeting_service.assert_allowed(meeting, "line_edit")
@@ -177,7 +177,7 @@ async def update_line(
         values["kind"] = command.kind
         if line.kind == LineKind.TASK.value:
             values["task_id"] = None
-            values["pending_change"] = None
+            values["payload"] = None
     if values:
         await meeting_line_repository.update_line(
             session, meeting_id=meeting_id, line_id=line_id, values=values
@@ -190,8 +190,8 @@ async def delete_line(
 ) -> None:
     """`DELETE …/lines/{id}` — **그 행 하나만 하드 삭제 + 뒤 줄 당김**(M-20 · DB §0-1).
 
-    남는 것 — `source_human_line_id`·`source_ai_line_id` 가 가리키던 원본 줄 · `ai` 트랙 · 트랜스크립트 · 녹음 · **업무**(`task_id` 가 가리키던
-    업무와 그 로그·메모). `pending_change` 는 줄과 함께 사라진다(업무에 반영된 적이 없다). 없는 줄은 404 — 멱등이 아니다.
+    남는 것 — 사람 트랙 원본 줄 · `ai` 트랙 · 트랜스크립트 · 녹음 · **업무**(`task_id` 가 가리키던
+    업무와 그 로그·메모). `payload` 는 줄과 함께 사라진다(업무에 반영된 적이 없다). 없는 줄은 404 — 멱등이 아니다.
     """
     meeting = await meeting_service.require_meeting(session, account_id=account_id, meeting_id=meeting_id)
     meeting_service.assert_allowed(meeting, "line_edit")

@@ -10,7 +10,7 @@
  *   목록 행(라디오 · 제목 14/600 · 기한 `MM.DD`/「미정」 · 상태 「시작전/진행중/완료/취소」). **단일 선택.** 결과 없음 두 줄 · `total > 20` 이면 「n건 중 20건 · 검색어로 좁혀 주세요」
  * - 이 회의로 반영할 변경(캡션 「고른 항목만 갱신됩니다」): **기한**(기본값 없음 = 변경 없음 · 캡션 「현재 MM.DD」/「현재 기한 없음」) ·
  *   **상태**(기본값 「<현재 상태> 유지」 · 항목은 전이 그래프에서 갈 수 있는 것만 — `canTransition` · **「취소」 없음**) · **진행 메모로 남길 내용**(선택 → 업무 메모 새 항목)
- * - CTA 「취소」 · 「**연결하고 갱신**」 — 제출 가능 = 업무 하나 선택됨. ① `POST …/lines { taskId, pendingChange? }` 로 그 안건 맨 아래 업무 줄 →
+ * - CTA 「취소」 · 「**연결하고 갱신**」 — 제출 가능 = 업무 하나 선택됨. ① `POST …/lines { taskId, payload? }` 로 그 안건 맨 아래 업무 줄 →
  *   드로어 닫힘 → ② 변경이 있으면 소유자가 **U-6 「업무 갱신」과 같은 요청**을 낸다(`onLinked(line, hasChange)`). 변경을 하나도 안 골랐으면 ②는 나가지 않는다.
  *   **같은 상태 유지는 요청에 실리지 않는다**(SPEC-004 L478). ①과 ②는 다른 요청이라 ②가 실패해도 줄은 있다
  *
@@ -30,7 +30,7 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
 import { isMeetingNotFound, isValidationError, meetingInlineError } from "@/features/meetings/errors";
-import type { AddLineInput, MeetingLine, MeetingRefSummary, PendingChange } from "@/features/meetings/types";
+import type { AddLineInput, MeetingLine, MeetingRefSummary, LinePayload } from "@/features/meetings/types";
 import { queryKeys } from "@/lib/api/queryKeys";
 import { fetchRelationCandidates } from "@/lib/api/tasks";
 import { formatDueDate, type DateKey } from "@/lib/datetime";
@@ -48,9 +48,9 @@ export const LINK_TASK_CTA = "연결하고 갱신";
 export const TASK_GONE_INLINE = "삭제된 업무입니다 · 다시 골라 주세요";
 /** 후보 상한 — 서버가 상위 20건만 준다(SPEC-003 §4). */
 const CANDIDATE_LIMIT = 20;
-/** `pendingChange.status` 가 담을 수 있는 셋 — 「취소」는 사유가 필수라 여기 없다(DEC-003 §4 L102). */
+/** `payload.status` 가 담을 수 있는 셋 — 「취소」는 사유가 필수라 여기 없다(DEC-003 §4 L102). */
 const PENDING_STATUSES: readonly PendingStatus[] = ["todo", "in_progress", "done"];
-type PendingStatus = NonNullable<PendingChange["status"]>;
+type PendingStatus = NonNullable<LinePayload["status"]>;
 
 /** 드로어 헤더 한 벌 — 제목 18/700 + 부제 12 + ×(전체 화면이면 `←`). U-10 드로어도 같은 것을 쓴다. */
 export function TaskDrawerHeader({
@@ -140,17 +140,17 @@ export function LinkTaskDrawer({
   // 현재 상태에서 **갈 수 있는 것만**(SPEC-004 전이 그래프 — 화면은 미리 알려 줄 뿐 판정은 서버). 같은 상태는 항목이 아니라 「유지」다
   const statusOptions = current ? PENDING_STATUSES.filter((next) => next !== current && canTransition(current, next)) : [];
 
-  const pendingChange: PendingChange = {};
+  const payload: LinePayload = {};
   if (dueDate) {
-    pendingChange.dueDate = dueDate;
+    payload.dueDate = dueDate;
   }
   if (status && status !== current) {
-    pendingChange.status = status;
+    payload.status = status;
   }
   if (note.trim().length > 0) {
-    pendingChange.note = note.trim();
+    payload.note = note.trim();
   }
-  const hasChange = Object.keys(pendingChange).length > 0;
+  const hasChange = Object.keys(payload).length > 0;
   const canSubmit = picked !== null && !submitting;
 
   const pick = (candidate: TaskRelation) => {
@@ -166,7 +166,7 @@ export function LinkTaskDrawer({
     setSubmitting(true);
     setError(null);
     try {
-      const line = await onAdd({ agendaId, kind: "task", taskId: picked.id, ...(hasChange ? { pendingChange } : {}) });
+      const line = await onAdd({ agendaId, kind: "task", taskId: picked.id, ...(hasChange ? { payload } : {}) });
       onLinked(line, hasChange);
     } catch (caught) {
       // **드로어는 열린 채** — 상태 가드는 토스트, 그 밖은 인라인 + 「연결하고 갱신」이 곧 「다시 시도」(Case Matrix)

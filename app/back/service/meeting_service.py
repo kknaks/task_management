@@ -27,8 +27,6 @@ from core.exceptions import InvalidMeetingStatusError, NotFoundError, Validation
 from dto.enums import (
     AgendaState,
     AttachmentKind,
-    BatchPhase,
-    BatchRunStatus,
     BatchTriggerCause,
     IntegrationState,
     JobTargetType,
@@ -59,7 +57,6 @@ from dto.meeting import (
 from dto.unset import UNSET
 from repository import (
     job_repository,
-    meeting_batch_run_repository,
     meeting_child_repository,
     meeting_line_repository,
     meeting_repository,
@@ -121,11 +118,11 @@ _ALLOWED: dict[str, frozenset[str]] = {
     "line_write": frozenset({_R, _E}),
     "line_edit": frozenset({_E}),
     "end": frozenset({_R}),
-    "integrate": frozenset({_E}),
+    "finalize": frozenset({_E}),
 }
 # `integration_state` 축의 추가 조건(SPEC-008 §4 Validation 「`/integrate` 는 `ended` AND `failed`」 · M-4 「다시 생성은 이 조합에서만」)
 _REQUIRED_INTEGRATION_STATE: dict[str, frozenset[str]] = {
-    "integrate": frozenset({IntegrationState.FAILED.value}),
+    "finalize": frozenset({IntegrationState.FAILED.value}),
 }
 
 
@@ -186,7 +183,7 @@ async def build_detail(
     """**`MeetingDetail` 을 만드는 유일한 곳**(SPEC-006 §5 · WP L165).
 
     이 work 가 채우는 것 — 메타 · `agendas.human` 트리 · `attachments` · `durationMinutes` · `latestBatchSeq`(배치가 없어 0).
-    자리만 두는 것(값은 비어 있다) — `agendas.ai`·`merged` = `[]` · `headline` · `mergedSummary` · `finalBatchState` ·
+    자리만 두는 것(값은 비어 있다) — `agendas.ai`·`merged` = `[]` · `headline` · `mergedSummary` ·
     `activeJobId` = `null`. **WORK-007·008 이 여기에 값을 더한다.** 별도 조립을 만들지 않는다.
 
     항상 DB 를 다시 읽는다 — 쓰기 뒤에 불러도 낡은 값을 조립하지 않는다.
@@ -210,8 +207,6 @@ async def build_detail(
         latest_batch_seq=await meeting_child_repository.max_succeeded_batch_seq(
             session, meeting_id
         ),
-        # SPEC-008 §4 — `meeting_batch_run(phase='final')` 최신 행의 결과. 없으면 None
-        final_batch_state=await _final_batch_state(session, meeting_id),
         # SPEC-008 §4 — `job(kind='meeting_finalize', target=이 회의, status∈{queued,running})`. 없으면 None
         active_job_id=await job_repository.find_active_job_id(
             session, target_type=JobTargetType.MEETING.value, target_id=meeting_id
@@ -219,41 +214,24 @@ async def build_detail(
     )
 
 
-async def _final_batch_state(session: AsyncSession, meeting_id: int) -> str | None:
-    """`finalBatchState` — `succeeded` | `failed` | None. 폐기(`discarded`)도 화면에는 「종결 정리 실패」다."""
-    run = await meeting_batch_run_repository.find_latest_by_phase(
-        session, meeting_id, phase=BatchPhase.FINAL.value
-    )
-    if run is None:
-        return None
-    return "succeeded" if run.status == BatchRunStatus.SUCCEEDED.value else "failed"
-
-
 async def _build_merged_summary(
     session: AsyncSession, meeting: MeetingDTO, merged: list[MeetingAgendaDTO]
 ) -> MergedSummaryDTO | None:
-    """「안건 n · 결정 n · 액션 n」 — `merged` 안건 수 · `decision` 줄 수 · `action`+`task` 줄 수(업무로 바꿀수록 줄어드는 수를 만들지 않는다).
+    """**파생 다섯**(SPEC-008 §4) — `merged` 안건 수 + `kind` 별 줄 수 넷. 저장하지 않는다.
 
-    `integratedAt` 은 통합 성공 행(`phase='integration'`)의 시각 — 성공 상태와 같은 트랜잭션에 쓰였으므로 없으면 데이터가 어긋난 것이다.
+    화면이 그리는 수와 정확히 같아야 하므로 트리에서 그대로 센다 — 「업무로 바꿀수록 줄어드는 수」가 없게
+    `action` 과 `task` 를 **따로** 센다(옛 셋에서는 둘을 합쳐 하나로 냈다).
     """
     if meeting.integration_state != IntegrationState.SUCCEEDED.value:
         return None
-    run = await meeting_batch_run_repository.find_latest_by_phase(
-        session, meeting.id, phase=BatchPhase.INTEGRATION.value
-    )
-    if run is None or run.status != BatchRunStatus.SUCCEEDED.value:
-        raise RuntimeError(f"회의 {meeting.id} 는 통합 성공 상태인데 성공한 통합 행이 없습니다")
     lines = [line for agenda in merged for line in agenda.lines]
     return MergedSummaryDTO(
         agenda_count=len(merged),
+        discussion_count=sum(line.kind == LineKind.DISCUSSION.value for line in lines),
         decision_count=sum(line.kind == LineKind.DECISION.value for line in lines),
-        action_count=sum(line.kind in _ACTION_KINDS for line in lines),
-        integrated_at=run.created_at,
+        action_count=sum(line.kind == LineKind.ACTION.value for line in lines),
+        task_count=sum(line.kind == LineKind.TASK.value for line in lines),
     )
-
-
-# SPEC-008 §7 「통합 결과의 actionCount」 — `action` + `task`
-_ACTION_KINDS = frozenset({LineKind.ACTION.value, LineKind.TASK.value})
 
 
 def _build_tracks(
@@ -758,7 +736,7 @@ async def add_line(
     """`POST …/lines` **회의 중 갈래** — `status='recording'` 에서 사람 줄 하나(SPEC-007 U-3). `ended` 갈래는 `meeting_edit_service`.
 
     `agendaId` 는 **이 회의의 사람 트랙** 안건이어야 한다 — AI 안건·없는 안건은 `validation_error`(본문 필드 참조).
-    `detail`·`evidence`·`task_id`·`pending_change` 는 **항상 비어** 저장된다(M-14 — 값이 차는 것은 종료 후 편집·통합).
+    `detail`·`evidence`·`task_id`·`payload` 는 **항상 비어** 저장된다(M-14 — 값이 차는 것은 종료 후 편집·통합).
     `order_index` 는 그 안건 안의 마지막 + 1.
     """
     meeting = await _require_meeting(session, account_id=account_id, meeting_id=meeting_id)

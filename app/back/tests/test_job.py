@@ -17,10 +17,10 @@ from repository import job_repository
 from service import job_service
 from tests.fakes.agent import FakeAgentGateway
 from tests.meeting_close_fixtures import (  # noqa: F401
-    answer,
     close_scope,
+    fake_async_stt,
     end_meeting,
-    final_output,
+    notes_output,
     finalize_successfully,
     load_job,
     load_meeting,
@@ -29,7 +29,7 @@ from tests.meeting_close_fixtures import (  # noqa: F401
 )
 from tests.meeting_fixtures import BASE, MeetingOwner, owner, stranger  # noqa: F401
 
-pytestmark = pytest.mark.usefixtures("close_scope")
+pytestmark = pytest.mark.usefixtures("close_scope", "fake_async_stt")
 
 JOBS = "/api/jobs"
 
@@ -56,15 +56,14 @@ async def test_job_polling_shows_derived_progress_and_terminal_state(
     queued = (await client.get(f"{JOBS}/{job_id}", headers=owner.headers)).json()
     assert queued == {
         "id": job_id, "kind": "meeting_finalize", "status": "queued",
-        "progress": {"phase": "final_batch", "attempt": 0},
+        "progress": {"phase": "transcription", "attempt": 0},
         "errorCode": None, "errorMessage": None, "finishedAt": None,
     }
 
-    fake_agent.will_return(final_output(detail))
-    fake_agent.will_answer(answer())
+    fake_agent.will_return(notes_output(detail))
     await run_job(job_id)
     done = (await client.get(f"{JOBS}/{job_id}", headers=owner.headers)).json()
-    assert (done["status"], done["progress"], done["errorCode"]) == ("succeeded", {"phase": "integration", "attempt": 1}, None)
+    assert (done["status"], done["progress"], done["errorCode"]) == ("succeeded", {"phase": "final", "attempt": 1}, None)
     assert done["finishedAt"] is not None
     # 결과를 담지 않는다 — 원 리소스를 다시 읽는다
     assert "meeting" not in done and "merged" not in done
@@ -105,7 +104,7 @@ async def test_job_over_the_limit_is_closed_as_job_timeout_and_the_meeting_ends_
         await asyncio.Event().wait()  # 상한까지 끝나지 않는 파이프라인 — 취소는 이 대기에서만 떨어진다
 
     monkeypatch.setattr(handler, "run", hang_without_touching_the_db)
-    monkeypatch.setattr(get_settings(), "job_timeout_sec", 0.05)
+    monkeypatch.setattr(get_settings(), "meeting_job_timeout_sec", 0.05)
     job_log.set_level(logging.WARNING, logger="service.job_service")
 
     await run_job(job_id)
@@ -187,7 +186,8 @@ def test_progress_is_derived_and_null_for_other_kinds() -> None:
         return JobDTO(id=1, account_id=1, kind=kind, target_type="meeting", target_id=1, status="running", attempt=attempt,
                       error_code=None, error_message=None, finished_at=None, created_at=datetime.now(UTC))
 
-    assert job_service.derive_progress(job("meeting_finalize", 0)).phase == "final_batch"
-    assert job_service.derive_progress(job("meeting_finalize", 2)).phase == "integration"
-    assert job_service.derive_progress(job("something_else", 2)) is None
+    # `phase` 는 시도 횟수가 아니라 **`batch_run(phase='final')` 행이 생겼는가**로 갈린다(SPEC-008 §4)
+    assert job_service.derive_progress(job("meeting_finalize", 0), final_started=False).phase == "transcription"
+    assert job_service.derive_progress(job("meeting_finalize", 2), final_started=True).phase == "final"
+    assert job_service.derive_progress(job("something_else", 2), final_started=True) is None
     assert not hasattr(Job, "phase") and not hasattr(Job, "progress")  # 파생 — 컬럼이 아니다

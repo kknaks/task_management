@@ -13,7 +13,7 @@ import type { AgendaState, MeetingAgenda, MeetingDetail, MeetingLine, MeetingTra
 export type NotesTrack = Extract<MeetingTrack, "human" | "merged">;
 
 /**
- * 회의록 탭이 **그리는** 트랙 — `ended`+`succeeded` 면 통합본, 그 밖(생성중 · 실패)은 사람 원본(U-1 · U-2 · U-3).
+ * 회의록 탭이 **그리는** 트랙 — `ended`+`succeeded` 면 최종 회의록, 그 밖(생성중 · 실패)은 사람 원본(U-1 · U-2 · U-3).
  * `scheduled`·`recording` 은 WORK-006·007 화면이라 여기 오지 않지만, 드로어(U-4)가 스냅숏으로 그릴 때는 사람 원본이다.
  */
 export function notesTrackOf(meeting: Pick<MeetingDetail, "status" | "integrationState">): NotesTrack {
@@ -37,7 +37,7 @@ export function notesAgendasOf(meeting: MeetingDetail): MeetingAgenda[] {
 }
 
 /**
- * 통합본 줄의 화살표 — `detail`·`evidence` 둘 다 없으면 없다(SPEC-008 U-5).
+ * 최종 회의록 줄의 화살표 — `detail`·`evidence` 둘 다 없으면 없다(SPEC-008 U-5).
  * 상세 본문(`MeetingDetailBody`)과 목록 미리보기(`MeetingPreviewPanel` — SPEC-006 §7 「SPEC-008 규격을 읽기 전용으로 그대로」)가
  * 같은 판정을 `AgendaLineTree` 의 `expandable` 로 넘긴다.
  */
@@ -56,12 +56,12 @@ export const ENDED_AGENDA_BADGE: Record<AgendaState, Exclude<AgendaBadge, null>>
   next: { tone: "next", label: "다음 논의로" },
 };
 
-/** AI 가 새로 만든 안건 — `state=null`(통합본의 AI 신설 안건 · AI 탭의 `sourceAgendaId=null` 안건). SPEC-007 U-4 와 같은 표기. */
+/** AI 가 새로 만든 안건 — `state=null`(최종 회의록의 AI 신설 안건 · AI 탭의 `sourceAgendaId=null` 안건). SPEC-007 U-4 와 같은 표기. */
 export const AI_AGENDA_CAPTION: Exclude<AgendaBadge, null> = { tone: "caption", label: "AI 안건" };
 
 /**
- * 회의록 탭(사람 원본 · 통합본)의 배지 — `state` 가 있으면 종료 후 어휘, 없으면 AI 신설 안건 캡션(U-3).
- * 통합본에서 `state=null` 은 「어느 사람 안건에도 안 붙은 AI 안건」뿐이다(§4 통합 규칙 「안건 축」).
+ * 회의록 탭(사람 원본 · 최종 회의록)의 배지 — `state` 가 있으면 종료 후 어휘, 없으면 AI 신설 안건 캡션(U-3).
+ * 최종 회의록에서 `state=null` 은 「어느 사람 안건에도 안 붙은 AI 안건」뿐이다(②가 낸 신설 안건 — M-8).
  */
 export function endedNotesBadge(agenda: MeetingAgenda): AgendaBadge {
   return agenda.state ? ENDED_AGENDA_BADGE[agenda.state] : AI_AGENDA_CAPTION;

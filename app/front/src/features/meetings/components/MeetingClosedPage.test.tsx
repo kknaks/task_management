@@ -2,11 +2,13 @@
  * **생성중 · 실패 배너 · 상세 페이지 · 한 줄 요약 바 · 폴링 — 앱 창 확인 항목의 테스트 판**(WP Phase 3 검증 · SPEC-008 U-1 ~ U-3 · U-5).
  *
  * - 「회의 종료」 → `POST /end` 202 → **그 자리에서** 상태 칩 「회의록 생성중」(페이지 이동 없음)
- * - 생성중: 스피너 + 「AI 요약을 정리하고 있습니다」 → (`integration`) 「회의록을 통합하고 있습니다 · 다시 시도 중 (1/2)」 · 사람 원본 노출 · 「편집」 없음 · 「삭제」 비활성 · 캡션
+ * - 생성중: 스피너 + 「**녹음을 다시 받아쓰고 있습니다**」 → (`final`) 「**회의록을 정리하고 있습니다** · 다시 시도 중 (1/2)」 ·
+ *   사람 원본 노출 · 「편집」 없음 · 「삭제」 비활성 · 캡션 · **AI 탭 안내 바는 회의 중 값 그대로**(「종결」 문구 0)
  * - 폴링: **2초 간격** · 종결에서 멈춤 · 종결 뒤 상세 GET **한 번** · 실패 시 재요청 0 + 「상태를 확인하지 못했습니다 · 다시 확인」
- * - `ended`+`failed`: 배너 + 「다시 생성」 · 한 줄 요약 없음 · 사람 원본 + 「편집」 활성 · 「다시 생성」 → `POST /integrate` → 생성중
- * - `ended`+`succeeded`: 한 줄 요약 바(배지 + 문장 + 「안건 n · 결정 n · 액션 n」) · 「다시 생성」 없음 · `headline` null 이면 바 없음 · 문단 요약 0
- * - 배지 「다음 논의로」(「대기」·「다음으로」 0) · AI 탭 「종결 · HH:MM」 · 회의록 탭 화살표는 `detail`/`evidence` 있는 줄만 · 하단 프롬프트 바 없음
+ * - `ended`+`failed`: 배너 + 「**다시 시도**」 · 한 줄 요약 없음 · 사람 원본 + 「편집」 활성 · 「다시 시도」 → `POST /finalize` → **①부터** 생성중
+ * - `ended`+`succeeded`: 한 줄 요약 바(배지 + 문장 + 「안건 n · **논의 n** · 결정 n · 액션 n · **업무 n**」 — **트리에 그려진 수와 같다**) ·
+ *   「다시 시도」 없음 · `headline` null 이면 바 없음 · 문단 요약 0
+ * - 배지 「다음 논의로」(「대기」·「다음으로」 0) · 회의록 탭 화살표는 `detail`/`evidence` 있는 줄만 · 스크립트 푸터 · 하단 프롬프트 바 없음
  */
 
 import { HttpResponse, http } from "msw";
@@ -36,24 +38,28 @@ vi.mock("next/navigation", async () => {
 });
 
 function job(partial: Partial<JobItem> = {}): JobItem {
-  return { id: 123, kind: "meeting_finalize", status: "running", progress: { phase: "final_batch", attempt: 0 }, errorCode: null, errorMessage: null, finishedAt: null, ...partial };
+  return { id: 123, kind: "meeting_finalize", status: "running", progress: { phase: "transcription", attempt: 0 }, errorCode: null, errorMessage: null, finishedAt: null, ...partial };
 }
 
 interface Harness {
   detail: MeetingDetail;
   job: JobItem;
   detailReads: number;
+  transcriptReads: number;
   jobReads: number[];
 }
 
 function renderClosed(detail: MeetingDetail, current: JobItem = job()) {
-  const state: Harness = { detail, job: current, detailReads: 0, jobReads: [] };
+  const state: Harness = { detail, job: current, detailReads: 0, transcriptReads: 0, jobReads: [] };
   server.use(
     http.get(`${API_BASE}/api/meetings/21`, () => {
       state.detailReads += 1;
       return HttpResponse.json(state.detail);
     }),
-    http.get(`${API_BASE}/api/meetings/21/transcript`, () => HttpResponse.json(TRANSCRIPT)),
+    http.get(`${API_BASE}/api/meetings/21/transcript`, () => {
+      state.transcriptReads += 1;
+      return HttpResponse.json(TRANSCRIPT);
+    }),
     http.get(`${API_BASE}/api/jobs/123`, () => {
       state.jobReads.push(Date.now());
       return HttpResponse.json(state.job);
@@ -80,10 +86,10 @@ describe("U-1 생성중 · 폴링", () => {
   it("스피너 칩 「회의록 생성중」 · 단계 문구 ① → ② · 사람 원본 노출 · 편집 잠금 · 2초 폴링 · 종결 뒤 상세 GET 한 번 · 이후 폴링 0", async () => {
     const { state } = renderClosed(generatingMeeting());
     expect(await screen.findByText("회의록 생성중")).toBeInTheDocument();
-    expect(await screen.findByRole("status", { name: "회의록 생성중" })).toHaveTextContent("AI 요약을 정리하고 있습니다");
+    expect(await screen.findByRole("status", { name: "회의록 생성중" })).toHaveTextContent("녹음을 다시 받아쓰고 있습니다");
     // 사람 원본 그대로 + 캡션 · 「편집」 없음 · 「삭제」 비활성 · 하단 프롬프트 바 없음
     expect(screen.getByText("제품 개요 · 기능은 유지, 도입 사례 분량이 과다")).toBeInTheDocument();
-    expect(screen.getByText("통합이 끝나면 이 탭이 통합본으로 바뀝니다")).toBeInTheDocument();
+    expect(screen.getByText("정리가 끝나면 이 탭이 최종 회의록으로 바뀝니다")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "편집" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "삭제" })).toBeDisabled();
     expect(screen.queryByRole("combobox", { name: "줄 입력" })).not.toBeInTheDocument();
@@ -93,23 +99,26 @@ describe("U-1 생성중 · 폴링", () => {
     expect(screen.getByText("다음 논의로")).toBeInTheDocument();
     expect(screen.queryByText("대기")).not.toBeInTheDocument();
 
-    // ② 통합 단계 · 재시도 표기 — 다음 폴링(2초)에 반영된다
-    state.job = job({ progress: { phase: "integration", attempt: 2 } });
-    await waitFor(() => expect(screen.getByRole("status", { name: "회의록 생성중" })).toHaveTextContent("회의록을 통합하고 있습니다 · 다시 시도 중 (1/2)"), { timeout: 4000 });
+    // ② 정리 단계 · 재시도 표기 — 다음 폴링(2초)에 반영된다
+    state.job = job({ progress: { phase: "final", attempt: 2 } });
+    await waitFor(() => expect(screen.getByRole("status", { name: "회의록 생성중" })).toHaveTextContent("회의록을 정리하고 있습니다 · 다시 시도 중 (1/2)"), { timeout: 4000 });
     expect(state.jobReads.length).toBeGreaterThanOrEqual(2);
     expect(state.jobReads[1] - state.jobReads[0]).toBeGreaterThanOrEqual(1900);
-    // AI 탭 안내 바 「배치 2회 반영 · 종결 정리 중」
+    // AI 탭 안내 바는 **회의 중 값 그대로**다 — 「종결」 문구가 없다(MF-56)
     await userEvent.click(screen.getByRole("tab", { name: "AI 요약" }));
-    expect(screen.getByTestId("batch-caption")).toHaveTextContent("배치 2회 반영 · 종결 정리 중");
+    expect(screen.getByTestId("batch-caption")).toHaveTextContent("배치 2회 반영");
+    expect(screen.getByTestId("batch-caption").textContent).not.toMatch(/종결/);
     await userEvent.click(screen.getByRole("tab", { name: "회의록" }));
 
-    // 종결 → 상세 GET 한 번 → 통합본 · 한 줄 요약 · 「종료된 회의」
-    state.job = job({ status: "succeeded", progress: { phase: "integration", attempt: 2 }, finishedAt: "2026-08-27T01:31:00Z" });
+    // 종결 → 상세 GET 한 번 → 최종 회의록 · 한 줄 요약 · 「종료된 회의」
+    state.job = job({ status: "succeeded", progress: { phase: "final", attempt: 2 }, finishedAt: "2026-08-27T01:31:00Z" });
     state.detail = endedSucceeded();
     expect(await screen.findByText("종료된 회의", {}, { timeout: 4000 })).toBeInTheDocument();
     expect(screen.getByRole("note", { name: "AI 한 줄 요약" })).toHaveTextContent(HEADLINE);
-    expect(screen.getByRole("note", { name: "AI 한 줄 요약" })).toHaveTextContent("안건 4 · 결정 1 · 액션 2");
+    expect(screen.getByRole("note", { name: "AI 한 줄 요약" })).toHaveTextContent("안건 4 · 논의 2 · 결정 1 · 액션 1 · 업무 1");
     expect(state.detailReads).toBe(2);
+    // 재전사가 블록을 갈아끼우므로 트랜스크립트도 한 번 다시 읽는다(M-9-a)
+    await waitFor(() => expect(state.transcriptReads).toBe(2));
     const settledReads = state.jobReads.length;
     await sleep(2600);
     expect(state.jobReads.length).toBe(settledReads);
@@ -131,7 +140,7 @@ describe("U-1 생성중 · 폴링", () => {
     );
     renderWithProviders(<MeetingDetailPage />);
     expect(await screen.findByText("상태를 확인하지 못했습니다")).toBeInTheDocument();
-    expect(screen.getByRole("status", { name: "회의록 생성중" })).toHaveTextContent("AI 요약을 정리하고 있습니다");
+    expect(screen.getByRole("status", { name: "회의록 생성중" })).toHaveTextContent("녹음을 다시 받아쓰고 있습니다");
     expect(screen.getByText("회의록 생성중")).toBeInTheDocument();
     await sleep(2600);
     expect(reads).toBe(1);
@@ -166,7 +175,7 @@ describe("U-1 생성중 · 폴링", () => {
       renderWithProviders(<MeetingDetailPage />);
       await userEvent.click(await screen.findByRole("button", { name: "회의 종료" }));
       expect(await screen.findByText("회의록 생성중")).toBeInTheDocument();
-      expect(screen.getByRole("status", { name: "회의록 생성중" })).toHaveTextContent("AI 요약을 정리하고 있습니다");
+      expect(screen.getByRole("status", { name: "회의록 생성중" })).toHaveTextContent("녹음을 다시 받아쓰고 있습니다");
       await waitFor(() => expect(calls).toEqual(["end", "job"]));
       expect(push).not.toHaveBeenCalled();
       expect(screen.queryByRole("button", { name: "회의 종료" })).not.toBeInTheDocument();
@@ -177,61 +186,70 @@ describe("U-1 생성중 · 폴링", () => {
   });
 });
 
-describe("U-2 실패 배너 · 「다시 생성」", () => {
-  it("`ended`+`failed` → 배너 + 「다시 생성」 · 한 줄 요약 없음 · 사람 원본 + 「편집」 활성 · AI 탭 「배치 2회 반영 · 종결 정리 실패」 · 「다시 생성」 → `POST /integrate` → 생성중", async () => {
+describe("U-2 실패 배너 · 「다시 시도」", () => {
+  it("`ended`+`failed` → 배너 + 「다시 시도」 · 한 줄 요약 없음 · 사람 원본 + 「편집」 활성 · AI 탭 안내 바는 회의 중 값 그대로 · 「다시 시도」 → `POST /finalize` → **①부터** 생성중", async () => {
     const calls: string[] = [];
     const { state } = renderClosed(endedFailed());
     server.use(
-      http.post(`${API_BASE}/api/meetings/21/integrate`, () => {
-        calls.push("integrate");
+      http.post(`${API_BASE}/api/meetings/21/finalize`, () => {
+        calls.push("finalize");
         state.detail = generatingMeeting({ latestBatchSeq: 2 });
         return HttpResponse.json({ jobId: 123 }, { status: 202 });
       }),
+      // 옛 경로를 부르면 테스트가 깨지게 둔다 — `/integrate` 는 사라졌다
+      http.post(`${API_BASE}/api/meetings/21/integrate`, () => {
+        calls.push("integrate");
+        return HttpResponse.json({ jobId: 999 }, { status: 202 });
+      }),
     );
-    expect(await screen.findByRole("alert", { name: "통합 정리 실패" })).toHaveTextContent("통합 정리 실패 · 회의록 탭에 회의 중 작성한 원본을 보여 드립니다");
+    expect(await screen.findByRole("alert", { name: "회의록 생성 실패" })).toHaveTextContent("회의록 생성 실패 · 회의록 탭에 회의 중 작성한 원본을 보여 드립니다");
     expect(screen.queryByRole("note", { name: "AI 한 줄 요약" })).not.toBeInTheDocument();
     expect(screen.getByText("종료된 회의")).toBeInTheDocument();
     expect(screen.getByText("제품 개요 · 기능은 유지, 도입 사례 분량이 과다")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "편집" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "삭제" })).toBeEnabled();
     await userEvent.click(screen.getByRole("tab", { name: "AI 요약" }));
-    expect(screen.getByTestId("batch-caption")).toHaveTextContent("배치 2회 반영 · 종결 정리 실패");
+    expect(screen.getByTestId("batch-caption")).toHaveTextContent("배치 2회 반영");
+    expect(screen.getByTestId("batch-caption").textContent).not.toMatch(/종결/);
     // AI 탭 내용은 남아 있다
     expect(screen.getByText("AI: 도입 사례는 3건만")).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "다시 생성" }));
-    await waitFor(() => expect(calls).toEqual(["integrate"]));
+    await userEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+    await waitFor(() => expect(calls).toEqual(["finalize"]));
+    // ①부터 다시 돈다 — 문구가 재전사로 돌아간다
     expect(await screen.findByText("회의록 생성중")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "다시 생성" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("status", { name: "회의록 생성중" })).toHaveTextContent("녹음을 다시 받아쓰고 있습니다");
+    expect(screen.queryByRole("button", { name: "다시 시도" })).not.toBeInTheDocument();
   });
 
-  it("「다시 생성」 409 → 토스트 「지금 상태에서는 할 수 없습니다」 + 상세 재조회", async () => {
+  it("「다시 시도」 409 → 토스트 「지금 상태에서는 할 수 없습니다」 + 상세 재조회", async () => {
     const { state } = renderClosed(endedFailed());
     server.use(
-      http.post(`${API_BASE}/api/meetings/21/integrate`, () =>
+      http.post(`${API_BASE}/api/meetings/21/finalize`, () =>
         HttpResponse.json({ detail: "지금 상태에서는 할 수 없는 요청입니다", code: "invalid_meeting_status" }, { status: 409 }),
       ),
     );
-    await userEvent.click(await screen.findByRole("button", { name: "다시 생성" }));
+    await userEvent.click(await screen.findByRole("button", { name: "다시 시도" }));
     expect(await screen.findByText("지금 상태에서는 할 수 없습니다")).toBeInTheDocument();
     await waitFor(() => expect(state.detailReads).toBeGreaterThanOrEqual(2));
   });
 });
 
-describe("U-3 상세 페이지 — 통합본 · 한 줄 요약 바 · 근거", () => {
-  it("한 줄 요약 바 **한 개**(배지 + 문장 + 카운트 · 「생성」 시각 없음) · 「다시 생성」 없음 · 통합본 문장 그대로 · 「다음 논의로」 · 「AI 안건」 · AI 탭 「종결 · HH:MM」 · 스크립트 푸터", async () => {
+describe("U-3 상세 페이지 — 최종 회의록 · 한 줄 요약 바 · 근거", () => {
+  it("한 줄 요약 바 **한 개**(배지 + 문장 + 카운트 **다섯** · 「생성」 시각 없음) · 「다시 시도」 없음 · 최종 회의록 · 「다음 논의로」 · 「AI 안건」 · AI 탭 안내 바 · 스크립트 푸터", async () => {
     renderClosed(endedSucceeded());
     const bar = await screen.findByRole("note", { name: "AI 한 줄 요약" });
     expect(screen.getAllByRole("note", { name: "AI 한 줄 요약" })).toHaveLength(1);
     expect(bar).toHaveTextContent(HEADLINE);
-    expect(bar).toHaveTextContent("안건 4 · 결정 1 · 액션 2");
+    expect(bar).toHaveTextContent("안건 4 · 논의 2 · 결정 1 · 액션 1 · 업무 1");
     expect(bar.textContent).not.toMatch(/\d\d\.\d\d \d\d:\d\d 생성/);
-    expect(screen.queryByRole("button", { name: "다시 생성" })).not.toBeInTheDocument();
+    // **성공한 회의록에는 「다시 시도」가 없다**(U-2 — 실패 조합에서만)
+    expect(screen.queryByRole("button", { name: "다시 시도" })).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     // 문단 요약(「요약 · AI 생성」)은 없다 — 한 줄 요약과 다른 것이다(§7)
     expect(screen.queryByText(/요약 · AI 생성/)).not.toBeInTheDocument();
 
-    // 통합본 = `agendas.merged` — 사람 문장 글자 그대로 + AI 에만 있던 줄 + AI 신설 안건
+    // 회의록 탭 = `agendas.merged`(최종 회의록) — AI 신설 안건까지
     expect(screen.getByText("도입 사례는 3건만 유지하고 나머지는 별도 페이지로 분리한다.")).toBeInTheDocument();
     expect(screen.getByText("AI: 경쟁사 요금제를 비교했다")).toBeInTheDocument();
     expect(screen.getByText("AI 안건")).toBeInTheDocument();
@@ -262,13 +280,29 @@ describe("U-3 상세 페이지 — 통합본 · 한 줄 요약 바 · 근거", (
     // 스크립트 푸터 「전체 스크립트 59분 · 화자 2명」(마지막 endMs 3,540,000 → 올림 59)
     expect(screen.getByText("전체 스크립트 59분 · 화자 2명")).toBeInTheDocument();
 
-    // AI 탭 — 「종결 · 10:31」(통합 시각) · 버튼 없음
+    // AI 탭 — 회의 중 마지막 값 그대로(「배치 3회 반영」) · 「종결」 문구 0 · 푸터 · 버튼 없음
     await userEvent.click(screen.getByRole("tab", { name: "AI 요약" }));
-    expect(screen.getByTestId("batch-caption")).toHaveTextContent("종결 · 10:31");
+    expect(screen.getByTestId("batch-caption")).toHaveTextContent("배치 3회 반영");
+    expect(screen.getByTestId("batch-caption").textContent).not.toMatch(/종결/);
     expect(screen.queryByText("회의 종료 시 안건별 요약이 회의록에 반영됩니다")).not.toBeInTheDocument();
   });
 
-  it("`headline` 이 null 이면 바를 그리지 않는다(빈 바 없음) — 통합본은 그대로", async () => {
+  it("**카운트 다섯이 회의록 탭에 그려진 수와 정확히 같다**(MF-25 · F-11)", async () => {
+    renderClosed(endedSucceeded());
+    const bar = await screen.findByRole("note", { name: "AI 한 줄 요약" });
+    const merged = screen.getByRole("region", { name: "회의록" });
+    const agendas = merged.querySelectorAll("[data-agenda-id]").length;
+    const kinds = [...merged.querySelectorAll("[data-line-kind]")].map((row) => row.getAttribute("data-line-kind"));
+    const count = (kind: string) => kinds.filter((value) => value === kind).length;
+    expect(bar).toHaveTextContent(
+      `안건 ${agendas} · 논의 ${count("discussion")} · 결정 ${count("decision")} · 액션 ${count("action")} · 업무 ${count("task")}`,
+    );
+    // 시드가 우연히 맞은 게 아니라는 확인 — 트리에 실제로 안건 넷 · 줄 다섯이 있다
+    expect(agendas).toBe(4);
+    expect(kinds).toHaveLength(5);
+  });
+
+  it("`headline` 이 null 이면 바를 그리지 않는다(빈 바 없음) — 최종 회의록은 그대로", async () => {
     renderClosed(endedSucceeded({ headline: null, mergedSummary: null }));
     expect(await screen.findByText("종료된 회의")).toBeInTheDocument();
     expect(screen.queryByRole("note", { name: "AI 한 줄 요약" })).not.toBeInTheDocument();

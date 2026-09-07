@@ -6,12 +6,12 @@
   `job_service.launch` 를 **기록기**로 바꾼다(커밋 뒤 훅이 백그라운드 태스크를 띄우면 같은 세션을 두 코루틴이 나눠 쓴다).
   `meeting_batch_service.schedule` 도 기록기다(안건 전환 훅).
 - `run_job()` — 기록된 job 을 `job_service.run()` 으로 **실행기째** 돈다(상한 · handler · 종결까지).
-- `integration_from_prompt()` — 통합 프롬프트의 입력 JSON 을 읽어 **규칙대로** 짝지은 출력을 만드는 대역 모델. 실패 5종은 `mutate` 로 비튼다.
+- `notes_output()` — ② 최종 회의록 출력 대역. **사람 안건 전부를 정확히 한 번씩** 덮는다. 실패 케이스는 `notes_from(mutate=…)` 로 비튼다.
+- `fake_async_stt` — ① 재전사 대역(`stt-async-v5`). 기본은 성공이고 `will_fail()`·`will_timeout()` 으로 설계한 실패 둘을 낸다.
 """
 
 from __future__ import annotations
 
-import json
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
 
@@ -21,17 +21,21 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.job import Job
+from dto.enums import LineKind, MeetingTrack
 from models.meeting import Meeting, MeetingAgenda, MeetingLine
-from repository import job_repository
+from repository import job_repository, meeting_repository
 from service import (
     job_service,
     meeting_batch_service,
     meeting_finalize_service,
     meeting_stream_service,
 )
+from integrations import soniox as soniox_integration
+from integrations.soniox import SttToken
 from tests.fakes.agent import FakeAgentGateway
+from tests.fakes.soniox import FakeAsyncSttConnector
 from tests.meeting_fixtures import BASE, MeetingOwner
-from tests.meeting_live_fixtures import add_block, start_meeting
+from tests.meeting_live_fixtures import add_ai_agenda, add_block, start_meeting
 
 HEADLINE = "개정 범위를 4개 섹션으로 확정하고 도입 사례 분리를 결정했다."
 
@@ -78,6 +82,22 @@ def close_scope(monkeypatch: pytest.MonkeyPatch, db_session: AsyncSession) -> It
     meeting_batch_service.reset_state()
 
 
+# 재전사 결과 대역 — 실시간 블록과 **다른 문장**이라 「전량 교체됐는가」가 눈에 보인다
+RETRANSCRIBED = [
+    SttToken(text="재전사된 발화입니다. ", is_final=True, speaker="1", start_ms=1000, end_ms=5000),
+    SttToken(text="캐스티 안건을 정리합시다.", is_final=True, speaker="2", start_ms=6000, end_ms=12_000),
+]
+
+
+@pytest.fixture
+def fake_async_stt() -> Iterator[FakeAsyncSttConnector]:
+    """① 재전사 대역 — 실제 Soniox 를 부르지 않는다(BE §12). 기본은 성공이다."""
+    connector = FakeAsyncSttConnector(tokens=list(RETRANSCRIBED))
+    soniox_integration.install_async_connector(connector)
+    yield connector
+    soniox_integration.install_async_connector(None)
+
+
 # --- 회의 준비 ---------------------------------------------------------------------
 
 
@@ -106,144 +126,112 @@ async def prepare_recording(
     await add_human_line(client, owner, detail["id"], agenda_id=first["id"], content="사람 줄 A — 개정 범위는 4개 섹션이다")
     await add_human_line(client, owner, detail["id"], agenda_id=first["id"], content="사람 줄 B — 도입 사례는 3건만 유지한다", kind="decision")
     await add_human_line(client, owner, detail["id"], agenda_id=second["id"], content="사람 줄 C — 검수 일정은 다음 회의로")
-    await add_block(db_session, detail["id"], content="회의 발화 전체 " * 10, at_ms=0, end_ms=60_000)
+    await add_block(db_session, detail["id"], content="실시간 블록 — 재전사가 이것을 갈아끼운다", at_ms=0, end_ms=60_000)
+    # 회의 중 배치가 낸 AI 트랙 — 종료 파이프라인이 **손대지 않아야 하는** 것이다(M-6 · MF-56).
+    # 배치를 실제로 돌리지 않고 행만 심는다: 대역 게이트웨이의 응답 순서를 테스트가 쥐고 있어야 해서다
+    ai_agenda_id = await add_ai_agenda(
+        db_session, detail["id"], title="회의 중 AI 안건", source_agenda_id=first["id"]
+    )
+    db_session.add(
+        MeetingLine(
+            meeting_id=detail["id"],
+            agenda_id=ai_agenda_id,
+            track=MeetingTrack.AI.value,
+            kind=LineKind.DISCUSSION.value,
+            content="회의 중 AI 줄",
+            order_index=0,
+            evidence=[{"fromMs": 0, "toMs": 5000}],
+        )
+    )
+    await db_session.flush()
+    await meeting_repository.set_recording_path(db_session, meeting_id=detail["id"], recording_path="recordings/1.webm")
     response = await client.get(f"{BASE}/{detail['id']}", headers=owner.headers)
     assert response.status_code == 200
     return response.json()
 
 
-def final_output(detail: dict, *, task_id: int | None = None) -> dict:
-    """① 최종 배치 출력 — 첫째 안건 미러(사람 줄 A 와 같은 내용 + AI 전용 내용 + 선택 업무 줄) · 신설 안건 하나.
+def notes_output(
+    detail: dict,
+    *,
+    task_id: int | None = None,
+    headline: str = HEADLINE,
+    term_corrections: list | None = None,
+) -> dict:
+    """② 최종 회의록 출력 — **사람 안건 전부를 정확히 한 번씩** 덮는다(SPEC-008 §4 「안건 참조」).
 
-    **스키마 한 벌**(WORK-011 · `ai_schemas/meeting_notes.json`) — 줄이 안건 안에 중첩되고
-    `headline` · `termCorrections` · `payload` 는 회의 중과 마찬가지로 `null` 이다(MF-52).
+    스키마는 회의 중 배치와 한 벌(`ai_schemas/meeting_notes.json`)이고, 최종이라 `headline` ·
+    `termCorrections` · `payload` 에 값이 있다.
     """
-    first = detail["agendas"]["human"][0]["id"]
-    mirrored = [
-        _batch_line(content="사람 줄 A — 개정 범위는 4개 섹션이다", detail="AI 가 붙인 상세", evidence=[{"fromMs": 1000, "toMs": 5000}]),
-        _batch_line(content="AI 전용 — 후속 미팅은 9/12", kind="action", evidence=[{"fromMs": 6000, "toMs": 9000}]),
+    human = detail["agendas"]["human"]
+    agendas = [
+        {
+            "humanAgendaId": human[0]["id"],
+            "title": "모델이 지은 제목(서버가 사람 안건 것으로 맞춘다)",
+            "lines": [
+                _line(content="사람 줄 A — 개정 범위는 4개 섹션이다", detail="AI 가 붙인 상세",
+                      evidence=[{"fromMs": 1000, "toMs": 5000}]),
+                _line(content="AI 전용 — 후속 미팅은 9/12", kind="action",
+                      evidence=[{"fromMs": 6000, "toMs": 9000}]),
+            ],
+        }
     ]
-    if task_id is not None:
-        mirrored.append(_batch_line(kind="task", content="업무 줄", task_id=task_id, evidence=[]))
-    return notes_output(
-        [
-            {"humanAgendaId": first, "title": "미러 안건", "lines": mirrored},
-            {
-                "humanAgendaId": None,
-                "title": "AI 신설 안건",
-                "lines": [
-                    _batch_line(content="AI 신설 안건의 논의", evidence=[{"fromMs": 10_000, "toMs": 12_000}])
-                ],
-            },
-        ]
+    agendas += [
+        {"humanAgendaId": agenda["id"], "title": agenda["title"],
+         "lines": [_line(content=f"{agenda['title']} 요약", evidence=[])]}
+        for agenda in human[1:]
+    ]
+    agendas.append(
+        {"humanAgendaId": None, "title": "AI 신설 안건",
+         "lines": [_line(content="AI 신설 안건의 논의", evidence=[{"fromMs": 10_000, "toMs": 12_000}])]}
     )
+    if task_id is not None:
+        agendas[0]["lines"].append(
+            _line(kind="task", content="업무 줄", task_id=task_id, evidence=[],
+                  payload={"dueDate": "2026-09-02", "status": "in_progress", "note": "진행 메모"})
+        )
+    return {
+        "headline": headline,
+        "termCorrections": [] if term_corrections is None else term_corrections,
+        "agendas": agendas,
+    }
 
 
-def notes_output(agendas: list[dict]) -> dict:
-    """`meeting_notes.json` 최상위 — 회의 중은 `headline` · `termCorrections` 가 언제나 `null` 이다."""
-    return {"headline": None, "termCorrections": None, "agendas": agendas}
-
-
-def _batch_line(*, kind: str = "discussion", content: str, detail: str | None = None,
-                evidence: list | None = None, task_id: int | None = None) -> dict:
+def _line(*, kind: str = "discussion", content: str, detail: str | None = None,
+          evidence: list | None = None, task_id: int | None = None, payload: dict | None = None) -> dict:
     return {
         "kind": kind,
         "content": content,
         "detail": detail,
         "evidence": [] if evidence is None else evidence,
         "taskId": task_id,
-        "payload": None,
+        "payload": payload,
     }
 
 
-# --- 대역 모델: 통합 출력 --------------------------------------------------------------------
-
-
-def parse_prompt_payload(prompt: str) -> dict:
-    return json.loads(prompt.split("입력:\n", 1)[1])
-
-
-def integration_from_prompt(
-    prompt: str, *, headline: str = HEADLINE, mutate: Callable[[dict], None] | None = None
-) -> dict:
-    """규칙대로 짝짓는 대역 모델 — 같은 `content` 의 AI 줄을 사람 줄에 붙이고, 미러 안건의 나머지 AI 줄은 그 사람 안건에 추가,
-    신설 AI 안건은 뒤에 붙인다. `mutate` 가 출력을 비틀어 실패 5종을 만든다."""
-    payload = parse_prompt_payload(prompt)
-    ai_by_source: dict[int | None, list[dict]] = {}
-    for agenda in payload["aiAgendas"]:
-        ai_by_source.setdefault(agenda["sourceAgendaId"], []).append(agenda)
-
-    agendas: list[dict] = []
-    for human in payload["humanAgendas"]:
-        mirrors = ai_by_source.get(human["id"], [])
-        ai_lines = [line for mirror in mirrors for line in mirror["lines"]]
-        used: set[int] = set()
-        lines: list[dict] = []
-        for line in human["lines"]:
-            pair = next((ai for ai in ai_lines if ai["content"] == line["content"] and ai["id"] not in used), None)
-            if pair is not None:
-                used.add(pair["id"])
-            lines.append({"sourceHumanLineId": line["id"], "sourceAiLineId": None if pair is None else pair["id"]})
-        for ai in ai_lines:
-            if ai["id"] not in used:
-                lines.append({"sourceHumanLineId": None, "sourceAiLineId": ai["id"]})
-        agendas.append({"agendaRef": {"humanAgendaId": human["id"], "aiAgendaId": None}, "lines": lines})
-    for standalone in ai_by_source.get(None, []):
-        agendas.append({
-            "agendaRef": {"humanAgendaId": None, "aiAgendaId": standalone["id"]},
-            "lines": [{"sourceHumanLineId": None, "sourceAiLineId": line["id"]} for line in standalone["lines"]],
-        })
-    output = {"headline": headline, "agendas": agendas}
+def notes_from(detail: dict, *, mutate: Callable[[dict], None] | None = None, **kwargs) -> dict:
+    """`notes_output` 을 만들고 `mutate` 로 비튼다 — 실패 케이스가 그 자리를 쓴다."""
+    output = notes_output(detail, **kwargs)
     if mutate is not None:
         mutate(output)
     return output
 
 
-def answer(*, headline: str = HEADLINE, mutate: Callable[[dict], None] | None = None):  # type: ignore[no-untyped-def]
-    return lambda prompt: integration_from_prompt(prompt, headline=headline, mutate=mutate)
-
-
-# --- 실패 5종 (SPEC-008 §4 통합 규칙 · WP Done Criteria) ----------------------------------------
-
-
-def drop_one_human_line(output: dict) -> None:
-    """사람 줄 하나를 빠뜨린 출력."""
-    for agenda in output["agendas"]:
-        for index, line in enumerate(agenda["lines"]):
-            if line["sourceHumanLineId"] is not None:
-                del agenda["lines"][index]
-                return
-
-
-def duplicate_human_line(output: dict) -> None:
-    """같은 사람 줄을 두 번 참조한 출력(이중 계승)."""
-    for agenda in output["agendas"]:
-        for line in agenda["lines"]:
-            if line["sourceHumanLineId"] is not None:
-                agenda["lines"].append({"sourceHumanLineId": line["sourceHumanLineId"], "sourceAiLineId": None})
-                return
-
-
-def duplicate_ai_line(output: dict) -> None:
-    """같은 AI 줄을 두 줄에 붙인 출력."""
-    for agenda in output["agendas"]:
-        for line in agenda["lines"]:
-            if line["sourceAiLineId"] is not None:
-                agenda["lines"].append({"sourceHumanLineId": None, "sourceAiLineId": line["sourceAiLineId"]})
-                return
-
-
-def add_unreferenced_line(output: dict) -> None:
-    """참조 없는 줄."""
-    output["agendas"][0]["lines"].append({"sourceHumanLineId": None, "sourceAiLineId": None})
+# --- 출력 비틀기(② 실패 케이스) ---------------------------------------------------
 
 
 def drop_headline(output: dict) -> None:
-    del output["headline"]
+    output["headline"] = None
 
 
 def overlong_headline(output: dict) -> None:
     output["headline"] = "가" * 201
+
+
+def drop_one_human_agenda(output: dict) -> None:
+    """사람 안건 하나를 빠뜨린다 — **그 시도 실패**(SPEC-008 §4 「안건 참조」)."""
+    output["agendas"] = [
+        agenda for agenda in output["agendas"] if agenda["humanAgendaId"] is None
+    ] + [agenda for agenda in output["agendas"] if agenda["humanAgendaId"] is not None][1:]
 
 
 # --- job 실행 ---------------------------------------------------------------------
@@ -285,12 +273,12 @@ async def rows_by_track(session: AsyncSession, meeting_id: int, track: str) -> t
 
 
 async def finalize_successfully(
-    client: AsyncClient, owner: MeetingOwner, db_session: AsyncSession, fake_agent: FakeAgentGateway, **overrides: object
+    client: AsyncClient, owner: MeetingOwner, db_session: AsyncSession, fake_agent: FakeAgentGateway,
+    *, task_id: int | None = None, **overrides: object
 ) -> tuple[dict, int]:
-    """준비 → `/end` → ① 성공 → ② 성공. `(종료 후 상세, job_id)` 를 돌려준다."""
+    """준비 → `/end` → ① 재전사 성공 → ② 최종 회의록 성공. `(종료 후 상세, job_id)` 를 돌려준다."""
     detail = await prepare_recording(client, owner, db_session, **overrides)
-    fake_agent.will_return(final_output(detail))
-    fake_agent.will_answer(answer())
+    fake_agent.will_return(notes_output(detail, task_id=task_id))
     job_id = await end_meeting(client, owner, detail["id"])
     await run_job(job_id)
     response = await client.get(f"{BASE}/{detail['id']}", headers=owner.headers)
@@ -305,9 +293,8 @@ async def finalize_with_failure(
 ) -> tuple[dict, int]:
     """준비 → `/end` → ① 성공 → ② 3회 실패(headline 없음). `(종료 후 상세, job_id)`."""
     detail = await prepare_recording(client, owner, db_session, **overrides)
-    fake_agent.will_return(final_output(detail))
     for _ in range(3):
-        fake_agent.will_answer(answer(mutate=drop_headline))
+        fake_agent.will_return(notes_from(detail, mutate=drop_headline))
     job_id = await end_meeting(client, owner, detail["id"])
     await run_job(job_id)
     response = await client.get(f"{BASE}/{detail['id']}", headers=owner.headers)

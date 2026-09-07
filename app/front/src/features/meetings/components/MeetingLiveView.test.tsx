@@ -44,8 +44,8 @@ const STARTED = "2026-08-27T00:30:00Z";
 
 function line(partial: Partial<MeetingLine> & Pick<MeetingLine, "id" | "agendaId" | "track" | "kind" | "content">): MeetingLine {
   return {
-    detail: null, evidence: [], orderIndex: partial.id, taskId: null, pendingChange: null,
-    sourceHumanLineId: null, sourceAiLineId: null, task: null, createdAt: "2026-08-27T00:34:00Z", ...partial,
+    detail: null, evidence: [], orderIndex: partial.id, taskId: null, payload: null,
+    task: null, createdAt: "2026-08-27T00:34:00Z", ...partial,
   };
 }
 

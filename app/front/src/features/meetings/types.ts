@@ -56,7 +56,7 @@ export interface LineEvidence {
  * 업무 줄이 들고 있는 **반영 대기 변경** — 키는 `dueDate` · `status` · `note` **셋뿐**(DEC-003 §4 · M-14-a).
  * `cancelled` 는 담을 수 없다(사유 필수). 적용은 「업무 갱신」 버튼(U-6) — `PATCH …/lines/{id}/task` 본문 없이 이것이 요청이다.
  */
-export interface PendingChange {
+export interface LinePayload {
   dueDate?: string;
   status?: "todo" | "in_progress" | "done";
   note?: string;
@@ -73,9 +73,8 @@ export interface MeetingLine {
   evidence: LineEvidence[];
   orderIndex: number;
   taskId: number | null;
-  pendingChange: PendingChange | null;
-  sourceHumanLineId: number | null;
-  sourceAiLineId: number | null;
+  /** 반영 대기 변경(옛 `pendingChange`) — 리비전 0008 이 컬럼을 `payload` 로 바꿨다(WORK-012). */
+  payload: LinePayload | null;
   task: LineTaskSummary | null;
   /** 줄 우측 시각(SPEC-007 U-2). 안건 우측 시각은 화면이 `min(createdAt)` 으로 파생한다. */
   createdAt: string;
@@ -113,12 +112,18 @@ export interface MeetingAttachment {
   isDeleted: boolean;
 }
 
-/** 요약 바 우측 「안건 n · 결정 n · 액션 n」 — **파생**, 통합 전 `null`(SPEC-008 이 채운다). */
+/**
+ * 요약 바 우측 「**안건 n · 논의 n · 결정 n · 액션 n · 업무 n**」 — **파생 다섯**(SPEC-008 §4 Data Contract · MF-25).
+ *
+ * `merged` 안건 수 + `kind` 별 줄 수 넷. 저장하지 않으므로 줄을 지우면 바로 따라 바뀐다.
+ * **`integratedAt` 이 없다** — 통합 단계가 사라져(MF-56) 가리킬 시각이 없다. 최종 회의록이 없으면 `null`.
+ */
 export interface MergedSummary {
   agendaCount: number;
+  discussionCount: number;
   decisionCount: number;
   actionCount: number;
-  integratedAt: string;
+  taskCount: number;
 }
 
 /** `GET /api/meetings/{id}` — SPEC-006 §4 `MeetingDetail`. 상세·생성·PATCH·`/start`·안건·첨부가 전부 이 형태다. */
@@ -142,7 +147,6 @@ export interface MeetingDetail {
   attachments: MeetingAttachment[];
   /** 성공한 배치의 최대 `seq`(파생). 시작 전 `0`. */
   latestBatchSeq: number;
-  finalBatchState: "succeeded" | "failed" | null;
   activeJobId: number | null;
   createdAt: string;
   updatedAt: string;
@@ -239,12 +243,12 @@ export interface NewTaskInput {
  * `POST /api/meetings/{id}/lines` — 사람 줄 하나. 응답은 `MeetingLine`(201 — 코디 판정, 상세 전체가 아니다).
  * `detail` 은 **종료 후 편집(SPEC-008 U-8)만** 보낸다 — 회의 중에 실으면 서버가 `validation_error` 다.
  *
- * 세 갈래(§4) — 본문 줄(`content` — 회의 중은 네 종류 전부 · 종료 후 논의/결정/액션) · 연관 업무(`taskId` + 선택 `pendingChange`,
+ * 세 갈래(§4) — 본문 줄(`content` — 회의 중은 네 종류 전부 · 종료 후 논의/결정/액션) · 연관 업무(`taskId` + 선택 `payload`,
  * `content` 는 서버가 업무 제목으로 — U-9) · 액션 아이템 = 업무 생성(`newTask`, 업무 + 줄 한 트랜잭션 — U-10 칩 진입).
  */
 export type AddLineInput =
   | { agendaId: number; kind: LineKind; content: string; detail?: string | null }
-  | { agendaId: number; kind: "task"; taskId: number; pendingChange?: PendingChange | null }
+  | { agendaId: number; kind: "task"; taskId: number; payload?: LinePayload | null }
   | { agendaId: number; kind: "task"; newTask: NewTaskInput };
 
 /** `PATCH /api/meetings/{id}/lines/{lineId}` — 보낸 필드만(SPEC-008 §4). 응답은 `MeetingDetail` 전체. */
@@ -301,10 +305,17 @@ export type StreamClientFrame =
 // --- 종료 파이프라인(SPEC-008 §4 · BE §6) — 백엔드 `schemas/job.py` 의 미러 --------------------
 
 export type JobStatus = "queued" | "running" | "succeeded" | "failed";
-export type JobPhase = "final_batch" | "integration";
-export type JobErrorCode = "integration_failed" | "integration_timeout" | "job_timeout";
+/** 파이프라인 단계(SPEC-008 §4) — `transcription` = ① 재전사 · `final` = ② 최종 회의록. **파생**이다(컬럼 없음). */
+export type JobPhase = "transcription" | "final";
+/** job 실패 사유 **5종**(ERD `job.error_code`) — 배너 사유 툴팁이 `transcription_*` / 그 밖으로 갈린다. */
+export type JobErrorCode =
+  | "transcription_failed"
+  | "transcription_timeout"
+  | "final_failed"
+  | "final_timeout"
+  | "job_timeout";
 
-/** `POST …/end` · `POST …/integrate` → `202 { jobId }`. 결과를 담지 않는다 — 종결 뒤 상세를 다시 읽는다. */
+/** `POST …/end` · `POST …/finalize` → `202 { jobId }`. 결과를 담지 않는다 — 종결 뒤 상세를 다시 읽는다. */
 export interface JobAccepted {
   jobId: number;
 }

@@ -1,10 +1,10 @@
 """WORK-008 Phase 5 — 업무 연동. **완료 게이트의 네 번째 진입점**이 우회하지 않는지 실측한다(WORK-005 L137 · L147 · L294).
 
 정본: SPEC-008 §4(`POST`·`PATCH …/lines/{id}/task` · `POST …/lines {newTask}` · Validation · Case Matrix) · U-6 · U-9 · U-10 ·
-SPEC-004 §4(게이트 · 전이 그래프 · 같은 상태 409) · SPEC-003 §4(업무 생성 규칙) · DEC-003 §4 L102(`pendingChange` 세 키).
+SPEC-004 §4(게이트 · 전이 그래프 · 같은 상태 409) · SPEC-003 §4(업무 생성 규칙) · DEC-003 §4 L102(`payload` 세 키).
 
-- 게이트 거부 → 422 `task_completion_blocked` 이고 **`task.status` · `due_date` · 메모 수 · 로그 수 · `pending_change` 전부 그대로**(DB 전후 비교)
-- 게이트 통과 → 200 · `done` · 전이 로그 **한 줄** · 기한 · 메모 반영 · `pending_change NULL`
+- 게이트 거부 → 422 `task_completion_blocked` 이고 **`task.status` · `due_date` · 메모 수 · 로그 수 · `payload` 전부 그대로**(DB 전후 비교)
+- 게이트 통과 → 200 · `done` · 전이 로그 **한 줄** · 기한 · 메모 반영 · `payload NULL`
 - 이미 `done` 인데 `status:'done'` → **409 없이 200**, 기한 · 메모만 · 전이 로그 없음
 - 뒤 단계(기한)가 거부되면 앞 단계(전이)도 **되돌아간다**(service 층 롤백 실측)
 - `cancelled` · 넷째 키 → 422 · 삭제된 업무 → 404 · 액션 줄 / 변경 없는 줄 → 422 · 남의 것 → 404 · `generating` → 409
@@ -31,6 +31,7 @@ from service import meeting_task_link_service
 from tests.fakes.agent import FakeAgentGateway
 from tests.meeting_close_fixtures import (  # noqa: F401
     close_scope,
+    fake_async_stt,
     end_meeting,
     finalize_successfully,
     prepare_recording,
@@ -38,7 +39,7 @@ from tests.meeting_close_fixtures import (  # noqa: F401
 from tests.meeting_fixtures import BASE, MeetingOwner, owner, stranger  # noqa: F401
 from tests.meeting_live_fixtures import add_task
 
-pytestmark = pytest.mark.usefixtures("close_scope")
+pytestmark = pytest.mark.usefixtures("close_scope", "fake_async_stt")
 
 TASKS = "/api/tasks"
 PENDING = {"status": "done", "dueDate": "2026-09-02", "note": "검수 일정 변경"}
@@ -79,14 +80,14 @@ async def _task_state(session: AsyncSession, task_id: int) -> dict:
 
 async def _pending_of(session: AsyncSession, line_id: int) -> dict | None:
     session.expire_all()
-    return await session.scalar(select(MeetingLine.pending_change).where(MeetingLine.id == line_id))
+    return await session.scalar(select(MeetingLine.payload).where(MeetingLine.id == line_id))
 
 
 async def _link(client: AsyncClient, owner: MeetingOwner, meeting_id: int, agenda_id: int, task_id: int, pending: dict | None) -> dict:
-    """U-9 — `POST …/lines { taskId, pendingChange }` 로 업무 줄을 만든다."""
+    """U-9 — `POST …/lines { taskId, payload }` 로 업무 줄을 만든다."""
     payload: dict = {"agendaId": agenda_id, "kind": "task", "taskId": task_id}
     if pending is not None:
-        payload["pendingChange"] = pending
+        payload["payload"] = pending
     response = await client.post(f"{BASE}/{meeting_id}/lines", json=payload, headers=owner.headers)
     assert response.status_code == 201, response.text
     return response.json()
@@ -134,14 +135,14 @@ async def test_gate_rejects_and_nothing_changes_then_passes_after_a_deliverable(
     assert await _pending_of(db_session, line["id"]) == PENDING
     detail = await client.get(f"{BASE}/{body['id']}", headers=owner.headers)
     shown = _line(detail.json(), line["id"])
-    assert (shown["pendingChange"], shown["task"]["status"], shown["task"]["dueDate"]) == (PENDING, "todo", "2026-09-30")
+    assert (shown["payload"], shown["task"]["status"], shown["task"]["dueDate"]) == (PENDING, "todo", "2026-09-30")
 
     # 통과 — 결과자료 1건을 붙인 뒤 **같은 요청**
     await _add_deliverable(client, owner, task_id)
     applied = await _apply(client, owner, body["id"], line["id"])
     assert applied.status_code == 200, applied.text
     shown = _line(applied.json(), line["id"])
-    assert (shown["pendingChange"], shown["kind"], shown["task"]["status"], shown["task"]["dueDate"]) == (None, "task", "done", "2026-09-02")
+    assert (shown["payload"], shown["kind"], shown["task"]["status"], shown["task"]["dueDate"]) == (None, "task", "done", "2026-09-02")
 
     after = await _task_state(db_session, task_id)
     assert (after["status"], after["due_date"], after["memos"], after["transitions"]) == ("done", date(2026, 9, 2), 1, 1)
@@ -172,9 +173,9 @@ async def test_the_same_status_is_skipped_without_409(
     after = await _task_state(db_session, task_id)
     assert (after["status"], after["due_date"], after["memos"], after["transitions"]) == ("done", date(2026, 9, 2), 1, before["transitions"])
     assert after["logs"] == before["logs"]
-    assert _line(applied.json(), line["id"])["pendingChange"] is None
+    assert _line(applied.json(), line["id"])["payload"] is None
 
-    # 상태만 같은 줄 — 아무것도 바뀌지 않고 `pending_change` 만 비워진다
+    # 상태만 같은 줄 — 아무것도 바뀌지 않고 `payload` 만 비워진다
     only_status = await _link(client, owner, body["id"], agenda_id, task_id, {"status": "done"})
     applied = await _apply(client, owner, body["id"], only_status["id"])
     assert applied.status_code == 200, applied.text
@@ -182,7 +183,7 @@ async def test_the_same_status_is_skipped_without_409(
     assert await _pending_of(db_session, only_status["id"]) is None
 
 
-async def test_invalid_transition_is_409_and_keeps_pending_change(
+async def test_invalid_transition_is_409_and_keeps_payload(
     client: AsyncClient, owner: MeetingOwner, db_session: AsyncSession, fake_agent: FakeAgentGateway
 ) -> None:
     task_id = await add_task(db_session, owner, title="완료된 업무", project_id=owner.project_id)
@@ -215,7 +216,7 @@ async def test_a_later_step_failure_rolls_back_the_earlier_transition(
 
     with pytest.raises(ValidationError):
         async with db_session.begin_nested():
-            await meeting_task_link_service.apply_pending_change(db_session, account_id=owner.id, meeting_id=body["id"], line_id=line["id"])
+            await meeting_task_link_service.apply_payload(db_session, account_id=owner.id, meeting_id=body["id"], line_id=line["id"])
 
     assert await _task_state(db_session, task_id) == before
     assert await _pending_of(db_session, line["id"]) == {"status": "in_progress", "dueDate": "2026-09-01", "note": "메모"}
@@ -224,7 +225,7 @@ async def test_a_later_step_failure_rolls_back_the_earlier_transition(
 # --- 검증 · 경계 ----------------------------------------------------------------------------------
 
 
-async def test_pending_change_validation_and_missing_targets(
+async def test_payload_validation_and_missing_targets(
     client: AsyncClient, owner: MeetingOwner, stranger: MeetingOwner, db_session: AsyncSession, fake_agent: FakeAgentGateway
 ) -> None:
     task_id = await add_task(db_session, owner, title="연결 업무", project_id=owner.project_id)
@@ -234,12 +235,12 @@ async def test_pending_change_validation_and_missing_targets(
 
     # 허용 키 3개뿐 — `cancelled` · 넷째 키 · 빈 객체는 422(DEC-003 §4 L102)
     for pending, field in (
-        ({"status": "cancelled"}, "pendingChange.status"),
-        ({"status": "done", "priority": 1}, "pendingChange.priority"),
-        ({"cancelReason": "x"}, "pendingChange.cancelReason"),
-        ({}, "pendingChange"),
+        ({"status": "cancelled"}, "payload.status"),
+        ({"status": "done", "priority": 1}, "payload.priority"),
+        ({"cancelReason": "x"}, "payload.cancelReason"),
+        ({}, "payload"),
     ):
-        response = await client.post(path, json={"agendaId": agenda_id, "kind": "task", "taskId": task_id, "pendingChange": pending}, headers=owner.headers)
+        response = await client.post(path, json={"agendaId": agenda_id, "kind": "task", "taskId": task_id, "payload": pending}, headers=owner.headers)
         assert (response.status_code, response.json()["code"], response.json()["field"]) == (422, "validation_error", field), pending
 
     # 액션 줄 · 변경 없는 업무 줄에는 반영할 것이 없다
@@ -318,13 +319,14 @@ async def test_create_task_from_an_action_line(
     )
     assert response.status_code == 201, response.text
     line = _line(response.json(), action["id"])
-    assert (line["kind"], line["content"], line["pendingChange"]) == ("task", "후속 미팅 잡기", None)
+    assert (line["kind"], line["content"], line["payload"]) == ("task", "후속 미팅 잡기", None)
     assert line["task"] == {
         "id": line["taskId"], "title": "후속 미팅 잡기", "status": "todo", "dueDate": "2026-09-12", "isDeleted": False,
         "workType": {"id": owner.task_type_id, "name": f"{owner.login_id} 업무 유형", "kind": "task", "colorToken": "steel", "isDeleted": False},
     }
-    # 액션 수는 업무로 바뀐 줄을 포함한다(Data Contract) — 생성 뒤 줄어드는 수를 만들지 않는다
-    assert response.json()["mergedSummary"]["actionCount"] == body["mergedSummary"]["actionCount"]
+    # 카운트가 다섯으로 갈렸다(WORK-012 · SPEC-008 §4 Data Contract) — 액션이 업무가 되면 자리가 옮겨간다
+    assert response.json()["mergedSummary"]["actionCount"] == body["mergedSummary"]["actionCount"] - 1
+    assert response.json()["mergedSummary"]["taskCount"] == body["mergedSummary"]["taskCount"] + 1
     task = (await client.get(f"{TASKS}/{line['taskId']}", headers=owner.headers)).json()
     assert (task["status"], task["dueDate"], task["description"], task["project"]["id"]) == ("todo", "2026-09-12", "9/12 오전", owner.project_id)
     assert [log["text"] for log in task["logs"]] == ["업무 생성"]
@@ -343,15 +345,15 @@ async def test_new_task_line_from_the_agenda_chip(
     path = f"{BASE}/{body['id']}/lines"
     tasks_before = await _count(db_session, Task, Task.account_id == owner.id)
 
-    # `newTask` 에 `pendingChange` 를 얹으면 422 — 새 업무에 반영할 「변경」은 없다
-    response = await client.post(path, json={"agendaId": agenda["id"], "kind": "task", "newTask": {"title": "칩 업무", "workTypeId": owner.task_type_id}, "pendingChange": {"note": "n"}}, headers=owner.headers)
-    assert (response.status_code, response.json()["field"]) == (422, "pendingChange")
+    # `newTask` 에 `payload` 를 얹으면 422 — 새 업무에 반영할 「변경」은 없다
+    response = await client.post(path, json={"agendaId": agenda["id"], "kind": "task", "newTask": {"title": "칩 업무", "workTypeId": owner.task_type_id}, "payload": {"note": "n"}}, headers=owner.headers)
+    assert (response.status_code, response.json()["field"]) == (422, "payload")
     assert await _count(db_session, Task, Task.account_id == owner.id) == tasks_before
 
     response = await client.post(path, json={"agendaId": agenda["id"], "kind": "task", "newTask": {"title": "칩 업무", "workTypeId": owner.task_type_id, "dueDate": "2026-09-05"}}, headers=owner.headers)
     assert response.status_code == 201, response.text
     item = response.json()
-    assert (item["track"], item["agendaId"], item["kind"], item["content"], item["orderIndex"], item["pendingChange"]) == ("merged", agenda["id"], "task", "칩 업무", len(agenda["lines"]), None)
+    assert (item["track"], item["agendaId"], item["kind"], item["content"], item["orderIndex"], item["payload"]) == ("merged", agenda["id"], "task", "칩 업무", len(agenda["lines"]), None)
     assert (item["task"]["status"], item["task"]["dueDate"], item["task"]["isDeleted"]) == ("todo", "2026-09-05", False)
     task = (await client.get(f"{TASKS}/{item['taskId']}", headers=owner.headers)).json()
     assert [log["text"] for log in task["logs"]] == ["업무 생성"]

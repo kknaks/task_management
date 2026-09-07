@@ -64,7 +64,6 @@ export function meetingDetail(overrides: Partial<MeetingDetail> = {}): MeetingDe
       },
     ],
     latestBatchSeq: 0,
-    finalBatchState: null,
     activeJobId: null,
     createdAt: "2026-08-20T01:00:00Z",
     updatedAt: "2026-08-20T01:00:00Z",

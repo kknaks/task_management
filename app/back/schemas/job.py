@@ -9,8 +9,14 @@ from dto.job import JobDetailDTO, JobProgressDTO
 from schemas.base import CamelModel
 
 JobStatusValue = Literal["queued", "running", "succeeded", "failed"]
-JobErrorCodeValue = Literal["integration_failed", "integration_timeout", "job_timeout"]
-JobPhaseValue = Literal["final_batch", "integration"]
+JobErrorCodeValue = Literal[
+    "transcription_failed",
+    "transcription_timeout",
+    "final_failed",
+    "final_timeout",
+    "job_timeout",
+]
+JobPhaseValue = Literal["transcription", "final"]
 
 
 class JobAccepted(CamelModel):
@@ -20,7 +26,7 @@ class JobAccepted(CamelModel):
 
 
 class JobProgress(CamelModel):
-    """**파생**(컬럼 없음) — `phase` 는 파이프라인 단계, `attempt` 는 통합 시도 회차(1~3 · ① 동안 0)."""
+    """**파생**(컬럼 없음) — `phase` 는 파이프라인 단계(`transcription`·`final`), `attempt` 는 ② 시도 회차(1~3 · ① 동안 0)."""
 
     phase: JobPhaseValue
     attempt: int

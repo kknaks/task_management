@@ -47,7 +47,7 @@ describe("AI 한 줄 요약 바(U-8)", () => {
         status: "ended",
         integrationState: "succeeded",
         headline,
-        mergedSummary: { agendaCount: 3, decisionCount: 2, actionCount: 2, integratedAt: "2026-08-27T01:42:00Z" },
+        mergedSummary: { agendaCount: 3, discussionCount: 4, decisionCount: 2, actionCount: 2, taskCount: 1 },
       }),
     );
     renderWithProviders(<MeetingPreviewPanel meetingId={21} />);
@@ -55,7 +55,7 @@ describe("AI 한 줄 요약 바(U-8)", () => {
     const bars = await screen.findAllByRole("note", { name: "AI 한 줄 요약" });
     expect(bars).toHaveLength(1);
     expect(within(bars[0]).getByText(headline)).toBeInTheDocument();
-    expect(within(bars[0]).getByText("안건 3 · 결정 2 · 액션 2")).toBeInTheDocument();
+    expect(within(bars[0]).getByText("안건 3 · 논의 4 · 결정 2 · 액션 2 · 업무 1")).toBeInTheDocument();
     expect(screen.queryByText("AI 생성")).not.toBeInTheDocument();
     expect(screen.queryByText(/회의실/)).not.toBeInTheDocument();
   });

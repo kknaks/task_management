@@ -95,6 +95,8 @@ class Meeting(Base, TimestampMixin):
         server_default=text(f"'{IntegrationState.NOT_STARTED.value}'"),
     )
     ai_headline: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # M-9-b — ② 가 낸 용어 보정 표 `[{stt, correct, grade}]`. `grade='auto'` 만 스크립트 본문에 적용된다
+    term_corrections: Mapped[list | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
     # 서버 내부값 둘 — 상세 응답에 싣지 않는다(SPEC-006 §4). WORK-007 이 채운다.
     recording_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     ai_session_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
@@ -190,8 +192,8 @@ class MeetingLine(Base, TimestampMixin):
     """줄 — **3트랙 한 테이블**(`domains/meeting.md` 「왜 줄이 세 테이블이 아닌가」).
 
     M-5 — `agenda_id` NOT NULL(줄은 항상 안건에 속한다).
-    M-8-a — `source_*_line_id` 는 `track='merged'` 에서만 값을 갖고(CHECK), 각각 부분 UNIQUE 다.
-    **이 work 는 읽기만 한다**(상세 응답 조립). 쓰기는 WORK-007·008.
+    **`source_*_line_id` 는 없다**(WORK-012) — 통합 규칙(사람 줄 전수 계승 · 이중 계승 금지 · 본문 복사)이
+    MF-56 · 57 로 사라져 가리킬 원본이 없다. `merged` 줄은 ② 최종 회의록이 본문째 낸다.
     `task_id` 는 FK 를 건다 — `task` 테이블은 이미 있다(WORK-004).
     """
 
@@ -219,27 +221,18 @@ class MeetingLine(Base, TimestampMixin):
     task_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("task.id", name="fk_meeting_line_task_id"), nullable=True
     )
-    # M-14-a — 기한 · 상태 · note 셋뿐
-    pending_change: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    source_human_line_id: Mapped[int | None] = mapped_column(
-        BigInteger,
-        ForeignKey("meeting_line.id", name="fk_meeting_line_source_human_line_id"),
-        nullable=True,
-    )
-    source_ai_line_id: Mapped[int | None] = mapped_column(
-        BigInteger,
-        ForeignKey("meeting_line.id", name="fk_meeting_line_source_ai_line_id"),
-        nullable=True,
-    )
+    # M-14-a · MF-59 — ② 최종 회의록이 채우고 사람이 드로어에서 고친다. `action`·`task` 줄에만 뜻이 있다
+    # `none_as_null` — 파이썬 `None` 을 **SQL NULL** 로 쓴다. 없으면 JSONB `'null'` 이 들어가
+    # `payload IS NULL` 이 거짓이 되어 자리 CHECK 가 멀쩡한 줄을 막는다
+    payload: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
 
     __table_args__ = (
         CheckConstraint(f"track IN ({_TRACK_VALUES})", name="ck_meeting_line_track"),
         CheckConstraint(f"kind IN ({_LINE_KIND_VALUES})", name="ck_meeting_line_kind"),
-        # M-8-a — 통합 줄만 원본을 가리킨다. 다른 트랙은 둘 다 NULL
+        # SPEC-008 §4 「`payload` 자리」 — 사람이 편집하는 두 트랙의 `action`·`task` 줄에만
         CheckConstraint(
-            f"track = '{MeetingTrack.MERGED.value}'"
-            " OR (source_human_line_id IS NULL AND source_ai_line_id IS NULL)",
-            name="ck_meeting_line_source_only_merged",
+            "payload IS NULL OR (track IN ('merged', 'human') AND kind IN ('action', 'task'))",
+            name="ck_meeting_line_payload",
         ),
         # §4 — 탭 하나 = 트랙 하나를 통째로 읽는다
         Index(
@@ -248,19 +241,6 @@ class MeetingLine(Base, TimestampMixin):
             "track",
             "agenda_id",
             "order_index",
-        ),
-        # §4 · M-8-a — 이중 계승 · 중복 AI 참조 금지
-        Index(
-            "uq_meeting_line_source_human_line_id",
-            "source_human_line_id",
-            unique=True,
-            postgresql_where=text("source_human_line_id IS NOT NULL"),
-        ),
-        Index(
-            "uq_meeting_line_source_ai_line_id",
-            "source_ai_line_id",
-            unique=True,
-            postgresql_where=text("source_ai_line_id IS NOT NULL"),
         ),
     )
 

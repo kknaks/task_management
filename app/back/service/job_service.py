@@ -5,14 +5,14 @@
 1. **행은 요청 트랜잭션 안에서**(`create`), **태스크는 커밋 뒤에**(`launch`) — 부르는 service 가 `register_after_commit` 으로 건다.
    행이 없는 태스크도, 태스크 없는 `running` 행도 만들지 않는다.
 2. **단계마다 세션을 새로 열고 끝에 commit**(BE §7) — `session_scope()`. 태스크 수명 내내 세션을 붙들지 않는다.
-3. **상한 마감** — `JOB_TIMEOUT_SEC`(900) 를 넘기면 실행 중인 일을 끊고 `failed(job_timeout)` 로 마감한다. 무한 대기 금지(DEC-003 §7 L141).
+3. **상한 마감** — `MEETING_JOB_TIMEOUT_SEC`(2400) 를 넘기면 실행 중인 일을 끊고 `failed(job_timeout)` 로 마감한다. 무한 대기 금지(DEC-003 §7 L141).
    대상 리소스 쪽 마감(회의 `ended`+`failed`)은 handler 의 `on_timeout` 이 한다 — 이 파일은 회의를 모른다.
 4. **기동 스윕** — `queued`/`running` 잔여를 `failed(job_timeout)` 로 마감한다(재개하지 않는다 — 통합은 처음부터 다시 돌리는 게 맞고
    「다시 생성」 표면이 그 자리다). 스윕은 **별도 태스크**로 돌아 기동을 막지 않고, 예외는 완료 콜백이 스택째 로그로 드러낸다.
 5. **설계 밖 예외는 잡지 않는다** — 실행기 태스크가 그 예외로 끝나고 완료 콜백이 로그를 남긴다(BE §8-1 · WORK-007 검수 W-2).
    그 job 행은 `running` 으로 남고 다음 기동 스윕이 마감한다.
-6. `progress{phase, attempt}` 는 **파생** — `attempt` 는 `job.attempt`, `phase` 는 `attempt≥1` 이면 `integration`(통합 시도가 시작됐다)
-   아니면 `final_batch`. 컬럼이 아니다(G-7).
+6. `progress{phase, attempt}` 는 **파생** — `attempt` 는 `job.attempt`, `phase` 는 ① 을 도는 동안 `transcription` 이고
+   그 회의에 `meeting_batch_run(phase='final')` 행이 생기면 `final` 이다(SPEC-008 §4). 컬럼이 아니다(G-7).
 """
 
 from __future__ import annotations
@@ -29,9 +29,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import get_settings
 from core.db import SessionLocal
 from core.exceptions import NotFoundError
-from dto.enums import JOB_TERMINAL_STATUSES, JobErrorCode, JobKind, JobPhase, JobStatus
+from dto.enums import (
+    JOB_TERMINAL_STATUSES,
+    BatchPhase,
+    JobErrorCode,
+    JobKind,
+    JobPhase,
+    JobStatus,
+)
 from dto.job import JobDetailDTO, JobDTO, JobProgressDTO
-from repository import job_repository
+from repository import job_repository, meeting_batch_run_repository
 
 logger = logging.getLogger(__name__)
 
@@ -129,9 +136,9 @@ async def run(job_id: int) -> None:
     handler = _handler_for(job.kind)
 
     try:
-        await asyncio.wait_for(handler.run(job), timeout=get_settings().job_timeout_sec)
+        await asyncio.wait_for(handler.run(job), timeout=get_settings().meeting_job_timeout_sec)
     except TimeoutError:
-        logger.warning("job %s 가 상한 %s초를 넘겨 실패로 마감합니다", job_id, get_settings().job_timeout_sec)
+        logger.warning("job %s 가 상한 %s초를 넘겨 실패로 마감합니다", job_id, get_settings().meeting_job_timeout_sec)
         await _close_as_timeout(job, message=_TIMEOUT_MESSAGE)
 
 
@@ -201,11 +208,16 @@ async def sweep_on_startup() -> int:
 # --- 조회 (SPEC-008 §4 `GET /api/jobs/{jobId}`) ------------------------------------------
 
 
-def derive_progress(job: JobDTO) -> JobProgressDTO | None:
-    """`progress{phase, attempt}` — 파생. `kind≠meeting_finalize` 면 None."""
+def derive_progress(job: JobDTO, *, final_started: bool) -> JobProgressDTO | None:
+    """`progress{phase, attempt}` — **파생**(컬럼이 아니다 · SPEC-008 §4).
+
+    `final_started` 는 「그 회의에 `meeting_batch_run(phase='final')` 행이 생겼는가」다 —
+    생기기 전은 ① 재전사(`transcription`), 생긴 뒤는 ② 최종 회의록(`final`)이다.
+    `kind≠meeting_finalize` 면 `None`.
+    """
     if job.kind != JobKind.MEETING_FINALIZE.value:
         return None
-    phase = JobPhase.INTEGRATION.value if job.attempt >= 1 else JobPhase.FINAL_BATCH.value
+    phase = JobPhase.FINAL.value if final_started else JobPhase.TRANSCRIPTION.value
     return JobProgressDTO(phase=phase, attempt=job.attempt)
 
 
@@ -213,4 +225,10 @@ async def get_detail(session: AsyncSession, *, account_id: int, job_id: int) -> 
     job = await job_repository.find(session, account_id=account_id, job_id=job_id)
     if job is None:
         raise NotFoundError(_NOT_FOUND)
-    return JobDetailDTO(job=job, progress=derive_progress(job))
+    final_started = False
+    if job.kind == JobKind.MEETING_FINALIZE.value:
+        run = await meeting_batch_run_repository.find_latest_by_phase(
+            session, job.target_id, phase=BatchPhase.FINAL.value
+        )
+        final_started = run is not None
+    return JobDetailDTO(job=job, progress=derive_progress(job, final_started=final_started))

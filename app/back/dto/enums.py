@@ -52,8 +52,8 @@ class TaskStatus(StrEnum):
 UNFINISHED_STATUSES = frozenset({TaskStatus.TODO.value, TaskStatus.IN_PROGRESS.value})
 # 종결 2종 — R-4 가 이것들만 **실적 시각**으로 거른다(`due_date` 로 거르지 않는다).
 FINISHED_STATUSES = frozenset({TaskStatus.DONE.value, TaskStatus.CANCELLED.value})
-# 회의록 `pendingChange.status` 가 담을 수 있는 상태 — **`cancelled` 불가**(사유가 필수라 세 키로 표현할 수 없다 · SPEC-008 §4 Validation).
-PENDING_CHANGE_STATUSES = frozenset(TaskStatus) - {TaskStatus.CANCELLED}
+# 회의록 `payload.status` 가 담을 수 있는 상태 — **`cancelled` 불가**(사유가 필수라 세 키로 표현할 수 없다 · SPEC-008 §4 Validation).
+PAYLOAD_STATUSES = frozenset(TaskStatus) - {TaskStatus.CANCELLED}
 
 
 class AttachmentRole(StrEnum):
@@ -168,7 +168,6 @@ class BatchPhase(StrEnum):
 
     INCREMENTAL = "incremental"
     FINAL = "final"
-    INTEGRATION = "integration"
 
 
 class BatchRunStatus(StrEnum):
@@ -240,15 +239,23 @@ JOB_TERMINAL_STATUSES = frozenset({JobStatus.SUCCEEDED.value, JobStatus.FAILED.v
 
 
 class JobErrorCode(StrEnum):
-    """`job.error_code` **3종뿐**(SPEC-008 §4 Case Matrix · ERD `job`). 그 밖의 실패는 코드를 발명하지 않고 전파한다."""
+    """`job.error_code` **5종뿐**(SPEC-008 §4 Case Matrix · ERD `job`). 그 밖의 실패는 코드를 발명하지 않고 전파한다.
 
-    INTEGRATION_FAILED = "integration_failed"
-    INTEGRATION_TIMEOUT = "integration_timeout"
+    파이프라인이 둘이라 단계마다 실패·상한 두 짝이다 — ① 재전사 · ② 최종 회의록. 마지막 하나는 job 상한.
+    """
+
+    TRANSCRIPTION_FAILED = "transcription_failed"
+    TRANSCRIPTION_TIMEOUT = "transcription_timeout"
+    FINAL_FAILED = "final_failed"
+    FINAL_TIMEOUT = "final_timeout"
     JOB_TIMEOUT = "job_timeout"
 
 
 class JobPhase(StrEnum):
-    """`GET /api/jobs/{id}` 의 `progress.phase`(BE §6 · SPEC-008 §4) — 컬럼이 아니라 **파생**이다."""
+    """`GET /api/jobs/{id}` 의 `progress.phase`(BE §6 · SPEC-008 §4) — 컬럼이 아니라 **파생**이다.
 
-    FINAL_BATCH = "final_batch"
-    INTEGRATION = "integration"
+    ① 을 도는 동안 `transcription`, 그 회의에 `meeting_batch_run(phase='final')` 이 생긴 뒤 `final`.
+    """
+
+    TRANSCRIPTION = "transcription"
+    FINAL = "final"

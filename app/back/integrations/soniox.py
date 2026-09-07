@@ -16,21 +16,36 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
+import httpx
 import websockets
 from websockets.exceptions import ConnectionClosed, WebSocketException
 
 from config import get_settings
 from dto.meeting_stream import AudioDeclaration
 
-__all__ = ["AudioDeclaration", "SttConnector", "SttSession", "SttToken", "SttUpstreamError"]
+__all__ = [
+    "AudioDeclaration",
+    "SttAsyncConnector",
+    "SttConnector",
+    "SttSession",
+    "SttToken",
+    "SttUpstreamError",
+    "TranscribeContext",
+]
 
 SONIOX_URL = "wss://stt-rt.soniox.com/transcribe-websocket"
+# 종료 후 재전사 — 같은 키를 쓰는 REST(system/README §External Integrations · SPEC-008 §4 ①)
+SONIOX_API_URL = "https://api.soniox.com"
 _MODEL = "stt-rt-v5"
+_ASYNC_MODEL = "stt-async-v5"
 _LANGUAGE_HINTS = ["ko"]
 # 형식이 `auto` 면 sample_rate·num_channels 를 보내지 않는다(컨테이너 포맷은 헤더가 말한다).
 _AUTO_FORMAT = "auto"
@@ -159,3 +174,170 @@ def install_connector(connector: SttConnector | None) -> None:
     """테스트 대역 교체 지점(BE §12). `None` 이면 실제 어댑터로 돌아간다."""
     global _connector
     _connector = connector
+
+
+# --- 종료 후 재전사 (async · MF-37 · SPEC-008 §4 ①) --------------------------------
+#
+# 실시간 갈래(위)와 **완전히 따로** 산다 — 프로토콜도 모델도 다르다. 공유하는 것은 키와 `SttToken` 뿐이다.
+# 흐름 — `POST /v1/files`(멀티파트) → `POST /v1/transcriptions` → 상태 폴링 → `GET …/transcript`.
+
+
+@dataclass(frozen=True)
+class TranscribeContext:
+    """Soniox `context`(MF-54 ① · SPEC-008 §4 「② 의 `context`」). 상한 8000 토큰.
+
+    `general` 은 `[{key, value}]` 목록, `text` 는 직전 회의 요약(없으면 **키를 싣지 않는다**).
+    `terms` 는 **비운다** — 사내 고유명사 목록이 v1 어디에도 없다(DEC-003 OQ-10). 자리를 지우지 않고 비운 채 둔다.
+    """
+
+    general: list[dict[str, str]]
+    text: str | None = None
+
+    def to_json(self) -> dict[str, object]:
+        context: dict[str, object] = {"general": list(self.general)}
+        if self.text:
+            context["text"] = self.text
+        return context
+
+
+class SttAsyncConnector(Protocol):
+    async def transcribe(
+        self,
+        path: Path,
+        context: TranscribeContext,
+        *,
+        poll_sec: int,
+        timeout_sec: int,
+    ) -> list[SttToken]: ...
+
+
+class SonioxAsyncClient:
+    """`stt-async-v5` REST. 실패는 전부 `SttUpstreamError` 하나다(fallback 없음 — MF-58).
+
+    **폴링 사이에 아무것도 붙들지 않는다** — 여기는 DB 를 모르고, 부르는 쪽이 트랜잭션을 닫고 온다(BE §7).
+    """
+
+    def __init__(self, api_key: str, *, base_url: str = SONIOX_API_URL) -> None:
+        self._api_key = api_key
+        self._base_url = base_url.rstrip("/")
+
+    @property
+    def _headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self._api_key}"}
+
+    async def transcribe(
+        self,
+        path: Path,
+        context: TranscribeContext,
+        *,
+        poll_sec: int,
+        timeout_sec: int,
+    ) -> list[SttToken]:
+        deadline = time.monotonic() + timeout_sec
+        async with httpx.AsyncClient(base_url=self._base_url, timeout=60.0) as client:
+            file_id = await self._upload(client, path)
+            transcription_id = await self._request(client, file_id, context)
+            await self._wait(client, transcription_id, poll_sec=poll_sec, deadline=deadline)
+            return await self._fetch(client, transcription_id)
+
+    async def _upload(self, client: httpx.AsyncClient, path: Path) -> str:
+        try:
+            with path.open("rb") as handle:
+                response = await client.post(
+                    "/v1/files", headers=self._headers, files={"file": (path.name, handle)}
+                )
+        except OSError as exc:
+            # 녹음 원본을 못 읽는다 — 설계한 실패다(재전사가 시작될 수 없다)
+            raise SttUpstreamError(f"녹음 원본을 읽지 못했습니다: {path.name}") from exc
+        except httpx.HTTPError as exc:
+            raise SttUpstreamError("업스트림에 파일을 올리지 못했습니다") from exc
+        return str(_ok(response, "파일 업로드")["id"])
+
+    async def _request(
+        self, client: httpx.AsyncClient, file_id: str, context: TranscribeContext
+    ) -> str:
+        payload = {
+            "file_id": file_id,
+            "model": _ASYNC_MODEL,
+            "language_hints": list(_LANGUAGE_HINTS),
+            "enable_speaker_diarization": True,
+            "context": context.to_json(),
+        }
+        try:
+            response = await client.post(
+                "/v1/transcriptions", headers=self._headers, json=payload
+            )
+        except httpx.HTTPError as exc:
+            raise SttUpstreamError("재전사를 요청하지 못했습니다") from exc
+        return str(_ok(response, "재전사 요청")["id"])
+
+    async def _wait(
+        self, client: httpx.AsyncClient, transcription_id: str, *, poll_sec: int, deadline: float
+    ) -> None:
+        """상태가 `completed` 가 될 때까지 `poll_sec` 마다 본다. 상한을 넘기면 `TimeoutError`.
+
+        상한과 실패를 **다른 예외**로 낸다 — 부르는 쪽이 `transcription_timeout` 과 `transcription_failed` 를 가른다.
+        """
+        while True:
+            try:
+                response = await client.get(
+                    f"/v1/transcriptions/{transcription_id}", headers=self._headers
+                )
+            except httpx.HTTPError as exc:
+                raise SttUpstreamError("재전사 상태를 확인하지 못했습니다") from exc
+            body = _ok(response, "재전사 상태")
+            status = body.get("status")
+            if status == "completed":
+                return
+            if status == "error":
+                raise SttUpstreamError(
+                    f"재전사가 실패했습니다: {body.get('error_message') or 'unknown'}"
+                )
+            if time.monotonic() + poll_sec > deadline:
+                raise TimeoutError("재전사가 상한 안에 끝나지 않았습니다")
+            await asyncio.sleep(poll_sec)
+
+    async def _fetch(self, client: httpx.AsyncClient, transcription_id: str) -> list[SttToken]:
+        try:
+            response = await client.get(
+                f"/v1/transcriptions/{transcription_id}/transcript", headers=self._headers
+            )
+        except httpx.HTTPError as exc:
+            raise SttUpstreamError("재전사 결과를 받지 못했습니다") from exc
+        body = _ok(response, "재전사 결과")
+        return [_to_async_token(raw) for raw in body.get("tokens", [])]
+
+
+def _ok(response: httpx.Response, what: str) -> dict:
+    """2xx 가 아니면 **본문째** 실패로 올린다 — 응답 코드를 삼키지 않는다(SYS-OQ-5 실물 확인의 근거가 된다)."""
+    if response.status_code >= 400:
+        raise SttUpstreamError(f"{what} 실패 {response.status_code}: {response.text[:500]}")
+    return response.json()
+
+
+def _to_async_token(raw: dict) -> SttToken:
+    """async 결과 토큰. 전량이 확정이라 `is_final=True` 다(잠정 개념이 없다)."""
+    speaker = raw.get("speaker")
+    return SttToken(
+        text=raw["text"],
+        is_final=True,
+        speaker=None if speaker is None else str(speaker),
+        start_ms=int(raw.get("start_ms", 0)),
+        end_ms=int(raw.get("end_ms", 0)),
+    )
+
+
+_async_connector: SttAsyncConnector | None = None
+
+
+def get_async_connector() -> SttAsyncConnector:
+    global _async_connector
+    if _async_connector is None:
+        _async_connector = SonioxAsyncClient(get_settings().soniox_api_key)
+    return _async_connector
+
+
+def install_async_connector(connector: SttAsyncConnector | None) -> None:
+    """테스트 대역 교체 지점(BE §12). `None` 이면 실제 어댑터로 돌아간다."""
+    global _async_connector
+    _async_connector = connector

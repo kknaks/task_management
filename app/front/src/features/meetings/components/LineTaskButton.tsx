@@ -9,8 +9,8 @@
  * | 줄 | 버튼 |
  * |---|---|
  * | 액션(`taskId` 없음) | 「**업무 생성**」 30 r8 테두리 12/600 → U-10 드로어(제목 프리필) |
- * | 업무 · `pendingChange` 있음 | 「**업무 갱신**」 30 r8 배경 · 테두리 12/600 → **즉시 요청**(확인 없음). 응답까지 비활성 + 진행. 툴팁 = 반영할 내용(같은 상태 제외) |
- * | 업무 · `pendingChange` 없음 | 「**갱신 완료**」 비활성 — 방금 갱신했거나 처음부터 변경이 없는 줄 |
+ * | 업무 · `payload` 있음 | 「**업무 갱신**」 30 r8 배경 · 테두리 12/600 → **즉시 요청**(확인 없음). 응답까지 비활성 + 진행. 툴팁 = 반영할 내용(같은 상태 제외) |
+ * | 업무 · `payload` 없음 | 「**갱신 완료**」 비활성 — 방금 갱신했거나 처음부터 변경이 없는 줄 |
  * | 업무 · `task.isDeleted` | 「**삭제된 업무**」 12 `#9EA2AE` 비활성(DEC-001 §4 참조 표시의 결). 배지 · 제목은 `LineRow` 가 그대로 |
  * | `locked`(`generating`) | 전부 비활성(U-1) |
  *
@@ -20,7 +20,7 @@
 
 import { Loader2 } from "lucide-react";
 
-import { pendingChangeSummary } from "@/features/meetings/hooks/useMeetingTaskLink";
+import { payloadSummary } from "@/features/meetings/hooks/useMeetingTaskLink";
 import type { MeetingLine } from "@/features/meetings/types";
 import { cn } from "@/lib/utils";
 
@@ -68,8 +68,8 @@ export function LineTaskButton({
       </button>
     );
   }
-  const summary = pendingChangeSummary(line);
-  if (!line.pendingChange) {
+  const summary = payloadSummary(line);
+  if (!line.payload) {
     return (
       <button type="button" disabled className={cn(BASE, "border border-chip-border bg-muted text-fg-caption")}>
         {APPLIED_LABEL}

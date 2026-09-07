@@ -409,18 +409,18 @@ async def test_payload_headline_and_term_corrections_are_dropped_during_the_meet
     output = _notes(
         [_agenda(human_agenda_id=human_id, lines=[_line(content="payload 가 실려 왔다")])],
         headline="회의 중에는 안 쓴다",
-        term_corrections=[{"from": "캐스티", "to": "Casti"}],
+        term_corrections=[{"stt": "캐스티", "correct": "Casti", "grade": "auto"}],
     )
     output["agendas"][0]["lines"][0]["payload"] = {"title": "만들어 달라는 업무"}
     fake_agent.will_return(output)
     assert await meeting_batch_service.evaluate(detail["id"], TRANSCRIPT) is True
 
     _, lines = await _ai_rows(db_session, detail["id"])
-    # 스키마의 `payload` 는 DB 의 `pending_change` 컬럼 자리다(SPEC-008 이 붙인 이름) — 회의 중에는 NULL 이다
-    assert [(line.content, line.pending_change) for line in lines] == [("payload 가 실려 왔다", None)]
+    # 회의 중에는 `payload` 컬럼이 NULL 이다 — 값이 차는 것은 최종 회의록뿐이다(MF-52)
+    assert [(line.content, line.payload) for line in lines] == [("payload 가 실려 왔다", None)]
     body = await get_detail(client, owner, detail["id"])
     assert body["headline"] is None
-    assert body["agendas"]["ai"][0]["lines"][0]["pendingChange"] is None
+    assert body["agendas"]["ai"][0]["lines"][0]["payload"] is None
 
 
 async def test_task_id_on_a_non_task_line_is_stripped_with_a_reason_log(

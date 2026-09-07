@@ -1,18 +1,17 @@
 /**
- * WORK-008 테스트 시드 — 생성중 · 종료(성공 · 실패) 상세와 트랜스크립트. **테스트 파일이 아니다.**
- * WP Phase 3·4·6 의 「앱 창 확인」 항목을 테스트로 옮기는 데 세 파일이 같은 시드를 쓴다.
+ * 회의 종료 테스트 시드 — 생성중 · 종료(성공 · 실패) 상세와 트랜스크립트. **테스트 파일이 아니다.**
+ * 「앱 창 확인」 항목을 테스트로 옮기는 데 여러 파일이 같은 시드를 쓴다(WORK-008 → WORK-012 로 갱신).
  */
 
 import { meetingDetail } from "@/features/meetings/testUtils";
 import type { MeetingAgenda, MeetingDetail, MeetingLine, TranscriptResponse } from "@/features/meetings/types";
 
 export const STARTED = "2026-08-27T00:30:00Z";
-export const INTEGRATED_AT = "2026-08-27T01:31:00Z";
 
 export function line(partial: Partial<MeetingLine> & Pick<MeetingLine, "id" | "agendaId" | "track" | "kind" | "content">): MeetingLine {
   return {
-    detail: null, evidence: [], orderIndex: partial.id, taskId: null, pendingChange: null,
-    sourceHumanLineId: null, sourceAiLineId: null, task: null, createdAt: "2026-08-27T00:34:00Z", ...partial,
+    detail: null, evidence: [], orderIndex: partial.id, taskId: null, payload: null,
+    task: null, createdAt: "2026-08-27T00:34:00Z", ...partial,
   };
 }
 
@@ -33,26 +32,30 @@ export const HUMAN: MeetingAgenda[] = [
 export const AI: MeetingAgenda[] = [
   { id: 40, track: "ai", title: "개정 대상 섹션 확정", orderIndex: 0, state: null, sourceAgendaId: 301, lines: [
     line({ id: 210, agendaId: 40, track: "ai", kind: "decision", content: "AI: 도입 사례는 3건만", detail: "도입 사례 6건 중 3건이 서로 유사해 …", evidence: [{ fromMs: 574_000, toMs: 576_000 }], createdAt: "2026-08-27T00:41:02Z" }),
-    line({ id: 214, agendaId: 40, track: "ai", kind: "task", content: "제품 소개서 내용 업데이트", taskId: 101, task: TASK_SUMMARY, pendingChange: { dueDate: "2026-09-02", status: "done", note: "검수 일정 변경" }, createdAt: "2026-08-27T00:41:03Z" }),
+    line({ id: 214, agendaId: 40, track: "ai", kind: "task", content: "제품 소개서 내용 업데이트", taskId: 101, task: TASK_SUMMARY, payload: { dueDate: "2026-09-02", status: "done", note: "검수 일정 변경" }, createdAt: "2026-08-27T00:41:03Z" }),
   ] },
   { id: 41, track: "ai", title: "경쟁사 요금제 비교", orderIndex: 5, state: null, sourceAgendaId: null, lines: [
     line({ id: 220, agendaId: 41, track: "ai", kind: "discussion", content: "AI: 경쟁사 요금제를 비교했다", evidence: [{ fromMs: 900_000, toMs: 905_000 }], createdAt: "2026-08-27T00:50:00Z" }),
   ] },
 ];
 
-/** 통합본 — 사람 문장 글자 그대로 + AI 근거 계승 + AI 에만 있던 줄 추가 + AI 신설 안건 뒤에(§4 통합 규칙). */
+/**
+ * **최종 회의록**(`track='merged'`) — ② 가 재전사 스크립트를 다시 읽고 한 벌로 낸 것(MF-56).
+ * 통합 규칙(사람 줄 계승 · `source_*_line_id`)은 없어졌다 — 안건 넷 · 줄 다섯(논의 2 · 결정 1 · 액션 1 · 업무 1)이고
+ * `mergedSummary` 다섯이 **이 트리와 정확히 같은 수**다(MF-25).
+ */
 export const MERGED: MeetingAgenda[] = [
   { id: 71, track: "merged", title: "개정 대상 섹션 확정", orderIndex: 0, state: "done", sourceAgendaId: 301, lines: [
-    line({ id: 300, agendaId: 71, track: "merged", kind: "discussion", content: "제품 개요 · 기능은 유지, 도입 사례 분량이 과다", orderIndex: 0, sourceHumanLineId: 120 }),
-    line({ id: 301, agendaId: 71, track: "merged", kind: "decision", content: "도입 사례는 3건만 유지하고 나머지는 별도 페이지로 분리한다.", orderIndex: 1, detail: "도입 사례 6건 중 3건이 서로 유사해 …", evidence: [{ fromMs: 574_000, toMs: 576_000 }], sourceHumanLineId: 121, sourceAiLineId: 210, createdAt: "2026-08-27T00:36:00Z" }),
-    line({ id: 305, agendaId: 71, track: "merged", kind: "task", content: "제품 소개서 내용 업데이트", orderIndex: 2, taskId: 101, task: TASK_SUMMARY, pendingChange: { dueDate: "2026-09-02", status: "done", note: "검수 일정 변경" }, sourceAiLineId: 214, createdAt: "2026-08-27T00:41:03Z" }),
+    line({ id: 300, agendaId: 71, track: "merged", kind: "discussion", content: "제품 개요 · 기능은 유지, 도입 사례 분량이 과다", orderIndex: 0 }),
+    line({ id: 301, agendaId: 71, track: "merged", kind: "decision", content: "도입 사례는 3건만 유지하고 나머지는 별도 페이지로 분리한다.", orderIndex: 1, detail: "도입 사례 6건 중 3건이 서로 유사해 …", evidence: [{ fromMs: 574_000, toMs: 576_000 }], createdAt: "2026-08-27T00:36:00Z" }),
+    line({ id: 305, agendaId: 71, track: "merged", kind: "task", content: "제품 소개서 내용 업데이트", orderIndex: 2, taskId: 101, task: TASK_SUMMARY, payload: { dueDate: "2026-09-02", status: "done", note: "검수 일정 변경" }, createdAt: "2026-08-27T00:41:03Z" }),
   ] },
   { id: 72, track: "merged", title: "디자인 반영 일정과 검수 방식", orderIndex: 1, state: "done", sourceAgendaId: 302, lines: [
-    line({ id: 310, agendaId: 72, track: "merged", kind: "action", content: "소개서 개정본 검수 일정 잡기", orderIndex: 0, sourceHumanLineId: 122 }),
+    line({ id: 310, agendaId: 72, track: "merged", kind: "action", content: "소개서 개정본 검수 일정 잡기", orderIndex: 0 }),
   ] },
   { id: 73, track: "merged", title: "가격 표기 문구 처리 방향", orderIndex: 2, state: "next", sourceAgendaId: 303, lines: [] },
   { id: 74, track: "merged", title: "경쟁사 요금제 비교", orderIndex: 3, state: null, sourceAgendaId: 41, lines: [
-    line({ id: 320, agendaId: 74, track: "merged", kind: "discussion", content: "AI: 경쟁사 요금제를 비교했다", orderIndex: 0, evidence: [{ fromMs: 900_000, toMs: 905_000 }], sourceAiLineId: 220, createdAt: "2026-08-27T00:50:00Z" }),
+    line({ id: 320, agendaId: 74, track: "merged", kind: "discussion", content: "AI: 경쟁사 요금제를 비교했다", orderIndex: 0, evidence: [{ fromMs: 900_000, toMs: 905_000 }], createdAt: "2026-08-27T00:50:00Z" }),
   ] },
 ];
 
@@ -77,15 +80,17 @@ export function generatingMeeting(overrides: Partial<MeetingDetail> = {}): Meeti
 
 export function endedSucceeded(overrides: Partial<MeetingDetail> = {}): MeetingDetail {
   return meetingDetail({
-    status: "ended", integrationState: "succeeded", recordingStartedAt: STARTED, latestBatchSeq: 3, finalBatchState: "succeeded", activeJobId: null,
-    headline: HEADLINE, mergedSummary: { agendaCount: 4, decisionCount: 1, actionCount: 2, integratedAt: INTEGRATED_AT },
+    status: "ended", integrationState: "succeeded", recordingStartedAt: STARTED, latestBatchSeq: 3, activeJobId: null,
+    headline: HEADLINE,
+    // 다섯은 `MERGED` 트리를 그대로 센 값이다 — 화면에 그리는 그것과 어긋나면 안 된다(MF-25 · F-11)
+    mergedSummary: { agendaCount: 4, discussionCount: 2, decisionCount: 1, actionCount: 1, taskCount: 1 },
     agendas: { human: HUMAN, ai: AI, merged: MERGED }, ...overrides,
   });
 }
 
 export function endedFailed(overrides: Partial<MeetingDetail> = {}): MeetingDetail {
   return meetingDetail({
-    status: "ended", integrationState: "failed", recordingStartedAt: STARTED, latestBatchSeq: 2, finalBatchState: "failed", activeJobId: null,
+    status: "ended", integrationState: "failed", recordingStartedAt: STARTED, latestBatchSeq: 2, activeJobId: null,
     headline: null, mergedSummary: null, agendas: { human: HUMAN, ai: AI, merged: [] }, ...overrides,
   });
 }

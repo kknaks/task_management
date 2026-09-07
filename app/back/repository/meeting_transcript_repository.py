@@ -8,10 +8,12 @@
 
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from collections.abc import Iterable
+
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from dto.meeting import TranscriptItemDTO
+from dto.meeting import TranscriptBlockDTO, TranscriptItemDTO
 from models.meeting import MeetingTranscript
 
 
@@ -91,3 +93,49 @@ async def create_block(
     session.add(row)
     await session.flush()
     return _to_dto(row)
+
+
+# --- 종료 후 재전사 (WORK-012 ①) ------------------------------------------------
+
+
+async def delete_by_meeting(session: AsyncSession, *, meeting_id: int) -> int:
+    """실시간 블록 전량 삭제 — **`bulk_create` 와 같은 트랜잭션**에서만 부른다(M-9-a 전량 교체)."""
+    result = await session.execute(
+        delete(MeetingTranscript).where(MeetingTranscript.meeting_id == meeting_id)
+    )
+    await session.flush()
+    return result.rowcount or 0
+
+
+async def bulk_create(
+    session: AsyncSession, *, meeting_id: int, blocks: Iterable[TranscriptBlockDTO]
+) -> int:
+    """재전사 블록 전량 INSERT. 넣은 행 수를 돌려준다."""
+    rows = [
+        MeetingTranscript(
+            meeting_id=meeting_id,
+            speaker_label=block.speaker_label,
+            at_ms=block.at_ms,
+            end_ms=block.end_ms,
+            content=block.content,
+        )
+        for block in blocks
+    ]
+    session.add_all(rows)
+    await session.flush()
+    return len(rows)
+
+
+async def replace_content(session: AsyncSession, *, meeting_id: int, stt: str, correct: str) -> int:
+    """용어 보정 — `content` **문자열 치환** 하나(M-9-b).
+
+    `speaker_label` 은 건드리지 않는다. 표에 없는 치환은 없다 — 부르는 쪽이 `grade='auto'` 항목만 넘긴다.
+    """
+    result = await session.execute(
+        update(MeetingTranscript)
+        .where(MeetingTranscript.meeting_id == meeting_id, MeetingTranscript.content.contains(stt))
+        .values(content=func.replace(MeetingTranscript.content, stt, correct))
+        .execution_options(synchronize_session="fetch")
+    )
+    await session.flush()
+    return result.rowcount or 0

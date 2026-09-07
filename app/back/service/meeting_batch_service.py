@@ -19,8 +19,9 @@
 
 AI 는 `track='ai'` 에만 INSERT 한다(M-6). 사람 안건·줄은 **읽기 전용 컨텍스트**로 프롬프트에 들어간다(BASE-003 L36·L38).
 
-**WORK-008 이 더한 것 — `run_final()`**: 종료 파이프라인 ①(최종 배치). 범위 = 전체, 결과가 검증을 지나면 AI 트랙 **전량 교체**(M-7).
-실패면 증분 상태 그대로(DEC-003 §7 L139). 두 번째 배치 경로가 아니라 같은 검증 4단 · 같은 스키마 · 같은 `_persist` 다.
+**종료 시 배치는 없다**(MF-56 · WORK-012) — 회의가 끝나면 codex 호출은 ② 최종 회의록 하나뿐이다.
+이 모듈이 종료 파이프라인에 주는 것은 **검증 함수 셋**(`_parse_output` · `_demote_if_needed` · `_persist`)이고,
+`meeting_finalize_service` 가 `fill_final=True` · `track='merged'` 로 그대로 쓴다 — 복제하지 않는다(MF-52).
 """
 
 from __future__ import annotations
@@ -216,26 +217,12 @@ class _BatchInput:
     blocks: list[TranscriptItemDTO]
 
 
-@dataclass(frozen=True)
-class _FinalInput:
-    """**과도기 전용**(WORK-011 §Internal Interface 「과도기 규칙」) — 최종 배치가 아직 옛 컨텍스트로 돈다.
-
-    WORK-012 가 이 경로를 갈아엎으면서 함께 사라진다. 회의 중 배치는 이것을 쓰지 않는다.
-    """
-
-    meeting: MeetingAiContextDTO
-    seq: int
-    blocks: list[TranscriptItemDTO]
-    human_agendas: list[MeetingAgendaDTO]
-    human_lines: list[MeetingLineDTO]
-    tasks: list[TaskContextDTO]
-
-
 @dataclass
 class _OutputLine:
     """스키마를 통과한 줄 하나 — 안건(`_OutputAgenda`) 아래에 산다.
 
-    `payload` 는 **읽고 버린다**(회의 중 항상 `null` — MF-52 · 검증 순서 4행). 담을 자리를 두지 않는다.
+    `payload` 는 회의 중(`fill_final=False`)에는 **읽고 버려** 언제나 `None` 이다(MF-52 · 검증 순서 4행).
+    최종(`fill_final=True`)에서만 값이 실린다 — 그때도 담는 자리는 하나다(두 번째 파서를 만들지 않는다).
     """
 
     kind: str
@@ -243,6 +230,20 @@ class _OutputLine:
     detail: str | None
     evidence: list[dict[str, int]]
     task_id: int | None
+    payload: dict | None = None
+
+
+@dataclass(frozen=True)
+class _OutputNotes:
+    """`_parse_output(fill_final=True)` 의 결과 — 최종 전용 필드까지 담는다.
+
+    회의 중(`False`)은 `agendas` 만 돌려받으므로 이 형태를 쓰지 않는다. **한 함수가 두 모드**이고
+    반환 타입만 갈린다 — 파서를 둘로 두면 스키마가 둘로 갈린다(MF-52).
+    """
+
+    headline: str | None
+    term_corrections: list[dict[str, str]]
+    agendas: list["_OutputAgenda"]
 
 
 @dataclass
@@ -255,6 +256,10 @@ class _OutputAgenda:
     human_agenda_id: int | None
     title: str
     lines: list[_OutputLine]
+
+
+# SPEC-008 §4 「`payload` 자리」 — `action`·`task` 줄에만 뜻이 있다. DB CHECK 와 같은 값이다
+_PAYLOAD_KINDS = frozenset({LineKind.ACTION.value, LineKind.TASK.value})
 
 
 class _SchemaViolation(Exception):
@@ -412,7 +417,7 @@ async def _record(
 ) -> None:
     """실패·폐기 기록 — **커서는 전진하지 않는다**(성공분만 커서다). 사용자에게 표시할 것이 없다.
 
-    `phase='final'` 이면 SPEC-008 「마지막 배치 실패」의 기록이다 — AI 탭 안내 바 「종결 정리 실패」의 원천(`finalBatchState`).
+    `phase='final'` 이면 종료 파이프라인 ② 의 실패한 시도다(SPEC-008 §4) — 재시도 회차가 `seq` 다.
     """
     async with session_scope() as session:
         await meeting_batch_run_repository.create_run(
@@ -427,104 +432,6 @@ async def _record(
         )
 
 
-# --- ① 최종 배치 (SPEC-008 §4 종료 파이프라인 · M-7 · DEC-003 §7 L139) ----------------------------
-
-
-async def run_final(meeting_id: int, *, timeout_sec: int) -> bool:
-    """**AI 트랙 전체 재정리** — 회의 전체 트랜스크립트 + 사람 안건·줄 + 화이트리스트를 **같은 세션**에 보내고, 결과가
-    스키마·화이트리스트 검증을 지나면 `track='ai'` 안건·줄을 **한 트랜잭션에서 DELETE + INSERT** 한다(M-7).
-
-    실패(워커 오류 · 상한 초과 · 스키마 위반)면 **증분 상태 그대로**(§7 L139) — 검증 전에 지우지 않는다(SPEC-008 §5).
-    돌려주는 값 = 성공 여부. `meeting_finalize_service` 만 부른다. 회의당 락을 **기다려** 잡는다 — 진행 중인 증분 배치가
-    끝난 뒤에 돈다(동시 실행 0 · M-12). 입력·출력 스키마는 증분과 같고 범위만 전체다(SPEC-008 §4 표 ①).
-    """
-    _assert_single_session()
-    async with _lock_for(meeting_id):
-        _disarm_timer(meeting_id)
-        return await _run_final_once(meeting_id, timeout_sec=timeout_sec)
-
-
-async def _run_final_once(meeting_id: int, *, timeout_sec: int) -> bool:
-    async with session_scope() as session:
-        batch_input = await _load_final_input(session, meeting_id)
-        meeting_token = await auth_service.get_meeting_token(session, meeting_id=meeting_id)
-    if batch_input.meeting.ai_session_id is None:
-        raise RuntimeError(f"회의 {meeting_id} 에 AI 세션이 없습니다")
-    if meeting_token is None:
-        raise RuntimeError(f"회의 {meeting_id} 에 회의 토큰이 없습니다")
-
-    first_id = batch_input.blocks[0].id if batch_input.blocks else None
-    last_id = batch_input.blocks[-1].id if batch_input.blocks else None
-    phase = BatchPhase.FINAL.value
-
-    try:
-        result = await agent_integration.get_gateway().run(
-            prompt=build_final_prompt(batch_input),
-            session_id=batch_input.meeting.ai_session_id,
-            output_schema=OUTPUT_SCHEMA,
-            timeout_sec=timeout_sec,
-            meeting_token=meeting_token,
-        )
-    except (AgentRunFailed, AgentRunTimeout) as exc:
-        await _record(meeting_id, seq=batch_input.seq, status=BatchRunStatus.FAILED.value,
-                      first_id=first_id, last_id=last_id, reason=str(exc), phase=phase)
-        return False
-
-    try:
-        agendas = _parse_output(
-            result.output,
-            human_agenda_ids={agenda.id for agenda in batch_input.human_agendas},
-            last_end_ms=max((block.end_ms for block in batch_input.blocks), default=0),
-        )
-    except _SchemaViolation as exc:
-        await _record(meeting_id, seq=batch_input.seq, status=BatchRunStatus.DISCARDED.value,
-                      first_id=first_id, last_id=last_id, reason=str(exc), phase=phase)
-        return False
-
-    allowed_task_ids = {task.id for task in batch_input.tasks}
-    for agenda in agendas:
-        agenda.lines = [
-            _demote_if_needed(line, allowed_task_ids, meeting_id=meeting_id)
-            for line in agenda.lines
-        ]
-
-    # 검증을 통과한 결과로만 전량 교체 — DELETE 는 `_persist` 안에 있다(한 자리 · M-7). 한 트랜잭션
-    async with session_scope() as session:
-        await _persist(session, meeting_id=meeting_id, agendas=agendas)
-        await meeting_batch_run_repository.create_run(
-            session,
-            meeting_id=meeting_id,
-            seq=batch_input.seq,
-            phase=phase,
-            status=BatchRunStatus.SUCCEEDED.value,
-            from_transcript_id=first_id,
-            to_transcript_id=last_id,
-        )
-    return True
-
-
-async def _load_final_input(session: AsyncSession, meeting_id: int) -> _FinalInput:
-    """범위 = **전체**. **과도기다**(WORK-011 §Internal Interface) — 회의 중 배치가 도구로 조회하는 것을
-    최종 배치는 아직 입력에 싣는다. 컨텍스트를 걷어내는 것은 WORK-012 몫이라 여기서는 값을 모아 오기만 한다."""
-    meeting = await meeting_repository.find_ai_context(session, meeting_id=meeting_id)
-    if meeting is None:
-        raise RuntimeError(f"회의 {meeting_id} 가 없습니다")
-    return _FinalInput(
-        meeting=meeting,
-        seq=await meeting_batch_run_repository.next_seq(session, meeting_id),
-        blocks=await meeting_transcript_repository.list_after(session, meeting_id, after_id=None),
-        human_agendas=await meeting_child_repository.list_agendas_by_track(
-            session, meeting_id, track=MeetingTrack.HUMAN.value
-        ),
-        human_lines=await meeting_line_repository.list_human_lines_since(
-            session, meeting_id, since=None
-        ),
-        tasks=await task_repository.list_meeting_context(
-            session, account_id=meeting.account_id, project_id=meeting.project_id
-        ),
-    )
-
-
 # --- 검증 2단 · 3단 -------------------------------------------------------------
 
 
@@ -534,7 +441,7 @@ def _parse_output(
     human_agenda_ids: set[int],
     last_end_ms: int,
     fill_final: bool = False,
-) -> list[_OutputAgenda]:
+) -> list[_OutputAgenda] | _OutputNotes:
     """검증 2단 — 구조 · 타입 · enum · 길이(스키마 파일) + evidence 구간 · `humanAgendaId` 소속(코드).
 
     **부분 파싱이 없다** — 어느 항목 하나라도 어긋나면 전체가 `_SchemaViolation` 이고 행이 하나도 안 들어간다(M-16).
@@ -542,8 +449,9 @@ def _parse_output(
     `humanAgendaId` 는 **이 회의의 사람 안건**이어야 한다. AI 안건 id 를 넣으면 위반이다 —
     AI 안건은 배치마다 새로 생기므로(MF-53) 참조할 대상이 아니다.
 
-    `fill_final=False`(회의 중)면 `payload` · `headline` · `termCorrections` 를 **읽고 버린다**
-    — 폐기 사유가 아니다(MF-52 · 검증 순서 4행). `True` 는 최종 회의록(WORK-012)이 켠다.
+    **한 함수가 두 모드**다(파서를 둘로 두지 않는다 — MF-52) —
+    `fill_final=False`(회의 중)는 `payload`·`headline`·`termCorrections` 를 **읽고 버리고** `list[_OutputAgenda]` 를,
+    `True`(최종 회의록 · WORK-012)는 셋을 채워 `_OutputNotes` 를 돌려준다. 버리는 것은 폐기 사유가 아니다(검증 순서 4행).
     """
     try:
         data = json.loads(output)
@@ -553,10 +461,6 @@ def _parse_output(
     error = jsonschema.exceptions.best_match(_validator.iter_errors(data))
     if error is not None:
         raise _SchemaViolation(f"스키마 위반: {error.message}")
-
-    if fill_final:
-        # WORK-012 가 채운다 — 지금은 스위치만 있고 받아 갈 자리가 없다
-        raise NotImplementedError("fill_final 은 WORK-012 가 켠다")
 
     agendas: list[_OutputAgenda] = []
     for index, agenda in enumerate(data["agendas"]):
@@ -581,7 +485,8 @@ def _parse_output(
                         {"fromMs": e["fromMs"], "toMs": e["toMs"]} for e in line["evidence"]
                     ],
                     task_id=line["taskId"],
-                    # `payload` 는 여기서 버린다 — 회의 중 항상 `null` 이다(MF-52)
+                    # 회의 중이면 여기서 버린다 — `payload` 는 최종에서만 값이 있다(MF-52)
+                    payload=_final_payload(line) if fill_final else None,
                 )
             )
         agendas.append(
@@ -589,7 +494,21 @@ def _parse_output(
                 human_agenda_id=human_agenda_id, title=agenda["title"], lines=lines
             )
         )
-    return agendas
+    if not fill_final:
+        return agendas
+    return _OutputNotes(
+        headline=data["headline"],
+        term_corrections=[dict(row) for row in (data["termCorrections"] or [])],
+        agendas=agendas,
+    )
+
+
+def _final_payload(line: dict) -> dict | None:
+    """**`payload` 자리**(SPEC-008 §4) — `kind ∈ {action, task}` 줄에만. 그 밖에 실려 오면 **버린다**(폐기 사유 아님)."""
+    payload = line["payload"]
+    if payload is None or line["kind"] not in _PAYLOAD_KINDS:
+        return None
+    return dict(payload)
 
 
 def _demote_if_needed(
@@ -600,6 +519,8 @@ def _demote_if_needed(
     `allowed_task_ids` 는 **입력에 실려 온 화이트리스트가 아니라 검사 시점에 조회한 집합**이다(MF-50 · M-15) —
     배치를 제출한 뒤 만들어진 업무를 AI 가 도구로 보고 가리켰다면 그것은 올바른 참조다.
     본문 · 상세 · 근거는 그대로 산다.
+
+    강등되면 `taskId` 와 `payload` 를 **함께** 뗀다(SPEC-008 §4) — 없는 업무의 변경안은 뜻이 없다.
 
     `task` 가 아닌 줄의 `taskId` 는 뜻이 없어 뗀다(강등 아님) — 단 **조용히 지나가지 않는다**:
     SPEC-007 §4 「`taskId` — `kind=task` 일 때만」을 어긴 출력이라 사유를 로그로 남긴다.
@@ -617,6 +538,8 @@ def _demote_if_needed(
     if line.task_id is None or line.task_id not in allowed_task_ids:
         line.kind = LineKind.ACTION.value
         line.task_id = None
+        # SPEC-008 §4 「업무 참조」 — `taskId` 와 **`payload` 를 함께** 뗀다. 가리키는 업무가 없어진 변경안이라 뜻이 없다
+        line.payload = None
     return line
 
 
@@ -624,49 +547,52 @@ def _demote_if_needed(
 
 
 async def _persist(
-    session: AsyncSession, *, meeting_id: int, agendas: list[_OutputAgenda]
+    session: AsyncSession,
+    *,
+    meeting_id: int,
+    agendas: list[_OutputAgenda],
+    track: str = MeetingTrack.AI.value,
+    copy_human_state: bool = False,
 ) -> list[MeetingAgendaDTO]:
-    """**AI 트랙 전량 교체**(MF-53 · M-7) — DELETE(줄 → 안건 · FK 순) 뒤 출력대로 INSERT.
+    """**한 트랙 전량 교체**(MF-53 · M-7) — DELETE(줄 → 안건 · FK 순) 뒤 출력대로 INSERT.
+
+    회의 중 배치는 `track='ai'`, 종료 후 ② 최종 회의록은 `track='merged'` 로 **같은 함수**를 쓴다(WORK-012).
+    `copy_human_state=True` 면 미러 안건이 사람 안건의 `state` 를 복사한다 — `merged` 만 그렇게 한다
+    (AI 안건에는 상태 축이 없다 · SPEC-008 §4 「미러 안건의 `state`」).
 
     **검증이 끝난 뒤에만 부른다.** 검증 전에 지우면 실패했을 때 직전 성공분이 사라진다(M-7) —
     그래서 `delete_by_track` · `delete_agendas_by_track` 을 부르는 곳은 **이 함수 하나**다(정적 검사).
 
     `human_agenda_id` 가 있으면 `source_agenda_id` 를 그 id 로 두고 **제목은 사람 안건 것을 복사**한다(M-5-b).
-    없으면 `source_agenda_id=NULL` 인 AI 신설이다. `state` 는 언제나 `NULL`(AI 안건에는 상태 축이 없다).
+    없으면 `source_agenda_id=NULL` 인 신설이다.
 
-    돌려주는 것은 **줄이 중첩된 트리**다 — 상세 응답 `agendas.ai` 와 같은 직렬화 함수를 지난다.
+    돌려주는 것은 **줄이 중첩된 트리**다 — 상세 응답의 같은 트랙과 같은 직렬화 함수를 지난다.
     """
     # 순환 import 를 피한다 — `meeting_service` 가 이 모듈을 import 한다.
     # 트리 모양이 둘로 갈리지 않게 **같은 함수**를 쓰는 것이 요점이다(SPEC-007 §4 `ai.batch`)
     from service import meeting_service
 
-    await meeting_line_repository.delete_by_track(
-        session, meeting_id=meeting_id, track=MeetingTrack.AI.value
-    )
+    await meeting_line_repository.delete_by_track(session, meeting_id=meeting_id, track=track)
     await meeting_child_repository.delete_agendas_by_track(
-        session, meeting_id=meeting_id, track=MeetingTrack.AI.value
+        session, meeting_id=meeting_id, track=track
     )
 
-    human_titles = {
-        agenda.id: agenda.title
+    human = {
+        agenda.id: agenda
         for agenda in await meeting_child_repository.list_agendas_by_track(
             session, meeting_id, track=MeetingTrack.HUMAN.value
         )
     }
 
     for order_index, agenda in enumerate(agendas):
-        title = (
-            human_titles.get(agenda.human_agenda_id, agenda.title)
-            if agenda.human_agenda_id is not None
-            else agenda.title
-        )
+        source = human.get(agenda.human_agenda_id) if agenda.human_agenda_id is not None else None
         created = await meeting_child_repository.create_agenda(
             session,
             meeting_id=meeting_id,
-            track=MeetingTrack.AI.value,
-            title=title,
+            track=track,
+            title=agenda.title if source is None else source.title,
             order_index=order_index,
-            state=None,
+            state=source.state if (copy_human_state and source is not None) else None,
             source_agenda_id=agenda.human_agenda_id,
         )
         for line_order, line in enumerate(agenda.lines):
@@ -674,22 +600,19 @@ async def _persist(
                 session,
                 meeting_id=meeting_id,
                 agenda_id=created.id,
-                track=MeetingTrack.AI.value,
+                track=track,
                 kind=line.kind,
                 content=line.content,
                 order_index=line_order,
                 detail=line.detail,
                 evidence=line.evidence,
                 task_id=line.task_id,
+                payload=line.payload,
             )
 
-    rows = await meeting_child_repository.list_agendas_by_track(
-        session, meeting_id, track=MeetingTrack.AI.value
-    )
-    lines = await meeting_line_repository.list_by_track(
-        session, meeting_id, track=MeetingTrack.AI.value
-    )
-    return meeting_service.build_tracks(rows, lines).ai
+    rows = await meeting_child_repository.list_agendas_by_track(session, meeting_id, track=track)
+    lines = await meeting_line_repository.list_by_track(session, meeting_id, track=track)
+    return getattr(meeting_service.build_tracks(rows, lines), track)
 
 
 # --- 웜스타트 (`/start` 의 **커밋 뒤 백그라운드** — MF-1 · SPEC-007 §4 「웜스타트」 표) ------------
@@ -771,20 +694,17 @@ async def wait_for_tasks() -> None:
 # --- 프롬프트 -----------------------------------------------------------------
 
 
-def _agenda_rows(agendas: list[MeetingAgendaDTO], *, with_source: bool = False) -> list[dict[str, object]]:
-    rows: list[dict[str, object]] = []
-    for agenda in agendas:
-        row: dict[str, object] = {"id": agenda.id, "title": agenda.title, "orderIndex": agenda.order_index}
-        if with_source:
-            row["sourceAgendaId"] = agenda.source_agenda_id
-        else:
-            row["state"] = agenda.state
-        rows.append(row)
-    return rows
-
-
 def _dumps(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2)
+
+
+# 종료 파이프라인(`meeting_finalize_service`)이 **같은 함수**를 쓰는 공개 이름 —
+# 검증·적재를 복제하지 않는다는 계약이 이 세 줄이다(MF-52 · SPEC-008 §5).
+parse_output = _parse_output
+demote_if_needed = _demote_if_needed
+persist = _persist
+dumps = _dumps
+SchemaViolation = _SchemaViolation
 
 
 # 웜스타트 프롬프트 — **여섯 절 고정 상수**(WORK-010 §Internal Interface · 초안 `ai-prompt-draft.md` §A).
@@ -885,45 +805,6 @@ def build_warm_start_prompt() -> str:
     return _WARM_START_PROMPT
 
 
-def build_final_prompt(batch_input: _FinalInput) -> str:
-    """① 최종 배치 — 회의 전체를 다시 정리한다. 출력 스키마는 증분과 같다(SPEC-008 §4 표 ①).
-
-    **과도기다** — 본문은 옛것 그대로이고 WORK-012 가 갈아엎는다. `_BatchInput` 이 발화만 남으면서
-    이 함수가 쓰던 값들은 `_FinalInput` 으로 옮겼다(WORK-011 §Internal Interface 「과도기 규칙」).
-    """
-    payload = {
-        "transcript": [
-            {
-                "id": block.id,
-                "speakerLabel": block.speaker_label,
-                "atMs": block.at_ms,
-                "endMs": block.end_ms,
-                "content": block.content,
-            }
-            for block in batch_input.blocks
-        ],
-        "humanAgendas": _agenda_rows(batch_input.human_agendas),
-        "humanLines": [
-            {"agendaId": line.agenda_id, "kind": line.kind, "content": line.content}
-            for line in batch_input.human_lines
-        ],
-        "taskWhitelist": sorted(task.id for task in batch_input.tasks),
-    }
-    return (
-        "회의가 끝났다. **마지막 배치**다 — 아래 회의 전체 확정 발화(transcript)를 처음부터 다시 읽고 AI 요약 트랙을 "
-        "**전체 재정리**한 결과를 낸다. 이전 배치에서 낸 AI 줄은 전부 버려지고 이 출력이 AI 요약 탭 전체가 된다.\n"
-        "사람 안건(humanAgendas)과 사람 줄(humanLines)은 읽기 전용 컨텍스트다 — 고치지도 제안하지도 마라. "
-        "안건은 맞는 사람 안건이 있으면 `humanAgendaId` 에 그 id 를, 어디에도 맞지 않으면 `humanAgendaId` 를 비우고 "
-        "제목을 직접 짓는다. 줄은 그 안건의 `lines` 안에 넣는다.\n"
-        "`evidence` 는 근거가 된 발화의 [atMs, endMs] 구간이다(최대 3개). `taskId` 는 kind 가 task 일 때만, "
-        "taskWhitelist 안의 id 만 쓴다. 출력은 지정된 JSON 스키마 그대로다.\n\n"
-        f"입력:\n{_dumps(payload)}"
-    )
-
-
-# 배치 프롬프트의 고정 부분 — **조회 순서**(초안 `ai-prompt-draft.md` §B)와 요청 문장.
-# 역할 · 용어 다섯 · 도구 목록 · 금지는 **웜스타트가 이미 심었다**(WORK-010) — 여기서 반복하지 않는다.
-# 요청 문장은 계약을 따른다(MF-53 · SPEC-007 §4 「배치 입력」) — 초안 §B 의 「새로 드러난 것만」이 아니다.
 _BATCH_INSTRUCTIONS = """회의 중 배치다. 아래는 아직 반영하지 않은 확정 발화다.
 
 **이번 구간을 반영해 AI 트랙 전체를 다시 정리해라.**

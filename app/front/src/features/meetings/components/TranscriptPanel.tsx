@@ -10,7 +10,8 @@
  * - `ref.scrollToRange(fromMs, toMs)`: `[fromMs, toMs]` 와 **겹치는 블록 전부** `#F4F5FF` + 「근거 구간」, 첫 블록으로 스크롤.
  *   대상이 없으면 `false`(스크롤·하이라이트 변경 없음). `Esc` 또는 다음 호출로 해제
  * - 푸터 44: 「받아쓰기 중 · 확정된 발화는 바로 저장됩니다」 / 일시정지 「일시정지 중 · 받아쓰기가 멈춰 있습니다」.
- *   종료 후(SPEC-008 U-3)는 호출자가 `footer` 로 「전체 스크립트 n분 · 화자 n명」을 끼운다 — 잠정 발화 · 자동 따라가기가 없다
+ *   종료 후(SPEC-008 U-3)는 호출자가 `footer` 로 「전체 스크립트 n분 · 화자 n명」을 끼우고 `follow={false}` 를 준다 —
+ *   잠정 발화 · 자동 따라가기가 없다
  *
  * 회의 중 화면 · WORK-008 상세의 근거 칩이 **같은 패널**을 쓴다. 회의 상태·라우트를 import 하지 않는다.
  */
@@ -59,12 +60,17 @@ export const TranscriptPanel = forwardRef<
     paused: boolean;
     /** 종료 후 푸터(SPEC-008 U-3 「전체 스크립트 n분 · 화자 n명」). 있으면 받아쓰기 푸터 대신 이것을 그린다. */
     footer?: ReactNode;
+    /**
+     * 새 블록이 오면 바닥에 붙어 따라 내려간다(회의 중 — U-5 *스크롤*).
+     * **종료 후에는 `false`**(SPEC-008 U-3 「자동 따라가기 없음」) — 스크립트가 더 늘지 않고, 열자마자 끝으로 튀지 않는다.
+     */
+    follow?: boolean;
     className?: string;
   }
->(function TranscriptPanel({ items, partial, recordingStartedAt, paused, footer, className }, ref) {
+>(function TranscriptPanel({ items, partial, recordingStartedAt, paused, footer, follow = true, className }, ref) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const blockRefs = useRef(new Map<number, HTMLDivElement>());
-  const followRef = useRef(true);
+  const followRef = useRef(follow);
   const [highlight, setHighlight] = useState<Range | null>(null);
 
   const onScroll = useCallback(() => {
@@ -75,13 +81,13 @@ export const TranscriptPanel = forwardRef<
     followRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_SLACK_PX;
   }, []);
 
-  // 새 블록·잠정이 오면 붙어 있을 때만 따라 내려간다(U-5 *스크롤*).
+  // 새 블록·잠정이 오면 붙어 있을 때만 따라 내려간다(U-5 *스크롤*). 종료 후(`follow=false`)에는 아예 따라가지 않는다.
   useEffect(() => {
     const el = scrollerRef.current;
-    if (el && followRef.current) {
+    if (follow && el && followRef.current) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [items.length, partial]);
+  }, [follow, items.length, partial]);
 
   // `Esc` 로 하이라이트 해제(U-6).
   useEffect(() => {
@@ -126,7 +132,13 @@ export const TranscriptPanel = forwardRef<
 
   return (
     <div className={cn("flex min-h-0 flex-1 flex-col", className)}>
-      <div ref={scrollerRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto p-[18px]" aria-live="polite">
+      <div
+        ref={scrollerRef}
+        data-transcript-scroller
+        onScroll={onScroll}
+        className="min-h-0 flex-1 overflow-y-auto p-[18px]"
+        aria-live="polite"
+      >
         {items.length === 0 && !partial ? (
           <p className="my-auto py-10 text-center text-meta text-fg-faint">아직 발화가 없습니다</p>
         ) : (

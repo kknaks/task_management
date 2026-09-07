@@ -4,11 +4,13 @@
  * **종료 파이프라인의 화면 쪽 — 요청 둘 + 폴링 하나**(SPEC-008 U-1 · U-2 · §4 수치 · FE §8 「종료」).
  *
  * - `end()` — `POST …/end` → `202 { jobId }` → **그 자리에서** 상세 캐시를 `generating` 으로 바꾼다(페이지 이동 없음). WS 는 서버가 닫는다
- * - `integrate()` — `POST …/integrate`(「다시 생성」) → 같은 방식으로 ② 단계로 돌아간다
- * - 폴링 — `GET /api/jobs/{id}` **2초 간격 · 480회 상한**. `succeeded`/`failed` 에서 멈추고 `['meetings','detail',id]` + `['meetings','list',…]` 를
- *   무효화한다(무효화 표 「회의 job 완료」 — job 은 결과를 담지 않으므로 상세를 다시 읽는다)
+ * - `retry()` — `POST …/finalize`(「다시 시도」) → 같은 방식으로 **①(재전사)부터** 다시 돈다(MF-58 — 부분 재시도가 없다)
+ * - 폴링 — `GET /api/jobs/{id}` **2초 간격 · 1230회 상한**. `succeeded`/`failed` 에서 멈추고 `['meetings','detail',id]` +
+ *   `['meetings','list',…]` + **트랜스크립트**를 무효화한다(재전사가 블록을 갈아끼운다 — M-9-a. job 은 결과를 담지 않는다)
  * - 폴링 실패(5xx · 네트워크) · 상한 초과 → **멈추고** 「다시 확인」 상태만 남긴다. **자동 재시도 없음**(`retry:false` · DEC-001 §7).
- *   「다시 확인」이 한 번 더 읽고, 살아 있으면 폴링이 다시 붙는다. 서버가 job 을 900초에 `failed` 로 마감하므로 무한 스피너가 없다
+ *   「다시 확인」이 한 번 더 읽고, 살아 있으면 폴링이 다시 붙는다. 서버가 job 을 2400초에 `failed` 로 마감하므로 무한 스피너가 없다
+ * - `errorCode` — **마지막으로 종결된 job** 의 사유(실패 배너의 툴팁 · U-2). job 이 끝나면 `activeJobId` 가 `null` 이 되어
+ *   더 읽을 수 없으므로 이 훅이 들고 있는다. 새로고침으로 들어오면 볼 job 이 없어 `null` 이고 배너는 사유 없이 뜬다
  * - 페이지 재진입은 **`MeetingDetail.activeJobId`** 로 잇는다 — 이 훅은 그 값을 볼 뿐 job id 를 따로 기억하지 않는다
  *
  * 타이머는 TanStack Query 의 `refetchInterval` 하나다 — `setInterval`·`setTimeout` 을 이 파일이 만들지 않는다.
@@ -18,13 +20,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { endMeeting, fetchJob, integrateMeeting } from "@/features/meetings/api";
-import type { JobItem, MeetingDetail } from "@/features/meetings/types";
+import { endMeeting, fetchJob, finalizeMeeting } from "@/features/meetings/api";
+import type { JobErrorCode, JobItem, MeetingDetail } from "@/features/meetings/types";
 import { queryKeys } from "@/lib/api/queryKeys";
 
-/** SPEC-008 §4 수치 — 폴링 간격 2초 · 상한 480회(≈16분 = job 상한 900초 + 60초). */
+/** SPEC-008 §4 수치 — 폴링 간격 **2초** · 상한 **1230회**(≈41분 = job 상한 2400초 + 60초). */
 export const JOB_POLL_INTERVAL_MS = 2000;
-export const JOB_POLL_MAX_COUNT = 480;
+export const JOB_POLL_MAX_COUNT = 1230;
 
 function isTerminal(job: JobItem | undefined): boolean {
   return job?.status === "succeeded" || job?.status === "failed";
@@ -37,6 +39,8 @@ export function useMeetingFinalizeJob(meeting: MeetingDetail) {
 
   const [startedAtMs, setStartedAtMs] = useState<number | null>(null);
   const [exhausted, setExhausted] = useState(false);
+  /** 마지막으로 종결된 job 의 실패 사유 — 배너 툴팁(U-2). 종결 뒤 `activeJobId` 가 사라져 다시 읽을 수 없다. */
+  const [errorCode, setErrorCode] = useState<JobErrorCode | null>(null);
   const countRef = useRef(0);
   const settledRef = useRef<number | null>(null);
 
@@ -84,24 +88,30 @@ export function useMeetingFinalizeJob(meeting: MeetingDetail) {
     }
   }, [jobId, startedAtMs]);
 
-  /** 종결 — **상세 GET 한 번**(+ 목록). job 하나당 한 번만 무효화한다. */
+  /**
+   * 종결 — **상세 GET 한 번**(+ 목록 + 트랜스크립트). job 하나당 한 번만 무효화한다.
+   * 트랜스크립트까지 읽는 것은 ①(재전사)이 블록을 통째로 갈아끼우기 때문이다(M-9-a).
+   */
   useEffect(() => {
     const data = job.data;
     if (!data || !isTerminal(data) || settledRef.current === data.id) {
       return;
     }
     settledRef.current = data.id;
+    setErrorCode(data.errorCode);
     void Promise.all([
       client.invalidateQueries({ queryKey: detailKey }),
       client.invalidateQueries({ queryKey: queryKeys.meetingsListAll() }),
+      client.invalidateQueries({ queryKey: queryKeys.meetingTranscript(meeting.id) }),
     ]);
-  }, [client, detailKey, job.data]);
+  }, [client, detailKey, job.data, meeting.id]);
 
   /** `202` 를 받으면 캐시를 그 자리에서 바꾼다 — 스위치가 `generating` 화면으로 바뀐다(U-1 진입). */
   const enterGenerating = useCallback(
     (nextJobId: number) => {
       countRef.current = 0;
       setExhausted(false);
+      setErrorCode(null);
       setStartedAtMs(Date.now());
       client.setQueryData<MeetingDetail>(detailKey, (snapshot) =>
         snapshot
@@ -117,8 +127,9 @@ export function useMeetingFinalizeJob(meeting: MeetingDetail) {
     onSuccess: (accepted) => enterGenerating(accepted.jobId),
   });
 
-  const integrate = useMutation({
-    mutationFn: () => integrateMeeting(meeting.id),
+  /** 「다시 시도」 — `POST …/finalize`. ①부터 다시 도므로 문구가 `transcription` 으로 돌아간다(U-2). */
+  const retry = useMutation({
+    mutationFn: () => finalizeMeeting(meeting.id),
     onSuccess: (accepted) => enterGenerating(accepted.jobId),
   });
 
@@ -135,13 +146,15 @@ export function useMeetingFinalizeJob(meeting: MeetingDetail) {
     job: job.data ?? null,
     phase: job.data?.progress?.phase ?? null,
     attempt: job.data?.progress?.attempt ?? 0,
+    /** 마지막으로 종결된 job 의 실패 사유(U-2 툴팁). 못 본 job 이면 `null`. */
+    errorCode,
     /** 조회 실패 또는 상한 — 스피너는 그대로, 「다시 확인」만 남긴다(U-1). */
     pollFailed: job.isError || exhausted,
     startedAtMs,
     recheck,
     end: () => end.mutateAsync(),
-    integrate: () => integrate.mutateAsync(),
+    retry: () => retry.mutateAsync(),
     ending: end.isPending,
-    integrating: integrate.isPending,
+    retrying: retry.isPending,
   };
 }

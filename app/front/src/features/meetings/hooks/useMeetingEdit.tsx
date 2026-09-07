@@ -125,7 +125,7 @@ export function useMeetingEdit(meeting: MeetingDetail) {
   const updateKind = useMutation({
     mutationFn: ({ lineId, kind }: { lineId: number; kind: LineKind; leavingTask: boolean }) => updateLine(meeting.id, lineId, { kind }),
     /**
-     * 종류 전환 — 낙관적. 단 **`task` 에서 벗어나는 전환은 아니다**(§5) — `taskId`·`pendingChange` 가 풀리는 것을
+     * 종류 전환 — 낙관적. 단 **`task` 에서 벗어나는 전환은 아니다**(§5) — `taskId`·`payload` 가 풀리는 것을
      * 서버 응답으로 확인한다. 배지·버튼이 사라지는 것도 응답 뒤다.
      */
     onMutate: ({ lineId, kind, leavingTask }) =>

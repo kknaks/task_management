@@ -4,7 +4,7 @@
 
 **SPEC-007(WORK-007) 이 더한 표면** — `POST …/lines`(201 `LineItem`) · `PATCH …/agendas/{id}` 의 `state` ·
 `GET …/transcript`. `WS …/stream` 만 WS 전용 `meeting_stream_router` 다.
-**SPEC-008(WORK-008) 이 더한 표면** — `POST …/end`·`POST …/integrate`(202 + jobId) · `PATCH`·`DELETE …/lines/{id}` ·
+**SPEC-008(WORK-008) 이 더한 표면** — `POST …/end`·`POST …/finalize`(202 + jobId) · `PATCH`·`DELETE …/lines/{id}` ·
 `POST …/lines` 의 `ended` 확장 갈래 · `PATCH …/agendas/{id} {title}` 의 `ended` 갈래. 줄·안건 쓰기는 **`meeting_edit_service`** 가 앞문이고
 (트랙 규칙 · 상태 잠금 한 곳) 회의 중·시작 전 갈래는 거기서 `meeting_service` 로 넘긴다 — 라우터는 상태를 보지 않는다.
 `.../lines/{id}/task` 둘(업무 생성 · 업무 갱신)은 **`meeting_task_link_service`** — 줄과 업무를 한 트랜잭션으로 묶는 입구이고 판정은 `task_service` 다.
@@ -254,19 +254,19 @@ async def end_meeting(
 
 
 @router.post(
-    "/{meeting_id}/integrate",
+    "/{meeting_id}/finalize",
     response_model=JobAccepted,
     response_model_by_alias=True,
     status_code=status.HTTP_202_ACCEPTED,
 )
-async def integrate_meeting(
+async def finalize_meeting(
     meeting_id: int,
     account_id: int = Depends(require_account),
     session: AsyncSession = Depends(get_db),
 ) -> JobAccepted:
-    """「다시 생성」 — `ended`+`failed` 에서만(표 밖은 409). 통합(②)만 다시 돈다 · 한 줄 요약도 같은 응답에서 온다."""
+    """「다시 시도」 — `ended`+`failed` 에서만(표 밖은 409). **①부터** 다시 돈다(MF-58) — 「② 만」이 없다."""
     return JobAccepted(
-        job_id=await meeting_finalize_service.integrate(
+        job_id=await meeting_finalize_service.finalize(
             session, account_id=account_id, meeting_id=meeting_id
         )
     )
@@ -437,9 +437,9 @@ async def apply_line_task_change(
     account_id: int = Depends(require_account),
     session: AsyncSession = Depends(get_db),
 ) -> MeetingDetail:
-    """업무 줄 → 「업무 갱신」(U-6). **본문 없음** — 줄의 `pendingChange` 가 요청이다. 거부되면 전부 롤백 · `pendingChange` 유지."""
+    """업무 줄 → 「업무 갱신」(U-6). **본문 없음** — 줄의 `payload` 가 요청이다. 거부되면 전부 롤백 · `payload` 유지."""
     return MeetingDetail.from_dto(
-        await meeting_task_link_service.apply_pending_change(
+        await meeting_task_link_service.apply_payload(
             session, account_id=account_id, meeting_id=meeting_id, line_id=line_id
         )
     )

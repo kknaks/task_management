@@ -184,15 +184,20 @@ async def begin_generating(session: AsyncSession, *, meeting_id: int) -> None:
 
 
 async def finish_integration(
-    session: AsyncSession, *, meeting_id: int, succeeded: bool, headline: str | None
+    session: AsyncSession,
+    *,
+    meeting_id: int,
+    succeeded: bool,
+    headline: str | None,
+    term_corrections: list | None = None,
 ) -> None:
     """종료 파이프라인 ② 의 종결 — `status='ended'` + `integration_state` + **`ai_headline`** 한 UPDATE(M-19 ①·②).
 
-    성공이면 `headline` 이 함께 들어가고, 실패면 **`NULL`** 로 둔다(부분 저장 없음). `ai_headline` 을 쓰는 SQL 은 이것 하나고
-    부르는 곳은 `meeting_finalize_service` 하나다(WP Phase 1 정적 검사).
+    성공이면 `headline` · `term_corrections`(M-9-b) 가 함께 들어가고, 실패면 **둘 다 `NULL`** 이다(부분 저장 없음).
+    `ai_headline` 을 쓰는 SQL 은 이것 하나고 부르는 곳은 `meeting_finalize_service` 하나다(정적 검사).
     """
-    if not succeeded and headline is not None:
-        raise ValueError("실패 종결에 headline 을 실을 수 없다(M-19 ②)")
+    if not succeeded and (headline is not None or term_corrections is not None):
+        raise ValueError("실패 종결에 headline·term_corrections 를 실을 수 없다(M-19 ②)")
     await session.execute(
         update(Meeting)
         .where(Meeting.id == meeting_id, Meeting.deleted_at.is_(None))
@@ -202,6 +207,7 @@ async def finish_integration(
                 IntegrationState.SUCCEEDED.value if succeeded else IntegrationState.FAILED.value
             ),
             ai_headline=headline,
+            term_corrections=term_corrections,
         )
         .execution_options(synchronize_session="fetch")
     )
@@ -229,10 +235,13 @@ async def find_ai_context(
     return MeetingAiContextDTO(
         id=meeting.id,
         account_id=meeting.account_id,
+        title=meeting.title,
         project_id=meeting.project_id,
         project_name=row.project_name,
         status=meeting.status,
+        start_at=meeting.start_at,
         recording_started_at=meeting.recording_started_at,
+        recording_path=meeting.recording_path,
         ai_session_id=meeting.ai_session_id,
     )
 
@@ -438,3 +447,28 @@ async def count_by_project(
         )
         for row in rows
     ]
+
+
+async def find_previous_headline(
+    session: AsyncSession, *, account_id: int, project_id: int | None, before: datetime
+) -> str | None:
+    """① 재전사 `context.text` — **직전 회의 요약**(SPEC-008 §4 「② 의 `context`」).
+
+    같은 프로젝트(무소속이면 무소속)에서 `start_at` 이 앞선 가장 최근 `ended`+`succeeded` 회의의 `ai_headline`.
+    없으면 `None` — 부르는 쪽이 **키를 싣지 않는다**.
+    """
+    query = (
+        select(Meeting.ai_headline)
+        .where(
+            Meeting.account_id == account_id,
+            Meeting.deleted_at.is_(None),
+            Meeting.status == MeetingStatus.ENDED.value,
+            Meeting.integration_state == IntegrationState.SUCCEEDED.value,
+            Meeting.ai_headline.is_not(None),
+            Meeting.start_at < before,
+            Meeting.project_id.is_(None) if project_id is None else Meeting.project_id == project_id,
+        )
+        .order_by(Meeting.start_at.desc(), Meeting.id.desc())
+        .limit(1)
+    )
+    return await session.scalar(query)

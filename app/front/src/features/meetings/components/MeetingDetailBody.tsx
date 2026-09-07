@@ -9,12 +9,12 @@
  * ## 상단 바 슬롯 — 이 파일 **하나**가 그린다(정적 검사)
  *
  * | `generating` | `MeetingStatusBar variant="generating"` — 스피너 + 단계 문구 + 「경과」 · 폴링 실패면 「다시 확인」 |
- * | `ended`+`failed` | `variant="failed"` — 배너 + 「다시 생성」 |
+ * | `ended`+`failed` | `variant="failed"` — 배너 + 「다시 시도」(`POST …/finalize` — ①부터) |
  * | `ended`+`succeeded` · `headline` 있음 | `variant="headline"` — 페이지 56 한 줄 / 드로어 72 두 줄. **`null` 이면 그리지 않는다** |
  *
  * ## 트리는 WORK-007 컴포넌트 하나를 **`agendas.merged`(또는 사람 원본)** 로 부를 뿐이다
  *
- * 회의록 탭이 그리는 트랙은 `notesTrackOf`(성공 통합본 · 그 밖 사람 원본), 편집 대상은 `editTrackOf` — 트리는 트랙을 모른다.
+ * 회의록 탭이 그리는 트랙은 `notesTrackOf`(성공하면 최종 회의록 · 그 밖 사람 원본), 편집 대상은 `editTrackOf` — 트리는 트랙을 모른다.
  * 배지 어휘는 종료 후 것(「다음 논의로」). 회의록 탭 화살표는 `detail`·`evidence` 있는 줄만(U-5). AI 탭은 SPEC-007 U-4 그대로.
  *
  * ## `mode`
@@ -41,7 +41,7 @@ import { openLineDeleteModal } from "@/features/meetings/components/LineDeleteMo
 import { TranscriptPanel, type TranscriptPanelHandle } from "@/features/meetings/components/TranscriptPanel";
 import { LIVE_AGENDA_BADGE } from "@/features/meetings/agendaBadges";
 import { editTrackOf, endedAiBadge, endedNotesBadge, notesAgendasOf, notesExpandable } from "@/features/meetings/closeState";
-import { INTEGRATE_FAILED_MESSAGE, INVALID_STATUS_MESSAGE, isInvalidMeetingStatus, meetingInlineError } from "@/features/meetings/errors";
+import { FINALIZE_FAILED_MESSAGE, INVALID_STATUS_MESSAGE, isInvalidMeetingStatus, meetingInlineError } from "@/features/meetings/errors";
 import { useMeetingEdit } from "@/features/meetings/hooks/useMeetingEdit";
 import { useMeetingFinalizeJob } from "@/features/meetings/hooks/useMeetingFinalizeJob";
 import { speakerCountOf, useTranscriptQuery } from "@/features/meetings/hooks/useMeetingLive";
@@ -53,7 +53,6 @@ import { openLinkTaskDrawer } from "@/features/meetings/components/LinkTaskDrawe
 import { LineTaskButton } from "@/features/meetings/components/LineTaskButton";
 import { useMeetingTaskLink } from "@/features/meetings/hooks/useMeetingTaskLink";
 import type { MeetingAgenda, MeetingAttachment, MeetingDetail, MeetingLine } from "@/features/meetings/types";
-import { formatClock } from "@/lib/datetime";
 import { useOverlay } from "@/lib/overlay/OverlayProvider";
 import { cn } from "@/lib/utils";
 
@@ -64,27 +63,23 @@ type RightTab = "transcript" | "attachments";
 
 export const DRAWER_EDIT_CAPTION = "편집과 업무 연동은 전체 페이지에서 합니다";
 export const DRAWER_CHIP_CAPTION = "스크립트는 전체 페이지에서 볼 수 있습니다";
-export const GENERATING_NOTES_CAPTION = "통합이 끝나면 이 탭이 통합본으로 바뀝니다";
+export const GENERATING_NOTES_CAPTION = "정리가 끝나면 이 탭이 최종 회의록으로 바뀝니다";
 export const EDITING_CAPTION = "변경은 자동 저장됩니다";
 export const DRAWER_SCHEDULED_CAPTION = "회의 시작은 전체 페이지에서 합니다";
 export const DRAWER_RECORDING_CAPTION = "진행 중인 회의입니다 · 전체 페이지에서 보기";
 
-/** AI 탭 안내 바 우측(U-1 · U-2 · U-3) — `finalBatchState` · `latestBatchSeq` 파생. */
+/**
+ * AI 탭 안내 바 우측 — **회의 중 마지막 값 그대로**다(SPEC-008 U-1 · U-2 · U-3 · MF-56).
+ *
+ * 종료 후 배치가 다시 돌지 않으므로 이 값은 더 움직이지 않는다. 「종결」·「종결 정리 중」 같은 문구를 **두지 않는다** —
+ * 통합 단계가 없어졌고 AI 탭은 로그성 기록이다(DEC-003 §6).
+ *
+ * **남은 계약 공백** — 시안 문구는 「배치 n회 반영 · HH:MM」인데 그 `HH:MM`(마지막 배치를 받은 시각)은 **회의 중 화면이 세던 값**이라
+ * `MeetingDetail` 에 없다(`mergedSummary` 는 카운트 다섯뿐이고 `integratedAt` 은 MF-56 으로 사라졌다). 새로 고치면 시각을 잃는다 —
+ * 여기서 `updatedAt` 같은 다른 시각을 끌어다 쓰지 않는다(성공·실패 시각이 섞인다). 필드를 더할지는 문서가 정한다.
+ */
 function aiCaption(meeting: MeetingDetail): string {
-  const batches = meeting.latestBatchSeq > 0 ? `배치 ${meeting.latestBatchSeq}회 반영 · ` : "";
-  if (meeting.status === "generating") {
-    return `${batches}종결 정리 중`;
-  }
-  if (meeting.finalBatchState === "succeeded") {
-    // **계약 공백 — DG-2**(WORK-008 검수 W-3). SPEC-008 U-3 L152 는 「종결 · HH:MM」을 **마지막 배치 성공 시각**으로 적는데
-    // `MeetingDetail` 에 그 필드가 없다. `mergedSummary.integratedAt` 은 **통합 시각**이지 마지막 배치 시각이 아니고, 계약(§4 Data Contract
-    // L642 `mergedSummary = {agendaCount, decisionCount, actionCount}`) 밖 필드다. 실패 상태(`mergedSummary` null)에서는 `updatedAt`
-    // (= 통합 종결 시각)으로 떨어져 성공·실패 시각이 한 자리에 섞인다. **필드를 더할지(`finalBatchAt`) · `integratedAt` 을 채택하고
-    // 문구를 「통합 시각」으로 고칠지는 문서가 정한다** — 그때까지 지금 동작을 유지하고 코드를 새로 만들지 않는다.
-    const at = meeting.mergedSummary?.integratedAt ?? meeting.updatedAt;
-    return `종결 · ${formatClock(at)}`;
-  }
-  return `${batches}종결 정리 실패`;
+  return meeting.latestBatchSeq > 0 ? `배치 ${meeting.latestBatchSeq}회 반영` : "AI 요약 없음";
 }
 
 export function MeetingDetailBody({ meeting, mode }: { meeting: MeetingDetail; mode: MeetingDetailMode }) {
@@ -104,7 +99,7 @@ export function MeetingDetailBody({ meeting, mode }: { meeting: MeetingDetail; m
 
   const editTrack = editTrackOf(meeting);
   const canEdit = isPage && editTrack !== null;
-  // 편집 중에 상태가 바뀌면(다른 창에서 「다시 생성」 등) 보기 모드로 돌아간다 — 잠금이 먼저다.
+  // 편집 중에 상태가 바뀌면(다른 창에서 「다시 시도」 등) 보기 모드로 돌아간다 — 잠금이 먼저다.
   useEffect(() => {
     if (!canEdit && editing) {
       setEditing(false);
@@ -139,16 +134,17 @@ export function MeetingDetailBody({ meeting, mode }: { meeting: MeetingDetail; m
       }
     : undefined;
 
-  const regenerate = async () => {
+  /** 「다시 시도」 — `POST …/finalize`. ①(재전사)부터 다시 돈다(U-2 · MF-58). */
+  const retryFinalize = async () => {
     try {
-      await finalize.integrate();
+      await finalize.retry();
     } catch (error) {
       if (isInvalidMeetingStatus(error)) {
         toast.error(INVALID_STATUS_MESSAGE);
         void mutations.refreshDetail();
         return;
       }
-      toast.error(meetingInlineError(error)?.message ?? INTEGRATE_FAILED_MESSAGE);
+      toast.error(meetingInlineError(error)?.message ?? FINALIZE_FAILED_MESSAGE);
     }
   };
 
@@ -184,7 +180,12 @@ export function MeetingDetailBody({ meeting, mode }: { meeting: MeetingDetail; m
       onRecheck={finalize.recheck}
     />
   ) : ended && meeting.integrationState === "failed" ? (
-    <MeetingStatusBar variant="failed" onRegenerate={() => void regenerate()} regenerating={finalize.integrating} />
+    <MeetingStatusBar
+      variant="failed"
+      onRetry={() => void retryFinalize()}
+      retrying={finalize.retrying}
+      errorCode={finalize.errorCode}
+    />
   ) : ended && meeting.headline ? (
     <MeetingStatusBar variant="headline" headline={meeting.headline} summary={meeting.mergedSummary} layout={isPage ? "single" : "stacked"} />
   ) : null;
@@ -243,10 +244,10 @@ export function MeetingDetailBody({ meeting, mode }: { meeting: MeetingDetail; m
       meetingProject: meeting.project,
       agendaId: agenda.id,
       onAdd: edit.addLineFromDrawer,
-      // ② — 변경이 있을 때만. `applyPendingChange` 는 던지지 않는다(실패는 토스트 · 줄은 「업무 갱신」 활성으로 남는다)
+      // ② — 변경이 있을 때만. `applyLinePayload` 는 던지지 않는다(실패는 토스트 · 줄은 「업무 갱신」 활성으로 남는다)
       onLinked: (line, hasChange) => {
         if (hasChange) {
-          void taskLink.applyPendingChange(line);
+          void taskLink.applyLinePayload(line);
         }
       },
     });
@@ -258,7 +259,7 @@ export function MeetingDetailBody({ meeting, mode }: { meeting: MeetingDetail; m
           locked={!canEdit}
           busy={taskLink.applyingLineId === line.id}
           onCreate={(target) => openCreate(agenda, target)}
-          onApply={(target) => void taskLink.applyPendingChange(target)}
+          onApply={(target) => void taskLink.applyLinePayload(target)}
         />
       )
     : undefined;
@@ -326,7 +327,7 @@ export function MeetingDetailBody({ meeting, mode }: { meeting: MeetingDetail; m
     />
   );
 
-  /* 안내 바 48 — 회의록: 생성중 캡션 / 드로어 캡션 · AI: 「종결 · HH:MM」 계열. 적을 것이 없으면 줄 자체가 없다 */
+  /* 안내 바 48 — 회의록: 생성중 캡션 / 드로어 캡션 · AI: 「배치 n회 반영」. 적을 것이 없으면 줄 자체가 없다 */
   const notesCaption = generating ? GENERATING_NOTES_CAPTION : isPage ? null : DRAWER_EDIT_CAPTION;
   const infoBar =
     leftTab === "notes" ? (
@@ -377,9 +378,10 @@ export function MeetingDetailBody({ meeting, mode }: { meeting: MeetingDetail; m
         value={leftTab}
         onChange={setLeftTab}
         tabs={[
-          // 회의록 dot — 완료 `#7181F8` · 생성중·실패 `#B3B3B3`([09] L708) · AI 탭 — 생성중 ① 은 진행색 + 광륜, 그 밖 `#B3B3B3`
+          // 회의록 dot — 완료 `#7181F8` · 생성중·실패 `#B3B3B3`([09] L708)
           { key: "notes", label: "회의록", dotClassName: ended && meeting.integrationState === "succeeded" ? "bg-primary" : "bg-dot-idle" },
-          { key: "ai", label: "AI 요약", dotClassName: generating && finalize.phase !== "integration" ? "bg-dot-ai" : "bg-dot-idle", halo: generating && finalize.phase !== "integration" },
+          // AI 탭 dot 은 **언제나** `#B3B3B3` — 종료 후 배치가 다시 돌지 않아 이 탭은 바뀌지 않는다(U-1 · MF-56)
+          { key: "ai", label: "AI 요약", dotClassName: "bg-dot-idle" },
         ]}
         trailing={editControls}
         className={isPage ? undefined : "px-0"}
@@ -444,6 +446,8 @@ export function MeetingDetailBody({ meeting, mode }: { meeting: MeetingDetail; m
                 partial={null}
                 recordingStartedAt={transcript.data.recordingStartedAt ?? recordingStartedAt}
                 paused
+                // 종료 후에는 스크립트가 더 늘지 않는다 — 열자마자 끝으로 튀지 않게 따라가기를 끈다(U-3)
+                follow={false}
                 footer={
                   <span className="text-caption text-fg-caption">
                     전체 스크립트 {transcriptMinutes}분 · 화자 {speakerCount}명
