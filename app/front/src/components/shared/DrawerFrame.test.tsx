@@ -16,6 +16,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { DrawerFrame } from "@/components/shared/DrawerFrame";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 const SRC = path.resolve(__dirname, "../..");
 const FRAME = path.join(SRC, "components/shared/DrawerFrame.tsx");
@@ -144,3 +145,58 @@ describe("드로어 프레임 동작", () => {
     expect(container.ownerDocument.querySelector("[role=dialog]")?.className).toContain("w-full");
   });
 });
+
+describe("드로어 안 팝오버는 **드로어 안으로** 포탈된다(실물 버그 — 휠 스크롤)", () => {
+  /** 드로어 안에서 목록 팝오버를 여는 최소 화면. */
+  function PopoverInDrawer() {
+    return (
+      <DrawerFrame title="드로어" onClose={() => undefined}>
+        <Popover>
+          <PopoverTrigger asChild>
+            <button type="button">시간 열기</button>
+          </PopoverTrigger>
+          <PopoverContent>
+            <ul className="max-h-56 overflow-y-auto" aria-label="시간">
+              <li>00:00</li>
+            </ul>
+          </PopoverContent>
+        </Popover>
+      </DrawerFrame>
+    );
+  }
+
+  it("드로어 안에서 열면 팝오버가 **드로어 콘텐츠의 자손**이다 — `body` 직속이면 스크롤 잠금 밖이라 휠을 못 받는다", async () => {
+    render(<PopoverInDrawer />);
+    await userEvent.click(screen.getByRole("button", { name: "시간 열기" }));
+
+    const list = await screen.findByRole("list", { name: "시간" });
+    // 팝오버 콘텐츠도 `role="dialog"` 라 이름으로 드로어를 집는다
+    const drawer = screen.getByRole("dialog", { name: "드로어" });
+    // **잠금 노드(드로어 콘텐츠) 안**이라 `react-remove-scroll` 이 휠을 통과시킨다
+    expect(drawer.contains(list)).toBe(true);
+    // 예전처럼 `body` 직속 포탈로 나가지 않는다 — 드로어를 품지 않은 형제 아래에 있으면 잠금 밖이다
+    const bodyChildOf = (node: Element) => [...document.body.children].find((child) => child.contains(node));
+    expect(bodyChildOf(list)).toBe(bodyChildOf(drawer));
+  });
+
+  it("드로어 **밖**에서는 생성물 그대로 `body` 로 간다 — 목록 화면 팝오버가 안 바뀐다", async () => {
+    render(
+      <Popover>
+        <PopoverTrigger asChild>
+          <button type="button">정렬</button>
+        </PopoverTrigger>
+        <PopoverContent>
+          <ul aria-label="정렬 목록">
+            <li>최신순</li>
+          </ul>
+        </PopoverContent>
+      </Popover>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "정렬" }));
+    const list = await screen.findByRole("list", { name: "정렬 목록" });
+    // 드로어가 없으니 포탈 자리도 없다 — 생성물 기본대로 `body` 아래다
+    expect(list.closest('[aria-label="드로어"]')).toBeNull();
+    expect(document.body.contains(list)).toBe(true);
+  });
+});
+

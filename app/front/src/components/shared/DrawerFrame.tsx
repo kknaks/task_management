@@ -31,6 +31,7 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft, Maximize2, X } from "lucide-react";
 
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { PortalContainerProvider } from "@/lib/overlay/PortalContainer";
 import { cn } from "@/lib/utils";
 
 /** §7-1 세 구간의 경계. 이 아래에서 드로어는 전체 화면이 된다(SPEC-003 U-11). */
@@ -95,6 +96,12 @@ export function DrawerFrame({
    * 자리(높이 76·구분선)는 여기 있고 채우는 것만 `DrawerFooter` 가 한다.
    */
   const [footerEl, setFooterEl] = useState<HTMLElement | null>(null);
+  /**
+   * 드로어 콘텐츠 노드 — **팝오버가 포탈될 자리**다(`PortalContainerProvider`).
+   * 드로어는 열릴 때 화면 스크롤을 잠그고 **자기 콘텐츠 안의 휠만** 통과시킨다 —
+   * `body` 로 나간 팝오버는 그 밖이라 목록이 스크롤되지 않는다(실물 버그). 자리를 안으로 옮겨 푼다.
+   */
+  const [contentEl, setContentEl] = useState<HTMLElement | null>(null);
   const router = useRouter();
   const fullscreen = useFullscreenDrawer();
 
@@ -118,6 +125,7 @@ export function DrawerFrame({
       }}
     >
       <SheetContent
+        ref={setContentEl}
         side="right"
         /**
          * **폭이 정해지는 유일한 자리.** 넓은 화면은 840 고정, 좁은 화면은 전체 화면이고
@@ -133,72 +141,75 @@ export function DrawerFrame({
         // 전체 화면 구간에서는 뒤 화면이 보일 이유가 없다 — 스크림을 지운다.
         overlayClassName={fullscreen ? "bg-transparent" : undefined}
       >
-        {renderHeader ? (
-          <div className="shrink-0">
-            {renderHeader({ fullscreen, expand: expandTo ? expand : null, onClose })}
-          </div>
-        ) : (
-        <header
-          className={cn(
-            "flex shrink-0 items-center gap-3 border-b border-divider px-6",
-            // 넓은 화면 72 / 좁은 화면 74 한 줄(§7-1 · P-31)
-            fullscreen ? "h-[74px]" : "h-[72px]",
+        {/* 이 안에서 열리는 팝오버는 **드로어 안**으로 포탈된다 — 스크롤 잠금 안이라 휠이 통한다 */}
+        <PortalContainerProvider container={contentEl}>
+          {renderHeader ? (
+            <div className="shrink-0">
+              {renderHeader({ fullscreen, expand: expandTo ? expand : null, onClose })}
+            </div>
+          ) : (
+          <header
+            className={cn(
+              "flex shrink-0 items-center gap-3 border-b border-divider px-6",
+              // 넓은 화면 72 / 좁은 화면 74 한 줄(§7-1 · P-31)
+              fullscreen ? "h-[74px]" : "h-[72px]",
+            )}
+          >
+            {fullscreen ? (
+              // 전체 화면에서는 스크림이 없으므로 **헤더 좌측 `←`** 가 닫는 길이다.
+              <button
+                type="button"
+                aria-label="닫기"
+                onClick={onClose}
+                className="flex h-control w-control shrink-0 items-center justify-center rounded-control text-muted-foreground hover:bg-muted"
+              >
+                <ArrowLeft aria-hidden />
+              </button>
+            ) : null}
+
+            {badge}
+
+            <SheetTitle className="min-w-0 flex-1 truncate text-detail-title text-foreground">
+              {title}
+            </SheetTitle>
+
+            {headerActions}
+
+            {expandTo ? (
+              <button
+                type="button"
+                aria-label="전체 페이지로 열기"
+                onClick={expand}
+                className="flex h-control w-control shrink-0 items-center justify-center rounded-control text-muted-foreground hover:bg-muted"
+              >
+                <Maximize2 aria-hidden />
+              </button>
+            ) : null}
+
+            {/* 좁은 화면에서는 좌측 `←` 가 그 역할을 하므로 × 를 겹쳐 두지 않는다 */}
+            {fullscreen ? null : (
+              <button
+                type="button"
+                aria-label="드로어 닫기"
+                onClick={onClose}
+                className="flex h-control w-control shrink-0 items-center justify-center rounded-control text-muted-foreground hover:bg-muted"
+              >
+                <X aria-hidden />
+              </button>
+            )}
+          </header>
           )}
-        >
-          {fullscreen ? (
-            // 전체 화면에서는 스크림이 없으므로 **헤더 좌측 `←`** 가 닫는 길이다.
-            <button
-              type="button"
-              aria-label="닫기"
-              onClick={onClose}
-              className="flex h-control w-control shrink-0 items-center justify-center rounded-control text-muted-foreground hover:bg-muted"
-            >
-              <ArrowLeft aria-hidden />
-            </button>
-          ) : null}
 
-          {badge}
+          <DrawerFooterSlot.Provider value={footerEl}>
+            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">{children}</div>
+          </DrawerFooterSlot.Provider>
 
-          <SheetTitle className="min-w-0 flex-1 truncate text-detail-title text-foreground">
-            {title}
-          </SheetTitle>
-
-          {headerActions}
-
-          {expandTo ? (
-            <button
-              type="button"
-              aria-label="전체 페이지로 열기"
-              onClick={expand}
-              className="flex h-control w-control shrink-0 items-center justify-center rounded-control text-muted-foreground hover:bg-muted"
-            >
-              <Maximize2 aria-hidden />
-            </button>
-          ) : null}
-
-          {/* 좁은 화면에서는 좌측 `←` 가 그 역할을 하므로 × 를 겹쳐 두지 않는다 */}
-          {fullscreen ? null : (
-            <button
-              type="button"
-              aria-label="드로어 닫기"
-              onClick={onClose}
-              className="flex h-control w-control shrink-0 items-center justify-center rounded-control text-muted-foreground hover:bg-muted"
-            >
-              <X aria-hidden />
-            </button>
-          )}
-        </header>
-        )}
-
-        <DrawerFooterSlot.Provider value={footerEl}>
-          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">{children}</div>
-        </DrawerFooterSlot.Provider>
-
-        {/* 비어 있으면 자리째 사라진다(`empty:hidden`) — 상세 드로어에는 푸터가 없다 */}
-        <footer
-          ref={setFooterEl}
-          className="flex h-[76px] shrink-0 items-center justify-end gap-2 border-t border-divider px-6 empty:hidden"
-        />
+          {/* 비어 있으면 자리째 사라진다(`empty:hidden`) — 상세 드로어에는 푸터가 없다 */}
+          <footer
+            ref={setFooterEl}
+            className="flex h-[76px] shrink-0 items-center justify-end gap-2 border-t border-divider px-6 empty:hidden"
+          />
+        </PortalContainerProvider>
       </SheetContent>
     </Sheet>
   );

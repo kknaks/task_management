@@ -11,7 +11,7 @@
  * 값은 KST 날짜·시각이고 UTC 변환은 `lib/datetime` 이 한다 — 여기서 시계를 직접 읽지 않는다.
  */
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { ChevronDown } from "lucide-react";
 
 import { CalendarGrid } from "@/components/shared/Calendar";
@@ -105,6 +105,19 @@ function TimeBox({
 }) {
   const [open, setOpen] = useState(false);
   const [custom, setCustom] = useState("");
+  /**
+   * 열릴 때 **고른 시각이 보이는 자리**로 목록을 옮긴다 — 11:00 을 눌렀는데 00:00 부터 보이면
+   * 사용자가 매번 스크롤해 내려가야 한다(실물 버그). 목록은 30분 단위 48줄이다.
+   *
+   * 효과가 아니라 **ref 콜백**이다 — 고른 항목이 화면에 붙는 바로 그때가 옮길 때이고,
+   * 팝오버가 포탈로 나중에 붙어도 순서를 따질 일이 없다.
+   */
+  const scrollSelectedIntoView = useCallback((node: HTMLButtonElement | null) => {
+    // jsdom 에는 없다 — 실물 브라우저에서만 움직인다(`TranscriptPanel` 과 같은 방식)
+    if (node && typeof node.scrollIntoView === "function") {
+      node.scrollIntoView({ block: "center" });
+    }
+  }, []);
 
   const submitCustom = () => {
     const next = custom.trim();
@@ -140,6 +153,7 @@ function TimeBox({
                 <button
                   type="button"
                   role="option"
+                  ref={selected ? scrollSelectedIntoView : undefined}
                   aria-selected={selected}
                   onClick={() => {
                     onChange(time);

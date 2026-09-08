@@ -98,6 +98,39 @@ describe("열림 상태 · 기본값", () => {
     expect(screen.getByRole("button", { name: "만들기" })).toBeDisabled();
   });
 
+  it("시간 목록이 **고른 시각 자리에서** 열린다 — 11:00 인데 00:00 부터 보이지 않는다(실물 버그)", async () => {
+    // jsdom 에는 `scrollIntoView` 가 없다 — 불렸는지만 본다
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    setup({ startAt: "2026-09-06T02:00:00Z", endAt: "2026-09-06T03:00:00Z" });
+    await screen.findByRole("textbox", { name: "회의 제목" });
+    expect(screen.getByRole("button", { name: "시작 시각" })).toHaveTextContent("11:00");
+
+    await userEvent.click(screen.getByRole("button", { name: "시작 시각" }));
+    const selected = await screen.findByRole("option", { name: "11:00", selected: true });
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+    // 목록을 옮긴 대상이 **고른 시각 항목**이다
+    expect(scrollIntoView.mock.instances[0]).toBe(selected);
+  });
+
+  it("닫았다 다시 열면 **옛 값이 남지 않는다** — 기본값을 그때 다시 센다(드로어가 언마운트된다)", async () => {
+    const { unmount } = setup();
+    await screen.findByRole("textbox", { name: "회의 제목" });
+    // 시각을 바꿔 둔다
+    await userEvent.click(screen.getByRole("button", { name: "시작 시각" }));
+    await userEvent.click(await screen.findByRole("option", { name: "14:00" }));
+    expect(screen.getByRole("button", { name: "시작 시각" })).toHaveTextContent("14:00");
+    unmount();
+
+    // 30분이 지난 뒤 다시 연다 — 오늘 · 현재 시각 30분 올림 · +1시간(SPEC-006 U-2)
+    vi.setSystemTime(new Date("2026-09-06T00:42:00Z"));
+    setup();
+    await screen.findByRole("textbox", { name: "회의 제목" });
+    expect(screen.getByRole("button", { name: "날짜" })).toHaveTextContent("2026.09.06 (일)");
+    expect(screen.getByRole("button", { name: "시작 시각" })).toHaveTextContent("10:00");
+    expect(screen.getByRole("button", { name: "종료 시각" })).toHaveTextContent("11:00");
+  });
+
   it("캘린더가 준 시각이 있으면 그것이 미리 들어 있다(같은 드로어 재사용 — SPEC-009 U-6)", async () => {
     setup({ startAt: "2026-08-27T05:00:00Z", endAt: "2026-08-27T06:30:00Z" });
     expect(await screen.findByRole("button", { name: "날짜" })).toHaveTextContent("2026.08.27 (목)");
