@@ -214,3 +214,54 @@ describe("density — 미리보기는 compact(WORK-014 · FE §2 규칙 7)", () 
   });
 });
 
+describe("줄 행 세로 정렬 — 라벨은 본문 첫 줄에 맞는다(실물 버그)", () => {
+  /** 줄 행의 라벨 칸 · 본문 칸을 꺼낸다 — 라벨이 첫 칸, 본문이 `flex-1` 칸이다. */
+  function firstRowParts() {
+    const row = document.querySelector("[data-line-id]") as HTMLElement;
+    const label = row.firstElementChild as HTMLElement;
+    const body = row.querySelector(".flex-1") as HTMLElement;
+    return { row, label, body };
+  }
+
+  it.each([
+    ["default", undefined, "text-body", "leading-row-body"],
+    ["compact", "compact", "text-meta", "leading-row-body-compact"],
+  ] as const)(
+    "`%s` — 라벨이 본문(`%s`)과 **같은 줄 상자**를 갖는다 · 위로 밀던 `pt-0.5` 가 없다",
+    (_name, density, bodyClass, leading) => {
+      const { unmount } = render(
+        <AgendaLineTree agendas={AI} expandable density={density} badgeFor={() => null} recordingStartedAt={STARTED} empty={null} />,
+      );
+      const { row, label, body } = firstRowParts();
+
+      // 본문은 밀도별 글자 크기, 라벨은 **그 본문의 줄 상자**를 그대로 쓴다 — 두 글자가 같은 높이에 앉는다
+      expect(body.className).toContain(bodyClass);
+      expect(label.className).toContain(leading);
+      // 라벨을 손으로 밀던 보정이 없다(그것이 라벨을 위로 띄우던 원인이다)
+      expect(label.className).not.toContain("pt-0.5");
+      // 본문이 여러 줄이 돼도 라벨은 **첫 줄에 남는다** — 가운데로 내려오지 않는다
+      expect(row.className).toContain("items-start");
+      expect(row.className).not.toContain("items-center");
+      unmount();
+    },
+  );
+
+  it("편집 모드는 입력 상자(h-9) 기준으로 가운데다 — 라벨 규칙은 그대로다", () => {
+    render(
+      <AgendaLineTree
+        agendas={AI}
+        expandable={false}
+        editable
+        onSaveLineContent={async () => undefined}
+        badgeFor={() => null}
+        recordingStartedAt={STARTED}
+        empty={null}
+      />,
+    );
+    const { row, label } = firstRowParts();
+    expect(row.className).toContain("items-center");
+    expect(label.className).toContain("leading-row-body");
+    expect(label.className).not.toContain("pt-0.5");
+  });
+});
+

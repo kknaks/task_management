@@ -88,11 +88,19 @@ export function LineRow({
           "group flex rounded-control",
           compact ? "gap-2 px-1.5 py-1" : "gap-3 px-2 py-1.5",
           kind === "decision" && !editing ? "bg-row-selected" : "hover:bg-row-hover",
-          editing && "items-center",
+          // 본문이 길어 여러 줄이 되면 **라벨은 첫 줄에 남는다** — 가운데로 내려오지 않는다
+          editing ? "items-center" : "items-start",
         )}
       >
-        {/* **라벨은 편집 모드에서도 라벨이다** — 종류를 바꾸는 표면이 없다(MF-60) */}
-        <span className={cn("shrink-0 pt-0.5", compact ? "w-[26px] text-badge" : "w-[34px] text-row-label", LINE_LABEL_CLASS[kind])}>
+        {/* **라벨은 편집 모드에서도 라벨이다** — 종류를 바꾸는 표면이 없다(MF-60).
+            줄 상자를 본문과 같게 줘서(`leading-row-body*`) 라벨 글자가 **본문 첫 줄과 같은 높이**에 앉는다 */}
+        <span
+          className={cn(
+            "shrink-0",
+            compact ? "w-[26px] text-badge leading-row-body-compact" : "w-[34px] text-row-label leading-row-body",
+            LINE_LABEL_CLASS[kind],
+          )}
+        >
           {isLineKind(line.kind) ? LINE_KIND_LABEL[line.kind] : line.kind}
         </span>
         {kind === "task" && line.task ? (
