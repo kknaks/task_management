@@ -1,0 +1,35 @@
+[project]
+name = "task-management-back"
+version = "0.1.0"
+description = "task-management 백엔드 — FastAPI + SQLAlchemy 2.0 async + PostgreSQL"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    # [asyncio] = greenlet. async 엔진의 sync 브리지에 필요하다.
+    "sqlalchemy[asyncio]>=2.0.36",
+    "psycopg[binary]>=3.2.0",
+    "pydantic-settings>=2.6.0",
+    "alembic>=1.14.0",
+    "bcrypt>=4.2.0",
+    "pyjwt>=2.10.0",
+    "open-kknaks>=2.1.2",
+    "websockets>=13.0",
+    "jsonschema>=4.23",
+    # 종료 후 재전사(Soniox `stt-async-v5` REST — WORK-012). 실시간 갈래는 websockets 다
+    "httpx>=0.28.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "httpx>=0.28.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+# 느린 테스트에 붙이는 표식. **`make test` 에서 빼지 않는다** — 표시일 뿐이다(`-m "not slow"` 로 골라 낼 수는 있다)
+markers = ["slow: 실제 alembic 명령처럼 초 단위로 도는 테스트"]
+pythonpath = ["."]
+testpaths = ["tests"]

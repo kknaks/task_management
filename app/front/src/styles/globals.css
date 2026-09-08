@@ -1,0 +1,73 @@
+/**
+ * Tailwind + shadcn 테마 연결 — 토큰 2층 중 **아래층**(frontend/README.md §5-1).
+ *
+ * `tokens.css` 의 `--tm-*` 원시값을 shadcn 시맨틱 변수에 매핑한다.
+ * **여기서 새 hex 를 만들지 않는다** — 값은 전부 `var(--tm-*)` 다.
+ *
+ * Pretendard 는 **번들에 포함**한다(CDN 금지 — SPEC-000 §5 · SYS-3).
+ * 아래 `@import` 가 `node_modules/pretendard` 의 woff2 를 빌드 산출물로 끌어온다.
+ */
+@import "pretendard/dist/web/variable/pretendardvariable.css";
+@import "../styles/tokens.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* shadcn 시맨틱 변수 — 컴포넌트가 보는 유일한 층 */
+    /**
+     * **앱 배경은 흰색이다.** 시안 [10] RULES 「그라디언트는 홈만」이
+     * 「앱 안쪽 화면은 흰 배경 + breadcrumb + 타이틀로 시작합니다」라고 못박았고,
+     * 모든 화면 `.dc.html` 의 `<section>` 이 `background:#FFFFFF` 다.
+     * `--tm-canvas`(#F9FAFB)를 여기에 걸면 화면 전체가 회색으로 깔린다 — 걸지 않는다.
+     */
+    --background: var(--tm-surface);
+    --foreground: var(--tm-fg);
+
+    --card: var(--tm-surface);
+    --card-foreground: var(--tm-fg);
+
+    --popover: var(--tm-surface);
+    --popover-foreground: var(--tm-fg);
+
+    --primary: var(--tm-primary);
+    --primary-foreground: var(--tm-primary-fg);
+    --primary-hover: var(--tm-primary-hover);
+
+    --secondary: var(--tm-select-bg);
+    --secondary-foreground: var(--tm-select-fg);
+
+    --muted: var(--tm-hover);
+    --muted-foreground: var(--tm-fg-muted);
+
+    --accent: var(--tm-select-bg);
+    --accent-foreground: var(--tm-select-fg);
+
+    --destructive: var(--tm-status-overdue);
+    --destructive-foreground: var(--tm-primary-fg);
+
+    --border: var(--tm-border);
+    --input: var(--tm-border);
+    --ring: var(--tm-primary);
+
+    --radius: var(--tm-radius-control);
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    /* 다크 모드는 v1 범위 밖이다 — 라이트 팔레트 하나만 둔다. */
+    color-scheme: light;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--tm-font-sans);
+    letter-spacing: var(--tm-tracking);
+    -webkit-font-smoothing: antialiased;
+  }
+}

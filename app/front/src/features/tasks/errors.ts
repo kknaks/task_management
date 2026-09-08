@@ -1,0 +1,80 @@
+/**
+ * SPEC-003 §4 Case Matrix 를 화면 문구로 옮기는 곳 하나.
+ *
+ * **화면은 `code` 로 분기하고 `detail` 문구로 분기하지 않는다**(frontend/README.md §3-5).
+ */
+
+import { API_ERROR_CODE, isApiError } from "@/lib/api/errors";
+
+export interface TaskInlineError {
+  message: string;
+  /** 필드 옆이 아니라 **토스트**로 알려야 하는 것(`schedule_overlap`). */
+  toast: boolean;
+  /** 어느 컨트롤 옆에 붙는가 — 없으면 폼 전체다. */
+  field?: "title" | "workType" | "project" | "due";
+}
+
+/**
+ * 인라인/토스트로 옮길 사유. **`null` 이면 그 밖의 5xx·네트워크**이고 호출자가
+ * 「가리지 않는」 실패 처리를 한다(Case Matrix 마지막 두 행).
+ */
+export function taskInlineError(error: unknown): TaskInlineError | null {
+  if (!isApiError(error)) {
+    return null;
+  }
+
+  switch (error.code) {
+    case API_ERROR_CODE.VALIDATION_ERROR:
+      return { message: error.detail, toast: false, field: "title" };
+    case API_ERROR_CODE.INVALID_WORK_TYPE:
+      return { message: "삭제된 유형입니다. 다시 골라 주세요", toast: false, field: "workType" };
+    case API_ERROR_CODE.INVALID_PROJECT:
+      // **유형과 분기를 가른다** — 셀렉터가 둘이라 코드를 나눈 이유가 그것이다(§4).
+      return {
+        message: "삭제된 프로젝트입니다. 다시 골라 주세요",
+        toast: false,
+        field: "project",
+      };
+    case API_ERROR_CODE.SCHEDULE_OVERLAP:
+      // **토스트**이고 기한 값은 이전으로 되돌린다 — 저장되지 않는다(Case Matrix).
+      return { message: "그 시간에 다른 일정이 있습니다", toast: true, field: "due" };
+    case API_ERROR_CODE.UNSUPPORTED_FILE_TYPE:
+      return { message: "md 문서만 첨부할 수 있습니다", toast: false };
+    default:
+      return null;
+  }
+}
+
+/** 없는 업무 — 「없는 업무입니다」 + 「목록으로」. **리다이렉트하지 않는다**(U-3). */
+export function isTaskNotFound(error: unknown): boolean {
+  return isApiError(error) && error.code === API_ERROR_CODE.NOT_FOUND;
+}
+
+/** U-7 토스트 문구 — 「저장하지 못했습니다 · <필드 이름>」. 실행취소를 붙이지 않는다. */
+export function autoSaveErrorToast(fieldLabel: string): string {
+  return `저장하지 못했습니다 · ${fieldLabel}`;
+}
+
+/**
+ * **자동 저장이 실패했을 때 띄울 문구**(SPEC-002 U-7 · REDRAW-06 G-0c).
+ *
+ * `validation_error`(422)의 서버 문구는 「입력값을 확인해 주세요」 하나뿐이라 **어느 칸을
+ * 고쳐야 하는지 말하지 않는다.** 자동 저장은 **필드 단위로 나가므로 화면이 그 필드를 안다** —
+ * 서버 문구를 그대로 뿌리지 않고 U-7 규격으로 필드를 짚는다.
+ *
+ * 사유 고유의 문구가 더 구체적인 것(`schedule_overlap` 「그 시간에 다른 일정이 있습니다」)은
+ * **그대로 쓴다** — 필드 이름보다 그쪽이 많이 말해 준다.
+ *
+ * 생성 드로어는 이 경로를 타지 않는다 — 거기서는 서버 문구를 제목 아래 인라인으로 붙인다.
+ */
+export function autoSaveFailureMessage(error: unknown, fieldLabel: string): string {
+  if (isApiError(error) && error.code === API_ERROR_CODE.VALIDATION_ERROR) {
+    return autoSaveErrorToast(fieldLabel);
+  }
+  return taskInlineError(error)?.message ?? autoSaveErrorToast(fieldLabel);
+}
+
+/** 422 인가 — 자동 저장 경로에서 **컨트롤 옆 인라인으로 새지 않게** 가른다(G-0c). */
+export function isValidationError(error: unknown): boolean {
+  return isApiError(error) && error.code === API_ERROR_CODE.VALIDATION_ERROR;
+}

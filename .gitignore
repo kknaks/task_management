@@ -5,6 +5,12 @@ __pycache__/
 .env
 .env.*
 !.env.example
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# 로컬 저장소 루트(STORAGE_ROOT 기본값)
+.storage/
 
 # node
 node_modules/
@@ -12,9 +18,9 @@ node_modules/
 out/
 *.tsbuildinfo
 
-# tauri
-src-tauri/target/
-src-tauri/gen/
+# tauri (셸은 `app/front` 의 형제 디렉토리다 — WORK-001 §Open Issues)
+app/front/src-tauri/target/
+app/front/src-tauri/gen/
 
 # os
 .DS_Store
