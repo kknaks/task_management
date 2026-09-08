@@ -187,13 +187,28 @@ def notes_output(
     if task_id is not None:
         agendas[0]["lines"].append(
             _line(kind="task", content="업무 줄", task_id=task_id, evidence=[],
-                  payload={"dueDate": "2026-09-02", "status": "in_progress", "note": "진행 메모"})
+                  payload=payload(dueDate="2026-09-02", status="in_progress", note="진행 메모"))
         )
     return {
         "headline": headline,
         "termCorrections": [] if term_corrections is None else term_corrections,
         "agendas": agendas,
     }
+
+
+# `meeting_notes.json` 의 `payload` 는 **두 모양의 합집합(열한 키)**이고 strict 규격이라 **전부** 보내야 한다.
+# 모델이 실제로 보내는 모양이 이것이다 — 안 쓰는 키는 `null`. 서버가 줄 종류의 키만 남긴다(`_final_payload`)
+_PAYLOAD_KEYS = (
+    "title", "workTypeId", "projectId", "startDate", "dueDate", "description",
+    "todos", "status", "note", "relatedTaskIds", "completionResult",
+)
+
+
+def payload(**values: object) -> dict:
+    """모델이 낸 `payload` 한 벌 — 준 키만 값이 있고 나머지 열한 키는 `null` 이다."""
+    unknown = set(values) - set(_PAYLOAD_KEYS)
+    assert not unknown, f"스키마에 없는 payload 키: {sorted(unknown)}"
+    return {key: values.get(key) for key in _PAYLOAD_KEYS}
 
 
 def _line(*, kind: str = "discussion", content: str, detail: str | None = None,

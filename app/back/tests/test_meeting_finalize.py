@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from dto.enums import JobPhase
 from integrations.soniox import SttToken
 from models.meeting import Meeting, MeetingLine, MeetingTranscript
+from schemas.meeting import _TASK_CHANGE_KEYS, ActionLinePayload
 from service import job_service, meeting_batch_service, meeting_finalize_service
 from tests.fakes.agent import WARM_SESSION_ID, FakeAgentGateway
 from tests.fakes.soniox import FakeAsyncSttConnector
@@ -37,6 +38,7 @@ from tests.meeting_close_fixtures import (  # noqa: F401
     notes_from,
     notes_output,
     overlong_headline,
+    payload,
     prepare_recording,
     rows_by_track,
     run_job,
@@ -396,9 +398,9 @@ async def test_a_deleted_work_type_reference_is_nulled_keeping_the_line(
     """`payload.workTypeId` 가 삭제된 유형이면 **그 키만 `null`** — 줄도 시도도 산다."""
     detail = await prepare_recording(client, owner, db_session)
     output = notes_output(detail)
-    output["agendas"][0]["lines"][1]["payload"] = {
-        "title": "새 업무", "workTypeId": 999_999, "projectId": 999_999, "todos": []
-    }
+    output["agendas"][0]["lines"][1]["payload"] = payload(
+        title="새 업무", workTypeId=999_999, projectId=999_999, todos=[]
+    )
     fake_agent.will_return(output)
     await run_job(await end_meeting(client, owner, detail["id"]))
 
@@ -434,7 +436,7 @@ async def test_payload_on_a_discussion_line_is_dropped(
     """`payload` 자리는 `action`·`task` 줄뿐이다 — 논의 줄에 실려 오면 **버린다**(폐기 사유 아님)."""
     detail = await prepare_recording(client, owner, db_session)
     output = notes_output(detail)
-    output["agendas"][0]["lines"][0]["payload"] = {"title": "여기 오면 안 된다"}
+    output["agendas"][0]["lines"][0]["payload"] = payload(title="여기 오면 안 된다")
     fake_agent.will_return(output)
     await run_job(await end_meeting(client, owner, detail["id"]))
 
@@ -705,6 +707,62 @@ def test_the_removed_names_are_gone_from_the_backend(needle: str) -> None:
 
 def test_there_is_exactly_one_ai_schema_file() -> None:
     assert sorted(p.name for p in (BACK / "ai_schemas").iterdir()) == ["meeting_notes.json"]
+
+
+def test_the_output_schema_meets_the_strict_structured_output_rules() -> None:
+    """**모든 object 가 `additionalProperties: false` + 키 전부 `required`** 여야 한다 — OpenAI 구조화 출력(strict) 규격.
+
+    하나라도 어기면 모델 호출이 `invalid_json_schema` 400 이고 codex 는 **빈 출력으로 exit 1** 한다.
+    back 쪽에서는 「워커 오류」로만 보여 원인이 안 보인다 — 2026-09-08 실물 회의(id 8)가 그렇게 두 배치 다 죽었다
+    (줄 `payload` 가 `{"type": ["object","null"]}` 뿐이었다). 그래서 파일 전체를 훑어 잠근다.
+
+    「선택 필드」는 `required` 에서 빼는 것이 아니라 **nullable 로 두고 null 을 보낸다**.
+    """
+    schema = json.loads((BACK / "ai_schemas" / "meeting_notes.json").read_text(encoding="utf-8"))
+    offenders: list[str] = []
+    objects = 0
+
+    def walk(node: object, path: str) -> None:
+        nonlocal objects
+        if isinstance(node, dict):
+            declared = node.get("type")
+            types = [declared] if isinstance(declared, str) else list(declared or ())
+            if "object" in types:
+                objects += 1
+                if node.get("additionalProperties") is not False:
+                    offenders.append(f"{path}: additionalProperties 가 false 가 아니다")
+                keys = sorted(node.get("properties", {}))
+                if sorted(node.get("required", [])) != keys:
+                    offenders.append(f"{path}: required {sorted(node.get('required', []))} != {keys}")
+            for key, value in node.items():
+                walk(value, f"{path}.{key}")
+        elif isinstance(node, list):
+            for index, value in enumerate(node):
+                walk(value, f"{path}[{index}]")
+
+    walk(schema, "$")
+    assert offenders == [], offenders
+    # 파일 안의 object 는 여섯이다 — 루트 · 용어 보정 · 안건 · 줄 · 근거 · payload. 하나 늘면 이 수도 같이 고쳐라
+    assert objects == 6, objects
+
+
+def test_the_payload_schema_is_the_union_of_the_two_stored_shapes() -> None:
+    """스키마의 `payload` 열한 키 = 액션 생성분 일곱 ∪ 업무 변경분 일곱(M-14-a).
+
+    strict 규격이 「선택 키」를 허용하지 않아 **합집합 하나**로 두고 전부 nullable 로 보낸다 —
+    저장 모양은 여전히 둘이고 `_final_payload` 가 줄 종류의 키만 남긴다. 세 곳(스키마 · 프론트 계약 · 파서)이
+    같은 키를 봐야 해서 여기서 맞춰 본다.
+    """
+    schema = json.loads((BACK / "ai_schemas" / "meeting_notes.json").read_text(encoding="utf-8"))
+    payload = schema["properties"]["agendas"]["items"]["properties"]["lines"]["items"]["properties"]["payload"]
+    # 프론트 계약은 snake_case 필드라 **저장 키(camelCase)** 로 맞춘다 — `_TASK_CHANGE_KEYS` 의 값이 그 키다
+    task = set(_TASK_CHANGE_KEYS.values())
+    action_keys = set(ActionLinePayload(title="x").to_json())
+    assert set(payload["properties"]) == action_keys | task
+    assert sorted(payload["required"]) == sorted(payload["properties"])
+    assert set(meeting_batch_service._ACTION_PAYLOAD_KEYS) == action_keys
+    assert set(meeting_batch_service._TASK_PAYLOAD_KEYS) == task
+    assert len(action_keys) == len(task) == 7
 
 
 def test_the_block_boundary_constants_live_in_one_file() -> None:

@@ -24,6 +24,7 @@ from models.meeting import MeetingAgenda, MeetingBatchRun, MeetingLine
 from service import meeting_batch_service, meeting_stream_service
 from tests.fakes.agent import WARM_SESSION_ID, FakeAgentGateway
 from tests.fakes.stream_client import FakeStreamClient
+from tests.meeting_close_fixtures import payload
 from tests.meeting_fixtures import BASE, MeetingOwner, get_detail, owner  # noqa: F401
 from tests.meeting_live_fixtures import (  # noqa: F401
     AUDIO,
@@ -411,7 +412,7 @@ async def test_payload_headline_and_term_corrections_are_dropped_during_the_meet
         headline="회의 중에는 안 쓴다",
         term_corrections=[{"stt": "캐스티", "correct": "Casti", "grade": "auto"}],
     )
-    output["agendas"][0]["lines"][0]["payload"] = {"title": "만들어 달라는 업무"}
+    output["agendas"][0]["lines"][0]["payload"] = payload(title="만들어 달라는 업무")
     fake_agent.will_return(output)
     assert await meeting_batch_service.evaluate(detail["id"], TRANSCRIPT) is True
 

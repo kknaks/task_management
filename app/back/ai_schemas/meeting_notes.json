@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "MeetingNotesOutput",
-  "description": "SPEC-007 §4 「배치 출력」 = SPEC-008 의 최종 회의록 출력. **스키마는 한 벌이다**(MF-52) — 회의 중 배치와 최종이 같은 파일을 codex --output-schema 로 걸고, 백엔드가 같은 파일로 다시 검증한다(SYS §외부 연동). 출력은 **AI 트랙 전체**다 — 앞 배치 결과를 포함해 다시 낸다(MF-53). `headline` · `termCorrections` · `payload` 는 **회의 중 항상 null** 이고 최종에서만 값이 온다 — 그 스위치와 evidence 구간 범위 · humanAgendaId 소속은 코드가 한다(strict 스키마에 조건을 두지 않는다).",
+  "description": "SPEC-007 §4 「배치 출력」 = SPEC-008 의 최종 회의록 출력. **스키마는 한 벌이다**(MF-52) — 회의 중 배치와 최종이 같은 파일을 codex --output-schema 로 걸고, 백엔드가 같은 파일로 다시 검증한다(SYS §외부 연동). 출력은 **AI 트랙 전체**다 — 앞 배치 결과를 포함해 다시 낸다(MF-53). `headline` · `termCorrections` · `payload` 는 **회의 중 항상 null** 이고 최종에서만 값이 온다 — 그 스위치와 evidence 구간 범위 · humanAgendaId 소속은 코드가 한다(strict 스키마에 조건을 두지 않는다). **OpenAI 구조화 출력(strict) 규격** — 모든 object 는 `additionalProperties: false` 이고 `properties` 의 키가 **전부** `required` 에 있어야 한다. 하나라도 빠지면 모델 호출이 `invalid_json_schema` 400 이고 codex 가 빈 출력으로 끝난다(2026-09-08 실물 e2e 1호 — 줄 `payload` 가 그랬다). 그래서 「선택 필드」는 `required` 에서 빼는 대신 **nullable 로 두고 null 을 보낸다**. 새 키를 더할 때도 같다.",
   "type": "object",
   "additionalProperties": false,
   "required": ["headline", "termCorrections", "agendas"],
@@ -53,7 +53,28 @@
                   }
                 },
                 "taskId": { "type": ["integer", "null"] },
-                "payload": { "type": ["object", "null"] }
+                "payload": {
+                  "description": "액션 줄 = 새 업무 생성분(title 필수 · 나머지는 비워도 된다) · 업무 줄 = 기존 업무 변경분(값이 있는 키만 쓰인다). 그 밖의 줄에서는 null. **키 열하나는 두 모양의 합집합**이고 strict 규격이라 언제나 전부 적어야 한다 — 쓰지 않는 키는 null 로 둔다. 서버가 줄 종류에 맞는 키만 남긴다(SPEC-008 §4).",
+                  "type": ["object", "null"],
+                  "additionalProperties": false,
+                  "required": [
+                    "title", "workTypeId", "projectId", "startDate", "dueDate", "description",
+                    "todos", "status", "note", "relatedTaskIds", "completionResult"
+                  ],
+                  "properties": {
+                    "title": { "type": ["string", "null"], "minLength": 1, "maxLength": 200 },
+                    "workTypeId": { "type": ["integer", "null"] },
+                    "projectId": { "type": ["integer", "null"] },
+                    "startDate": { "type": ["string", "null"], "minLength": 10, "maxLength": 10 },
+                    "dueDate": { "type": ["string", "null"], "minLength": 10, "maxLength": 10 },
+                    "description": { "type": ["string", "null"], "maxLength": 4000 },
+                    "todos": { "type": ["array", "null"], "items": { "type": "string", "minLength": 1, "maxLength": 200 } },
+                    "status": { "description": "todo · in_progress 만 쓴다. done · cancelled 는 서버가 그 키만 뗀다(SPEC-008 §4 ② 검증 ⑤ · MF-59 — 완료는 사람이 업무 화면에서 누른다). 네 값을 다 담는 이유는 모델이 어쩌다 종결 상태를 내도 그 줄·그 시도를 죽이지 않기 위해서다.", "type": ["string", "null"], "enum": ["todo", "in_progress", "done", "cancelled", null] },
+                    "note": { "type": ["string", "null"], "minLength": 1, "maxLength": 2000 },
+                    "relatedTaskIds": { "type": ["array", "null"], "items": { "type": "integer" } },
+                    "completionResult": { "type": ["string", "null"], "maxLength": 4000 }
+                  }
+                }
               }
             }
           }

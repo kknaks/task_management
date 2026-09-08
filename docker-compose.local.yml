@@ -50,7 +50,7 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       # 브로커도 같은 이유로 덮어쓴다 — config.py 기본값(localhost)은 컨테이너 안에서 닿지 않는다.
       REDIS_URL: redis://redis:6379/0
-      # 녹음 원본 · md 저장 루트 — 아래 `storage` 명명 볼륨(SPEC-007 M-13 영구 보관).
+      # 녹음 원본 · md 저장 루트 — 아래 저장소 볼륨(SPEC-007 M-13 영구 보관).
       STORAGE_ROOT: /data
       # codex 가 부를 MCP 주소 — **옵션을 만드는 곳은 back 하나**라 worker 가 아니라 여기에 준다(WORK-009 Phase 3).
       MCP_SERVER_URL: http://mcp:8010/mcp
@@ -63,7 +63,9 @@ services:
         condition: service_healthy
     volumes:
       - ./app/back:/app
-      - storage:/data
+      # 저장소 — 기본은 `storage` 명명 볼륨이고, `.env` 의 `STORAGE_HOST_DIR` 에 **호스트 경로**를 주면 그 폴더를 바인드한다.
+      # 녹음 원본을 호스트에서 바로 열어 보려고 연 자리다(2026-09-08 사용자 요청) — 값이 비면 지금까지와 같다.
+      - ${STORAGE_HOST_DIR:-storage}:/data
     command:
       - uvicorn
       - main:app

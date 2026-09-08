@@ -260,6 +260,14 @@ class _OutputAgenda:
 
 # SPEC-008 §4 「`payload` 자리」 — `action`·`task` 줄에만 뜻이 있다. DB CHECK 와 같은 값이다
 _PAYLOAD_KINDS = frozenset({LineKind.ACTION.value, LineKind.TASK.value})
+# 저장 모양 둘(M-14-a) — 스키마의 열한 키에서 그 줄 종류의 키만 남긴다. 순서는 SPEC-008 §4 예시 그대로다.
+# 프론트 계약(`schemas.meeting.ActionLinePayload` · `_TASK_CHANGE_KEYS`)과 **같은 키**여야 한다 — 테스트가 그것을 맞춰 본다
+_ACTION_PAYLOAD_KEYS = (
+    "title", "workTypeId", "projectId", "startDate", "dueDate", "description", "todos",
+)
+_TASK_PAYLOAD_KEYS = (
+    "dueDate", "status", "note", "todos", "relatedTaskIds", "projectId", "completionResult",
+)
 
 
 class _SchemaViolation(Exception):
@@ -504,11 +512,34 @@ def _parse_output(
 
 
 def _final_payload(line: dict) -> dict | None:
-    """**`payload` 자리**(SPEC-008 §4) — `kind ∈ {action, task}` 줄에만. 그 밖에 실려 오면 **버린다**(폐기 사유 아님)."""
+    """**`payload` 자리**(SPEC-008 §4) — `kind ∈ {action, task}` 줄에만. 그 밖에 실려 오면 **버린다**(폐기 사유 아님).
+
+    스키마의 `payload` 는 **두 모양의 합집합(열한 키)**이다 — OpenAI strict 규격이 「선택 키」를 허용하지 않아
+    모든 키를 nullable 로 두고 전부 보내게 했기 때문이다(2026-09-08 e2e 1호). 저장 모양은 여전히 둘이라
+    여기서 **그 줄 종류의 키만 남긴다** — SPEC-008 ② 검증 표 ④ 「틀리면 그 키만」의 연장이고 새 규칙이 아니다.
+
+    - 액션 줄 = 생성분 일곱. **`title` 이 없으면 payload 자체가 없다**(제목 없는 업무 초안은 뜻이 없다 — `ActionLinePayload`).
+      나머지 여섯은 `null` 이어도 그대로 둔다 — 사람이 드로어에서 저장한 것과 **같은 일곱 키 모양**이다.
+      `todos` 만 `null` → `[]` 로 맞춘다(계약이 배열이다).
+    - 업무 줄 = 변경분. **값이 있는 키만** 남긴다(「보내지 않음」이 곧 「변경 없음」 — `TaskLinePayload`).
+      **빈 배열도 뺀다** — 「추가할 것이 없다」는 변경이 아니다(모델은 안 쓰는 배열 키를 `[]` 로 채워 보내기 쉽다).
+      남는 키가 없으면 `None` 이다.
+    """
     payload = line["payload"]
     if payload is None or line["kind"] not in _PAYLOAD_KINDS:
         return None
-    return dict(payload)
+    if line["kind"] == LineKind.ACTION.value:
+        if payload.get("title") is None:
+            return None
+        draft = {key: payload.get(key) for key in _ACTION_PAYLOAD_KEYS}
+        draft["todos"] = draft["todos"] or []
+        return draft
+    changes = {
+        key: payload[key]
+        for key in _TASK_PAYLOAD_KEYS
+        if payload.get(key) not in (None, [])
+    }
+    return changes or None
 
 
 def _demote_if_needed(
