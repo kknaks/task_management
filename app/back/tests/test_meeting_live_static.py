@@ -103,3 +103,42 @@ def test_no_korean_labels_are_stored_by_the_batch() -> None:
     text = _read("service/meeting_batch_service.py")
     for korean in ("\"논의\"", "\"결정\"", "\"업무\"", "\"액션\"", "\"성공\"", "\"실패\""):
         assert korean not in text
+
+
+# --- WORK-015 (MF-71) — 중간 배치는 AI 혼자 쓴다 -------------------------------------------
+
+
+def test_the_batch_prompt_never_names_the_agenda_tools() -> None:
+    """회의 중 프롬프트에 `list_agendas` · `get_agenda` 가 **0건**이다(MF-71).
+
+    도구를 안 주는 것이 잠금이고(옵션 빌더 `phase="batch"`), 프롬프트가 없는 도구를 부르라고 적으면 AI 가 헤맨다.
+    **웜스타트 프롬프트는 대상이 아니다** — 거기 도구 일곱이 적힌 것은 WORK-010 소관이다(WP §Open Issues 관찰 항목).
+    """
+    source = _read("service/meeting_batch_service.py")
+    instructions = source[source.index("_BATCH_INSTRUCTIONS = "):]
+    instructions = instructions[: instructions.index('"""', instructions.index('"""') + 3)]
+
+    for banned in ("list_agendas", "get_agenda", "미러", "조회해라."):
+        assert banned not in instructions, banned
+    assert "안건은 발화만 보고 네가 가른다" in instructions
+    assert "AI 트랙 전체를 다시 정리해라" in instructions
+
+
+def test_the_mid_meeting_path_never_reads_human_agendas() -> None:
+    """회의 중 경로(`_run_once` · `_persist` 의 `ai` 갈래)에 **사람 안건을 읽는 코드가 0건**이다(MF-71 · M-6).
+
+    `_persist` 는 최종(`merged`)과 함께 쓰는 함수라 그 조회가 남아 있지만 **`mirror_human_agendas` 안**이어야 한다 —
+    회의 중에는 그 가지로 들어가지 않는다.
+    """
+    source = _read("service/meeting_batch_service.py")
+    run_once = source[source.index("async def _run_once("):source.index("# --- 검증 2단 · 3단")]
+    assert "MeetingTrack.HUMAN" not in run_once
+    assert "list_agendas_by_track" not in run_once
+
+    persist = source[source.index("async def _persist("):source.index("# --- 웜스타트")]
+    body = persist[persist.index('"""', persist.index('"""') + 3):]  # docstring 뒤 코드만
+    assert body.count("MeetingTrack.HUMAN.value") == 1
+    assert body.index("if mirror_human_agendas:") < body.index("MeetingTrack.HUMAN.value")
+    # 미러 갈래 밖에서 `source_agenda_id` 를 채우지 않는다
+    assert "source_agenda_id=agenda.human_agenda_id if mirror_human_agendas else None" in persist
+

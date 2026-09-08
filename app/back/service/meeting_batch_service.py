@@ -321,6 +321,8 @@ async def _run_once(meeting_id: int) -> None:
             output_schema=OUTPUT_SCHEMA,
             timeout_sec=settings.meeting_batch_timeout_sec,
             meeting_token=meeting_token,
+            # MF-71 — 회의 중에는 업무 셋만 연다. 사람 안건·사람 줄을 볼 도구가 없다
+            phase="batch",
         )
     except (AgentRunFailed, AgentRunTimeout) as exc:
         await _record(
@@ -334,18 +336,12 @@ async def _run_once(meeting_id: int) -> None:
         return
 
     # ③ 검증 2단: 스키마 — 위반이면 **전체 폐기**(행 0 · AI 트랙은 직전 성공분 그대로 · M-16 · M-7).
-    #    사람 안건 소속 검사는 **검사 시점 조회**다 — 입력에 안건을 싣지 않으므로(MF-50) 여기서 읽는다
-    async with session_scope() as session:
-        human_agenda_ids = {
-            agenda.id
-            for agenda in await meeting_child_repository.list_agendas_by_track(
-                session, meeting_id, track=MeetingTrack.HUMAN.value
-            )
-        }
+    #    **사람 안건을 읽지 않는다**(MF-71 · M-6) — 회의 중 AI 는 사람 것을 보지 않으므로 대조할 대상이 없다.
+    #    `humanAgendaId` 가 실려 와도 파서가 읽고 버린다(폐기 사유 아님 — SPEC-007 §4 검증 2)
     try:
         agendas = _parse_output(
             result.output,
-            human_agenda_ids=human_agenda_ids,
+            human_agenda_ids=frozenset(),
             last_end_ms=max(block.end_ms for block in batch_input.blocks),
         )
     except _SchemaViolation as exc:
@@ -458,8 +454,13 @@ def _parse_output(
     AI 안건은 배치마다 새로 생기므로(MF-53) 참조할 대상이 아니다.
 
     **한 함수가 두 모드**다(파서를 둘로 두지 않는다 — MF-52) —
-    `fill_final=False`(회의 중)는 `payload`·`headline`·`termCorrections` 를 **읽고 버리고** `list[_OutputAgenda]` 를,
-    `True`(최종 회의록 · WORK-012)는 셋을 채워 `_OutputNotes` 를 돌려준다. 버리는 것은 폐기 사유가 아니다(검증 순서 4행).
+    `fill_final=False`(회의 중)는 `humanAgendaId`·`payload`·`headline`·`termCorrections` 를 **읽고 버리고**
+    `list[_OutputAgenda]` 를, `True`(최종 회의록 · WORK-012)는 채워 `_OutputNotes` 를 돌려준다.
+    버리는 것은 폐기 사유가 아니다(검증 순서 4행).
+
+    **회의 중 `humanAgendaId` 는 무시한다**(MF-71 · SPEC-007 §4 검증 2) — 중간 배치의 AI 는 사람 안건을 보지 않으므로
+    가리킬 것이 없다. 값이 실려 와도 위반이 아니라 `None` 으로 눌러 저장한다(스키마 파일은 한 벌이라 필드 자체는 남는다).
+    **`fill_final=True` 의 사람 안건 참조 검사는 그대로다** — 최종은 사람 안건을 정확히 한 번씩 덮어야 한다(SPEC-008 §4).
     """
     try:
         data = json.loads(output)
@@ -472,7 +473,8 @@ def _parse_output(
 
     agendas: list[_OutputAgenda] = []
     for index, agenda in enumerate(data["agendas"]):
-        human_agenda_id = agenda["humanAgendaId"]
+        # 회의 중이면 읽고 버린다(MF-71). 최종만 「이 회의의 사람 안건인가」를 본다
+        human_agenda_id = agenda["humanAgendaId"] if fill_final else None
         if human_agenda_id is not None and human_agenda_id not in human_agenda_ids:
             raise _SchemaViolation(
                 f"agendas[{index}].humanAgendaId 가 이 회의의 사람 안건이 아니다"
@@ -583,19 +585,19 @@ async def _persist(
     meeting_id: int,
     agendas: list[_OutputAgenda],
     track: str = MeetingTrack.AI.value,
-    copy_human_state: bool = False,
+    mirror_human_agendas: bool = False,
 ) -> list[MeetingAgendaDTO]:
     """**한 트랙 전량 교체**(MF-53 · M-7) — DELETE(줄 → 안건 · FK 순) 뒤 출력대로 INSERT.
 
     회의 중 배치는 `track='ai'`, 종료 후 ② 최종 회의록은 `track='merged'` 로 **같은 함수**를 쓴다(WORK-012).
-    `copy_human_state=True` 면 미러 안건이 사람 안건의 `state` 를 복사한다 — `merged` 만 그렇게 한다
-    (AI 안건에는 상태 축이 없다 · SPEC-008 §4 「미러 안건의 `state`」).
+
+    **미러는 최종만 한다**(`mirror_human_agendas=True` — MF-71). 그때만 사람 안건을 읽어
+    `source_agenda_id` 를 채우고 **제목과 `state` 를 사람 안건 것으로 맞춘다**(M-5-b · SPEC-008 §4 「미러 안건의 `state`」).
+    **회의 중(`ai`)은 그 갈래가 없다** — 사람 안건을 조회하는 코드가 이 경로에 0건이고,
+    INSERT 되는 안건은 `source_agenda_id=NULL` · `state=NULL` · 제목은 **출력의 `title` 그대로**다(M-5-c · M-7).
 
     **검증이 끝난 뒤에만 부른다.** 검증 전에 지우면 실패했을 때 직전 성공분이 사라진다(M-7) —
     그래서 `delete_by_track` · `delete_agendas_by_track` 을 부르는 곳은 **이 함수 하나**다(정적 검사).
-
-    `human_agenda_id` 가 있으면 `source_agenda_id` 를 그 id 로 두고 **제목은 사람 안건 것을 복사**한다(M-5-b).
-    없으면 `source_agenda_id=NULL` 인 신설이다.
 
     돌려주는 것은 **줄이 중첩된 트리**다 — 상세 응답의 같은 트랙과 같은 직렬화 함수를 지난다.
     """
@@ -608,12 +610,15 @@ async def _persist(
         session, meeting_id=meeting_id, track=track
     )
 
-    human = {
-        agenda.id: agenda
-        for agenda in await meeting_child_repository.list_agendas_by_track(
-            session, meeting_id, track=MeetingTrack.HUMAN.value
-        )
-    }
+    # **미러할 때만** 사람 안건을 읽는다(MF-71) — 회의 중(`ai`)에는 이 조회가 아예 일어나지 않는다
+    human: dict[int, MeetingAgendaDTO] = {}
+    if mirror_human_agendas:
+        human = {
+            agenda.id: agenda
+            for agenda in await meeting_child_repository.list_agendas_by_track(
+                session, meeting_id, track=MeetingTrack.HUMAN.value
+            )
+        }
 
     for order_index, agenda in enumerate(agendas):
         source = human.get(agenda.human_agenda_id) if agenda.human_agenda_id is not None else None
@@ -623,8 +628,8 @@ async def _persist(
             track=track,
             title=agenda.title if source is None else source.title,
             order_index=order_index,
-            state=source.state if (copy_human_state and source is not None) else None,
-            source_agenda_id=agenda.human_agenda_id,
+            state=source.state if source is not None else None,
+            source_agenda_id=agenda.human_agenda_id if mirror_human_agendas else None,
         )
         for line_order, line in enumerate(agenda.lines):
             await meeting_line_repository.create_line(
@@ -702,6 +707,9 @@ async def _warm_start_once(meeting_id: int) -> None:
         output_schema=None,
         timeout_sec=get_settings().ai_timeout_sec,
         meeting_token=meeting_token,
+        # 웜스타트는 **도구 목록을 알려 주는** 자리이고 그때는 요청이 없다 — 실제 잠금은 매 제출의 `-c` 가 한다
+        # (`-c` 는 resume 에도 산다 — MF-71). WP §Open Issues 「웜스타트 phase」 · 사용자 확인 대기
+        phase="final",
     )
     if not result.session_id:
         # 세션 없이는 배치가 이어질 수 없다(M-12) — 설계한 실패가 아니다. 전파한다(콜백이 로그)
@@ -842,14 +850,12 @@ _BATCH_INSTRUCTIONS = """회의 중 배치다. 아래는 아직 반영하지 않
 앞 배치에서 낸 안건과 줄도 **포함해서 처음부터 다시** 낸다 — 이 출력이 AI 요약 탭 전체가 된다.
 앞 배치가 잘못 가른 안건을 합치거나, 잘못 붙인 줄을 옮기는 것도 여기서 한다.
 
-정리하기 전에 이 순서로 조회해라.
+**안건은 발화만 보고 네가 가른다.** 사람이 적은 것은 보지 않는다 — 너는 네 회의록을 쓰고,
+사람 것과 합치는 일은 회의가 끝난 뒤에 한다. 그래서 안건 제목도 네가 짓는다.
 
-  1. list_agendas   지금 안건이 무엇인지 본다 — 사람이 적은 안건과 네가 앞서 만든 안건 둘 다
-  2. get_agenda     붙일 안건의 줄을 본다 — 사람이 이미 적어 둔 것을 또 만들지 않으려고
-  3. 업무를 가리킬 때만 — list_tasks 로 찾고, get_task 로 확인하고, 필요하면 list_work_types 를 본다
+업무를 가리킬 때만 조회한다 — list_tasks 로 찾고, get_task 로 확인하고, 필요하면 list_work_types 를 본다.
 
-안건은 사람 안건을 미러하면 그 id 를 humanAgendaId 에 넣는다(제목은 서버가 사람 안건 것으로 맞춘다).
-어디에도 맞지 않는 새 주제만 humanAgendaId 를 비우고 제목을 직접 짓는다.
+humanAgendaId 는 회의 중에는 쓰지 않는다 — null 로 둔다.
 evidence 는 근거가 된 발화의 [atMs, endMs] 구간이다(최대 3개).
 payload · headline · termCorrections 는 회의 중에는 쓰지 않는다 — null 로 둔다.
 

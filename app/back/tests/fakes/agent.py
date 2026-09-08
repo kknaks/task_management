@@ -23,6 +23,8 @@ class AgentCall:
     timeout_sec: int
     # WORK-009 — 제출마다 회의별 단명 토큰이 함께 나가야 한다(MF-4). 「어느 회의의 토큰인가」를 테스트가 본다
     meeting_token: str
+    # WORK-015 — 이 제출이 **어느 단계로** 나갔나(MF-71). 회의 중 배치는 `batch`(도구 셋), 웜스타트·최종은 `final`
+    phase: str
 
 
 @dataclass
@@ -39,6 +41,7 @@ class FakeAgentGateway:
         output_schema: Path | None,
         timeout_sec: int,
         meeting_token: str,
+        phase: str,
     ) -> AgentRunResult:
         self.calls.append(
             AgentCall(
@@ -47,6 +50,7 @@ class FakeAgentGateway:
                 output_schema=output_schema,
                 timeout_sec=timeout_sec,
                 meeting_token=meeting_token,
+                phase=phase,
             )
         )
         if not self.responses:

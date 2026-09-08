@@ -344,6 +344,8 @@ async def _attempt_final(meeting_id: int, *, timeout_sec: int) -> _FinalPlan:
         session_id=context.ai_session_id,
         output_schema=meeting_batch_service.OUTPUT_SCHEMA,
         timeout_sec=timeout_sec,
+        # ② 최종 회의록은 일곱을 다 연다 — 사람 안건·사람 줄을 읽고 한 벌로 합친다(MF-71 은 중간만 좁힌다)
+        phase="final",
         meeting_token=meeting_token,
     )
 
@@ -487,7 +489,7 @@ async def _commit_success(job: JobDTO, *, meeting_id: int, attempt: int, plan: _
             meeting_id=meeting_id,
             agendas=plan.agendas,
             track=MeetingTrack.MERGED.value,
-            copy_human_state=True,
+            mirror_human_agendas=True,
         )
         for row in plan.term_corrections:
             if row["grade"] != _GRADE_AUTO:

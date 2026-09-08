@@ -257,20 +257,34 @@ async def test_the_batch_prompt_leaks_no_agenda_or_task_titles(
     assert "발화 내용이다" in prompt  # 실리는 것은 이것뿐이다
 
 
-async def test_the_batch_prompt_orders_the_three_lookup_steps(
+async def test_the_batch_prompt_tells_the_ai_to_split_the_agendas_alone(
     client: AsyncClient, owner: MeetingOwner, db_session: AsyncSession, fake_agent: FakeAgentGateway
 ) -> None:
-    """조회 순서 세 단계가 **그 순서로** 있다(초안 §B) + 요청 문장은 계약(MF-53)이다."""
+    """**MF-71** — 회의 중 프롬프트에 **안건 도구가 한 글자도 없다.** 남는 조회는 업무 셋뿐이다.
+
+    사람이 적은 것을 보지 말라고 「말하는」 것이 아니라 **도구를 안 주는** 것이 잠금이고(옵션 빌더 `phase`),
+    프롬프트는 그것과 어긋나지 않아야 한다 — 없는 도구를 부르라고 적으면 AI 가 헤맨다.
+    """
     detail = await start_meeting(client, owner)
     await add_block(db_session, detail["id"], content="가" * FIRE)
     fake_agent.calls.clear()
     fake_agent.will_return(_notes([]))
     assert await meeting_batch_service.evaluate(detail["id"], TRANSCRIPT) is True
 
-    prompt = fake_agent.calls[-1].prompt
-    order = [prompt.index(name) for name in ("list_agendas", "get_agenda", "list_tasks", "get_task", "list_work_types")]
+    call = fake_agent.calls[-1]
+    prompt = call.prompt
+    # 잠금과 프롬프트가 같은 말을 한다 — 이 제출은 `batch` 단계로 나갔다
+    assert call.phase == "batch"
+    for banned in ("list_agendas", "get_agenda"):
+        assert banned not in prompt, banned
+    assert "조회" in prompt and "list_tasks" in prompt  # 업무 셋은 남는다
+    order = [prompt.index(name) for name in ("list_tasks", "get_task", "list_work_types")]
     assert order == sorted(order)
+    # 계약 문장(MF-53)은 그대로다
     assert "AI 트랙 전체를 다시 정리해라" in prompt
+    assert "안건은 발화만 보고 네가 가른다" in prompt
+    # 미러 지시가 사라졌다 — humanAgendaId 는 회의 중에 쓰지 않는다
+    assert "미러" not in prompt
     # 초안 §B 의 「새로 드러난 것만」은 계약에 졌다(WP §Open Issues)
     assert "추가할 줄" not in prompt
 
@@ -301,7 +315,6 @@ async def test_schema_violation_discards_the_whole_batch(
         "not json at all",
         json.dumps({"agendas": []}),  # headline · termCorrections 누락
         json.dumps(_notes([{"humanAgendaId": None, "title": "제목만"}])),  # lines 누락
-        json.dumps(_notes([_agenda(human_agenda_id=999_999)])),  # 이 회의 사람 안건이 아니다
         json.dumps(_notes([_agenda(lines=[_line(evidence=[{"fromMs": 0, "toMs": 99_999}])])])),  # 구간 밖
         json.dumps(_notes([_agenda(title="")])),  # 제목 길이
     ):
@@ -318,22 +331,33 @@ async def test_schema_violation_discards_the_whole_batch(
     assert [(run.from_transcript_id, run.to_transcript_id, run.seq) for run in succeeded] == [(first, second, 1)]
 
 
-async def test_an_ai_agenda_id_in_human_agenda_id_is_a_schema_violation(
+async def test_a_human_agenda_id_is_ignored_instead_of_discarding_the_batch(
     client: AsyncClient, owner: MeetingOwner, db_session: AsyncSession, fake_agent: FakeAgentGateway
 ) -> None:
-    """AI 안건 id 를 `humanAgendaId` 에 넣으면 위반이다 — AI 안건은 매 배치 새로 생긴다(SPEC-007 §4 검증 2)."""
+    """**BE §12 6 확장**(MF-71 · SPEC-007 §4 검증 2) — `humanAgendaId` 가 실려 와도 **폐기가 아니다.**
+
+    스키마 파일은 한 벌이라 필드 자체는 남는다(최종이 쓴다). 회의 중에는 서버가 **읽고 버린다** —
+    줄은 들어가고 `source_agenda_id` 는 `NULL` 이다. 예전에는 「이 회의 사람 안건이 아니면 위반」이었고,
+    사람 안건이면 미러였다. 둘 다 사라졌다 — 회의 중 AI 는 사람 안건을 아예 보지 않는다.
+    """
     detail = await start_meeting(client, owner)
     human_id = detail["agendas"]["human"][0]["id"]
     await add_block(db_session, detail["id"], content="가" * FIRE)
-    fake_agent.will_return(_notes([_agenda(human_agenda_id=human_id)]))
-    assert await meeting_batch_service.evaluate(detail["id"], TRANSCRIPT) is True
-    ai_agendas, _ = await _ai_rows(db_session, detail["id"])
 
-    await add_block(db_session, detail["id"], content="나" * FIRE, at_ms=3000)
-    fake_agent.will_return(_notes([_agenda(human_agenda_id=ai_agendas[0].id)]))
+    # ① 이 회의의 사람 안건 id · ② 남의 것(없는 id) — 어느 쪽도 폐기가 아니다
+    fake_agent.will_return(_notes([
+        _agenda(human_agenda_id=human_id, title="모델이 지은 제목"),
+        _agenda(human_agenda_id=999_999, title="없는 안건을 가리킨 것"),
+    ]))
     assert await meeting_batch_service.evaluate(detail["id"], TRANSCRIPT) is True
 
-    assert (await _runs(db_session, detail["id"]))[-1].status == "discarded"
+    assert (await _runs(db_session, detail["id"]))[-1].status == "succeeded"
+    agendas, lines = await _ai_rows(db_session, detail["id"])
+    assert [(a.title, a.source_agenda_id, a.state) for a in agendas] == [
+        ("모델이 지은 제목", None, None),
+        ("없는 안건을 가리킨 것", None, None),
+    ]
+    assert len(lines) == 2
 
 
 # --- BE §12 테스트 7 — 강등 · 회의 중 payload 버림 -----------------------------------------
@@ -527,7 +551,7 @@ async def test_7a_the_second_batch_replaces_the_first_wholesale(
     assert await meeting_batch_service.evaluate(detail["id"], TRANSCRIPT) is True
     first_agendas, first_lines = await _ai_rows(db_session, detail["id"])
     assert [(a.title, a.source_agenda_id, a.state) for a in first_agendas] == [
-        ("첫째 안건", human_id, None), ("경쟁사 요금제 비교", None, None),
+        ("안건", None, None), ("경쟁사 요금제 비교", None, None),
     ]
     assert [line.content for line in first_lines] == ["첫째", "둘째", "셋째"]
 
@@ -575,27 +599,34 @@ async def test_7a_a_failing_second_batch_keeps_the_first_one(
     assert [line.id for line in still] == [line.id for line in before_lines]
 
 
-async def test_mirrored_agendas_copy_the_human_title_and_new_ones_have_no_source(
+async def test_7b_the_mid_meeting_batch_writes_alone(
     client: AsyncClient, owner: MeetingOwner, db_session: AsyncSession, fake_agent: FakeAgentGateway
 ) -> None:
-    """미러 안건은 `source_agenda_id` 가 사람 안건을 가리키고 **제목은 사람 안건 것**이다(M-5-b).
+    """**BE §12 7-b**(MF-71 · M-5-b · M-5-c · M-7) — 중간 배치가 넣는 `track='ai'` 안건은 **전부 신설**이다.
 
-    모델이 제목을 다르게 적어 와도 서버가 사람 안건 제목으로 맞춘다. AI 신설은 `source_agenda_id IS NULL` · `state IS NULL`.
+    `source_agenda_id` · `state` 가 전부 `NULL` 이고 제목은 **출력의 `title` 그대로**다 —
+    사람 안건 제목을 복사하지 않는다. 사람이 회의록 탭에 안건을 적어 두어도 AI 탭에 그 사본이 생기지 않는다.
     """
     detail = await start_meeting(client, owner)
     human_id = detail["agendas"]["human"][0]["id"]
+    human_title = detail["agendas"]["human"][0]["title"]
     await add_block(db_session, detail["id"], content="가" * FIRE)
     fake_agent.will_return(_notes([
-        _agenda(human_agenda_id=human_id, title="모델이 멋대로 지은 제목"),
+        _agenda(human_agenda_id=human_id, title="AI 가 지은 제목"),
         _agenda(title="경쟁사 요금제 비교"),
     ]))
     assert await meeting_batch_service.evaluate(detail["id"], TRANSCRIPT) is True
 
     agendas, _ = await _ai_rows(db_session, detail["id"])
     assert [(a.title, a.source_agenda_id, a.state, a.order_index) for a in agendas] == [
-        ("첫째 안건", human_id, None, 0),
+        ("AI 가 지은 제목", None, None, 0),
         ("경쟁사 요금제 비교", None, None, 1),
     ]
+    # 사람 안건은 그대로 남아 있고 AI 트랙에 그 제목의 사본이 없다
+    body = await get_detail(client, owner, detail["id"])
+    assert human_title in [agenda["title"] for agenda in body["agendas"]["human"]]
+    assert human_title not in [agenda["title"] for agenda in body["agendas"]["ai"]]
+    assert all(agenda["sourceAgendaId"] is None for agenda in body["agendas"]["ai"])
 
 
 # --- push -------------------------------------------------------------------------------
@@ -627,7 +658,7 @@ async def test_successful_batch_pushes_the_whole_ai_track(
     frame = fake_client.frames(AiBatchFrame)[0]
 
     assert frame.seq == 1
-    assert [agenda.source_agenda_id for agenda in frame.agendas] == [human_id]
+    assert [agenda.source_agenda_id for agenda in frame.agendas] == [None]  # 미러가 없다(MF-71)
     # 줄이 안건 안에 있다 — 최상위 `lines` 가 없다
     assert not hasattr(frame, "lines")
     pushed = frame.agendas[0].lines

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 
 from open_kknaks import AgentClient, RedisBroker
 from open_kknaks.task import TaskStatus
@@ -44,6 +44,10 @@ class AgentRunTimeout(Exception):
     """상한(배치 120초) 안에 끝나지 않았다 — DEC-003 §7 「회의 중 배치 실패」의 한 경우."""
 
 
+# 제출의 **단계**(MF-71) — 여는 도구가 여기서 갈린다. 기본값을 두지 않는다: 새 호출부가 생기면 고르게 만든다
+CodexPhase = Literal["batch", "final"]
+
+
 class AgentGateway(Protocol):
     async def run(
         self,
@@ -53,6 +57,7 @@ class AgentGateway(Protocol):
         output_schema: Path | None,
         timeout_sec: int,
         meeting_token: str,
+        phase: CodexPhase,
     ) -> AgentRunResult: ...
 
 
@@ -72,6 +77,16 @@ _TOOL_NAMES = (
     "list_work_types",
 )
 
+# **회의 중 배치가 여는 도구 셋**(MF-71 · SPEC-007 §4 도구 표 「단계」 열). 중간에는 AI 가 사람 것을 보지 않는다 —
+# 안건 도구 둘(`list_agendas` · `get_agenda`)이 닫히고, 회의·계정 조회도 쓸 일이 없어 함께 닫힌다.
+# **프롬프트로 「부르지 마라」 하는 것이 아니라 도구를 주지 않는다** — `-c` 는 resume 에도 실려 매 제출이 자기 목록을 가져간다.
+_BATCH_TOOL_NAMES = ("list_tasks", "get_task", "list_work_types")
+
+_TOOLS_BY_PHASE: dict[str, tuple[str, ...]] = {
+    "batch": _BATCH_TOOL_NAMES,
+    "final": _TOOL_NAMES,
+}
+
 # 끌 수 있는 codex 내장 도구(2026-09-07 · codex 0.147.0 실측 — `system/README.md` §codex 설정).
 # **deny list 는 없다.** 모르는 키는 조용히 통과하므로, codex 를 올릴 때마다 새로 붙은 내장 도구를 확인해야 한다.
 _BUILTIN_OFF = (
@@ -83,14 +98,19 @@ _BUILTIN_OFF = (
 )
 
 
-def build_mcp_config(meeting_token: str) -> list[str]:
+def build_mcp_config(meeting_token: str, *, phase: CodexPhase) -> list[str]:
     """`-c` 로 하나씩 나갈 문자열 목록(WP §Internal Interface Contract — **순서까지 계약**이다).
 
     `approval_policy` 를 쓰지 않는다 — `"never"` 는 「안 묻고 **실패 처리**」라 MCP 툴 호출이
     «user cancelled» 로 죽는다. 허용은 별개 축이고 **툴별** `approval_mode="approve"` 가 맞다.
     `enabled_tools` 에 서버 id 접두를 붙이지 않는다(`tm.foo` ✗ / `foo` ○ — 틀리면 조용히 툴 0개).
+
+    **`phase` 로 갈리는 것은 `enabled_tools` 배열과 툴별 approval 줄 수뿐**이다(MF-71) —
+    `batch` 는 업무 셋(10줄) · `final` 은 일곱(14줄). 다른 줄은 두 단계가 완전히 같다.
+    MCP 서버는 언제나 일곱을 노출한다(`app/mcp/`) — 안 여는 것은 이 워커 설정이다.
     """
-    enabled = ",".join(f'"{name}"' for name in _TOOL_NAMES)
+    tool_names = _TOOLS_BY_PHASE[phase]
+    enabled = ",".join(f'"{name}"' for name in tool_names)
     return [
         *_BUILTIN_OFF,
         f'mcp_servers.{_MCP_KEY}.url="{get_settings().mcp_server_url}"',
@@ -99,7 +119,7 @@ def build_mcp_config(meeting_token: str) -> list[str]:
         f"mcp_servers.{_MCP_KEY}.enabled_tools=[{enabled}]",
         *(
             f'mcp_servers.{_MCP_KEY}.tools.{name}.approval_mode="approve"'
-            for name in _TOOL_NAMES
+            for name in tool_names
         ),
     ]
 
@@ -110,6 +130,7 @@ def build_codex_options(
     output_schema: Path | None,
     timeout_sec: int,
     meeting_token: str,
+    phase: CodexPhase,
 ) -> tuple[dict[str, object], dict[str, object]]:
     """**codex 실행 옵션을 만드는 유일한 함수**(BE §5-2 · MF-3 · MF-4). `(options, provider_options)` 를 돌려준다.
 
@@ -117,13 +138,16 @@ def build_codex_options(
 
     `sandbox="read-only"` 는 **새 세션에만** 싣는다 — open-kknaks 가 resume 에서 `sandbox` 를 버리고
     (`CODEX_RESUME_UNSUPPORTED_OPTIONS`) 이어 쓰는 세션은 처음 걸린 값을 물려받기 때문이다.
-    `config` 는 resume 에서도 살아남으므로 **양쪽에 같은 목록**을 싣는다.
+    `config` 는 resume 에서도 살아남으므로 **양쪽에 같은 목록**을 싣는다 — 그래서 `phase` 별 allow list 가
+    세션을 이어 써도 매 제출에 다시 걸린다(MF-71).
+
+    `phase` 는 **기본값이 없다** — 새 호출부가 생기면 「어느 단계인가」를 반드시 고르게 한다.
     """
     options: dict[str, object] = {"timeout_sec": timeout_sec}
     if session_id is not None:
         options["resume"] = {"mode": "session", "session_id": session_id}
 
-    provider_options: dict[str, object] = {"config": build_mcp_config(meeting_token)}
+    provider_options: dict[str, object] = {"config": build_mcp_config(meeting_token, phase=phase)}
     if session_id is None:
         provider_options["sandbox"] = "read-only"
     if output_schema is not None:
@@ -155,6 +179,7 @@ class OpenKknaksGateway:
         output_schema: Path | None,
         timeout_sec: int,
         meeting_token: str,
+        phase: CodexPhase,
     ) -> AgentRunResult:
         settings = get_settings()
         client = await self._get_client()
@@ -163,6 +188,7 @@ class OpenKknaksGateway:
             output_schema=output_schema,
             timeout_sec=timeout_sec,
             meeting_token=meeting_token,
+            phase=phase,
         )
         task_id = await client.submit(
             prompt,
